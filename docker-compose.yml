@@ -1,0 +1,21 @@
+services:
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: forgeflow-postgres
+    environment:
+      POSTGRES_DB: forgeflow
+      POSTGRES_USER: forgeflow
+      POSTGRES_PASSWORD: forgeflow
+    ports:
+      - "5433:5432"
+    volumes:
+      - forgeflow-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forgeflow -d forgeflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  forgeflow-pgdata:
