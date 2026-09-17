@@ -1,43 +1,53 @@
-  spring:
-    application:
-      name: forgeflow
-    datasource:
-      url: ${DB_URL:jdbc:postgresql://localhost:5433/forgeflow}
-      username: ${DB_USERNAME:forgeflow}
-      password: ${DB_PASSWORD:forgeflow}
-    jpa:
-      hibernate:
-        ddl-auto: validate
-      open-in-view: false
-    flyway:
-      enabled: true
-      baseline-on-migrate: true
-  server:
-    port: ${PORT:8081}
-  management:
-    endpoints:
-      web:
-        exposure:
-          include: health,info,metrics
-  forgeflow:
-    jwt:
-      secret: ${JWT_SECRET:change-me-in-env-this-is-local-only}
-      expiry-minutes: 120
-    agent:
-      max-tool-calls: 25
-      max-repair-rounds: 3
-      max-input-tokens: 120000
-      timeout-seconds: 90
-    retrieval:
-      whole-project-threshold: 15
-      top-k: 8
-    sandbox:
-      provider: docker
-      cpu-limit: 0.5
-      memory-mb: 512
-      pids-limit: 128
-      network: none
-      timeout-seconds: 30
-  logging:
-    level:
-      com.forgeflow: DEBUG
+spring:
+  application:
+    name: forgeflow
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/forgeflow}
+    username: ${DB_USERNAME:forgeflow}
+    password: ${DB_PASSWORD:forgeflow}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+server:
+  port: ${PORT:8081}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+forgeflow:
+  llm:
+    provider: gemini
+    api-key: ${GOOGLE_API_KEY:}
+    model: ${FORGEFLOW_MODEL:gemini-2.5-flash}
+    temperature: 0.2
+    timeout-seconds: 30
+  jwt:
+    secret: ${JWT_SECRET:change-me-in-env-this-is-local-only}
+    expiry-minutes: 120
+  agent:
+    max-tool-calls: 25
+    max-repair-rounds: 3
+    max-input-tokens: 120000
+    timeout-seconds: 90
+  retrieval:
+    whole-project-threshold: 15
+    top-k: 8
+  sandbox:
+    provider: docker
+    cpu-limit: 0.5
+    memory-mb: 512
+    pids-limit: 128
+    network: none
+    timeout-seconds: 30
+
+logging:
+  level:
+    com.forgeflow: DEBUG
