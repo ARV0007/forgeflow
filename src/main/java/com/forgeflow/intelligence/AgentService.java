@@ -15,15 +15,16 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
- * The agent loop. This is the project.
+ * The agent loop.
  *
  *   context -> model -> tool calls -> results -> model -> ...
  *
- * and it stops when the model calls finish, or when one of the caps trips.
- * Every exit records WHY in stop_reason, so a run that did not finish cleanly
- * can be diagnosed without re-running it.
+ * It stops when the model calls finish, or when one of the caps trips. Every
+ * exit records WHY in stop_reason, so a run that did not finish cleanly can be
+ * diagnosed without re-running it.
  */
 @Service
 public class AgentService {
@@ -52,7 +53,19 @@ public class AgentService {
         this.maxInputTokens = maxInputTokens;
     }
 
+    /** Non-streaming entry point. */
     public GenerateResponse generate(Long projectId, Long userId, String prompt) {
+        return generate(projectId, userId, prompt, event -> { });
+    }
+
+    /**
+     * @param listener receives progress events as they happen. Never null;
+     *                 pass a no-op for the blocking case. Exceptions thrown by
+     *                 the listener must not kill the run - a disconnected
+     *                 browser is not a reason to abandon work in progress.
+     */
+    public GenerateResponse generate(Long projectId, Long userId, String prompt,
+                                     Consumer<AgentEvent> listener) {
 
         long startedAt = System.currentTimeMillis();
         long deadline = startedAt + timeoutSeconds * 1000L;
@@ -69,11 +82,14 @@ public class AgentService {
 
         Set<String> written = new LinkedHashSet<>();
         int toolCallCount = 0;
+        int round = 0;
         int promptTokens = 0;
         int completionTokens = 0;
         int totalTokens = 0;
         String summary = null;
         String stopReason = null;
+
+        emit(listener, AgentEvent.status("Planning"));
 
         try {
             while (true) {
@@ -91,6 +107,9 @@ public class AgentService {
                     break;
                 }
 
+                round++;
+                emit(listener, AgentEvent.thinking(round, promptTokens));
+
                 LlmResponse response = llm.chat(AgentPrompt.SYSTEM, history, tools.specs());
 
                 promptTokens += response.promptTokens();
@@ -98,9 +117,8 @@ public class AgentService {
                 totalTokens += response.totalTokens();
 
                 if (!response.wantsTools()) {
-                    // The model replied in prose instead of calling a tool.
-                    // That is a finished turn, but a badly finished one - we
-                    // record it separately so the eval harness can count it.
+                    // Prose instead of a tool call. A finished turn, but a badly
+                    // finished one - counted separately so the eval harness sees it.
                     summary = response.text();
                     stopReason = "NO_TOOL_CALL";
                     break;
@@ -113,17 +131,23 @@ public class AgentService {
 
                 for (ToolCall call : response.toolCalls()) {
                     toolCallCount++;
+                    Object rawPath = call.args().get("path");
+                    String path = rawPath == null ? null : rawPath.toString();
+
+                    emit(listener, AgentEvent.tool(call.name(), path));
                     log.debug("run {} -> tool {} {}", run.getId(), call.name(), call.args().keySet());
 
                     ToolResult result = tools.execute(projectId, call);
                     results.add(result);
 
-                    if ("write_file".equals(call.name()) && result.ok()) {
-                        Object p = call.args().get("path");
-                        if (p != null) {
-                            written.add(p.toString());
-                        }
+                    if (!result.ok()) {
+                        emit(listener, AgentEvent.toolFailed(call.name(), result.output()));
+                    } else if ("write_file".equals(call.name()) && path != null) {
+                        written.add(path);
+                        Object content = call.args().get("content");
+                        emit(listener, AgentEvent.file(path, content == null ? 0 : content.toString().length()));
                     }
+
                     if ("finish".equals(call.name())) {
                         Object s = call.args().get("summary");
                         summary = s == null ? "Done." : s.toString();
@@ -146,6 +170,7 @@ public class AgentService {
             run.setStatus("FAILED");
             stopReason = "ERROR";
             run.setErrorMessage(e.getMessage());
+            emit(listener, AgentEvent.error(e.getMessage()));
         }
 
         long durationMs = System.currentTimeMillis() - startedAt;
@@ -162,7 +187,22 @@ public class AgentService {
                 run.getId(), run.getStatus(), stopReason, toolCallCount,
                 written.size(), totalTokens, durationMs);
 
-        return new GenerateResponse(run.getId(), run.getStatus(), stopReason,
+        GenerateResponse result = new GenerateResponse(run.getId(), run.getStatus(), stopReason,
                 summary, List.copyOf(written), toolCallCount, totalTokens, durationMs);
+
+        emit(listener, AgentEvent.done(result));
+        return result;
+    }
+
+    /**
+     * A listener that throws must not take the run down with it. The browser
+     * closing its tab is not an error in the generation.
+     */
+    private void emit(Consumer<AgentEvent> listener, AgentEvent event) {
+        try {
+            listener.accept(event);
+        } catch (Exception e) {
+            log.debug("listener rejected event {}: {}", event.type(), e.toString());
+        }
     }
 }
