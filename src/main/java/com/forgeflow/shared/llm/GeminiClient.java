@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -18,6 +19,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Talks to Google's Generative Language API over the JDK's own HttpClient.
@@ -32,19 +36,29 @@ public class GeminiClient implements LlmClient {
     private static final Logger log = LoggerFactory.getLogger(GeminiClient.class);
     private static final String BASE = "https://generativelanguage.googleapis.com/v1beta/models/";
 
+    /** Google returns a RetryInfo block containing e.g. "retryDelay": "6.9s" */
+    private static final Pattern RETRY_DELAY =
+            Pattern.compile("\"retryDelay\"\\s*:\\s*\"([0-9.]+)s\"");
+
     private final ObjectMapper mapper = new ObjectMapper();
     private final HttpClient http;
     private final String apiKey;
     private final String model;
     private final double temperature;
+    private final int maxRetries;
+    private final long baseBackoffMillis;
 
     public GeminiClient(@Value("${forgeflow.llm.api-key}") String apiKey,
                         @Value("${forgeflow.llm.model}") String model,
                         @Value("${forgeflow.llm.temperature}") double temperature,
-                        @Value("${forgeflow.llm.timeout-seconds}") long timeoutSeconds) {
+                        @Value("${forgeflow.llm.timeout-seconds}") long timeoutSeconds,
+                        @Value("${forgeflow.llm.max-retries:5}") int maxRetries,
+                        @Value("${forgeflow.llm.base-backoff-millis:2000}") long baseBackoffMillis) {
         this.apiKey = apiKey;
         this.model = model;
         this.temperature = temperature;
+        this.maxRetries = maxRetries;
+        this.baseBackoffMillis = baseBackoffMillis;
         this.http = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(timeoutSeconds))
                 .build();
@@ -68,11 +82,7 @@ public class GeminiClient implements LlmClient {
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
 
-            HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() != 200) {
-                throw new LlmException("Gemini returned " + response.statusCode() + ": " + response.body());
-            }
+            HttpResponse<String> response = sendWithRetry(request);
             return parseResponse(mapper.readTree(response.body()));
 
         } catch (LlmException e) {
@@ -85,8 +95,73 @@ public class GeminiClient implements LlmClient {
         }
     }
 
-    private ObjectNode buildRequest(String systemPrompt, List<LlmMessage> history, List<ToolSpec> tools)
-            throws Exception {
+    /**
+     * Sends the request, retrying on 429 (rate limited) and 5xx (transient).
+     *
+     * The free tier allows 5 requests per minute per model, and one agent run
+     * makes one call per round - so hitting the limit mid-run is normal
+     * operation, not an exceptional case. Google tells us how long to wait in
+     * the error body; we honour that when present and fall back to exponential
+     * backoff when it is not.
+     *
+     * 4xx other than 429 are NOT retried: a malformed request will be just as
+     * malformed the second time, and retrying only wastes the caller's time.
+     */
+    private HttpResponse<String> sendWithRetry(HttpRequest request)
+            throws IOException, InterruptedException {
+
+        LlmException last = null;
+
+        for (int attempt = 0; attempt <= maxRetries; attempt++) {
+
+            HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+            int status = response.statusCode();
+
+            if (status == 200) {
+                if (attempt > 0) {
+                    log.info("Gemini recovered after {} retry attempt(s)", attempt);
+                }
+                return response;
+            }
+
+            boolean retryable = status == 429 || status >= 500;
+            last = new LlmException("Gemini returned " + status + ": " + response.body());
+
+            if (!retryable || attempt == maxRetries) {
+                throw last;
+            }
+
+            long waitMillis = retryDelayFrom(response.body())
+                    .orElse(baseBackoffMillis * (1L << attempt));
+
+            // Jitter, so several concurrent runs do not retry in lockstep.
+            waitMillis += (long) (Math.random() * 500);
+
+            log.warn("Gemini {} on attempt {}/{} - backing off {} ms",
+                    status, attempt + 1, maxRetries, waitMillis);
+            Thread.sleep(waitMillis);
+        }
+
+        throw last;
+    }
+
+    private Optional<Long> retryDelayFrom(String body) {
+        if (body == null) {
+            return Optional.empty();
+        }
+        Matcher m = RETRY_DELAY.matcher(body);
+        if (m.find()) {
+            try {
+                double seconds = Double.parseDouble(m.group(1));
+                return Optional.of((long) Math.ceil(seconds * 1000));
+            } catch (NumberFormatException ignored) {
+                // fall through to exponential backoff
+            }
+        }
+        return Optional.empty();
+    }
+
+    private ObjectNode buildRequest(String systemPrompt, List<LlmMessage> history, List<ToolSpec> tools) {
 
         ObjectNode root = mapper.createObjectNode();
 
