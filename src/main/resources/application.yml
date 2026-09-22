@@ -36,7 +36,7 @@ forgeflow:
     max-tool-calls: 25
     max-repair-rounds: 3
     max-input-tokens: 120000
-    timeout-seconds: 90
+    timeout-seconds: 240
   retrieval:
     whole-project-threshold: 15
     top-k: 8

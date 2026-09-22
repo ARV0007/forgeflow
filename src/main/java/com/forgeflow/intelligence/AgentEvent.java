@@ -29,6 +29,14 @@ public record AgentEvent(String type, String message, String path, Object data) 
         return new AgentEvent("tool_failed", reason, null, toolName);
     }
 
+    public static AgentEvent build(boolean passed, String output) {
+        return new AgentEvent("build", passed ? "Build passed" : "Build failed", null, output);
+    }
+
+    public static AgentEvent repair(int round, int max) {
+        return new AgentEvent("repair", "Repair round " + round + " of " + max, null, null);
+    }
+
     public static AgentEvent done(Object result) {
         return new AgentEvent("done", "Finished", null, result);
     }
