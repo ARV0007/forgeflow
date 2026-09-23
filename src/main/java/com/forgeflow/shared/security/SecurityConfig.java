@@ -30,6 +30,9 @@ public class SecurityConfig {
                 // that dispatch arrives anonymous - without this, a real 500 comes
                 // back as an empty 403 and you debug the wrong thing for two days.
                 .requestMatchers("/error").permitAll()
+                // The workbench UI. Static files carry no data of their own; every
+                // call they make still needs a token.
+                .requestMatchers("/", "/index.html", "/styles.css", "/app.js", "/favicon.ico").permitAll()
                 .requestMatchers("/actuator/**").permitAll()
                 .requestMatchers("/api/v1/auth/**").permitAll()
                 .anyRequest().authenticated())

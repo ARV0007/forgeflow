@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ForgeFlow</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<!-- ─────────────── sign in ─────────────── -->
+<section id="gate" class="gate">
+  <div class="gate-card">
+    <h1 class="wordmark">ForgeFlow</h1>
+    <p class="gate-lede">An agent that builds web apps &mdash; and is not allowed to
+       finish until the code it wrote passes a build.</p>
+
+    <div class="stack">
+      <label class="field">
+        <span>Email</span>
+        <input id="email" type="text" autocomplete="off" autocapitalize="none"
+               autocorrect="off" spellcheck="false" placeholder="you@example.com">
+      </label>
+      <label class="field">
+        <span>Password</span>
+        <input id="password" type="password" autocomplete="off" placeholder="your password">
+      </label>
+      <div class="gate-actions">
+        <button id="btn-login" type="button" class="btn btn-primary">Sign in</button>
+        <button id="btn-signup" type="button" class="btn btn-quiet">Create account</button>
+      </div>
+      <p id="gate-msg" class="msg" role="status"></p>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────── workbench ─────────────── -->
+<div id="shell" class="shell" hidden>
+
+  <header class="topbar">
+    <span class="wordmark wordmark-sm">ForgeFlow</span>
+    <select id="project-select" class="select" aria-label="Project"></select>
+    <button id="btn-new-project" class="btn btn-quiet btn-sm">New project</button>
+    <span class="spacer"></span>
+    <span id="whoami" class="whoami"></span>
+    <button id="btn-signout" class="btn btn-quiet btn-sm">Sign out</button>
+  </header>
+
+  <main class="panes">
+
+    <!-- left: the run record -->
+    <section class="pane pane-record">
+      <div class="pane-head">
+        <h2>Run record</h2>
+        <span id="run-state" class="run-state"></span>
+      </div>
+
+      <div id="record" class="record" aria-live="polite">
+        <div class="empty">
+          <p>Nothing built yet.</p>
+          <p class="empty-sub">Describe what you want and watch the agent work.</p>
+          <div class="chips">
+            <button class="chip" type="button">A recipe page with three cards</button>
+            <button class="chip" type="button">A countdown timer to new year</button>
+            <button class="chip" type="button">A tip calculator</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <textarea id="prompt" rows="2" placeholder="Describe a change&hellip;" aria-label="Prompt"></textarea>
+        <button id="btn-send" type="button" class="btn btn-primary">Build</button>
+      </div>
+    </section>
+
+    <!-- right: the artifact -->
+    <section class="pane pane-output">
+      <div class="tabs" role="tablist">
+        <button class="tab is-on" data-tab="files" role="tab">Files</button>
+        <button class="tab" data-tab="code" role="tab">Code</button>
+        <button class="tab" data-tab="preview" role="tab">Preview</button>
+        <span class="spacer"></span>
+        <button id="btn-build" class="btn btn-quiet btn-sm">Run build</button>
+        <button id="btn-preview" class="btn btn-quiet btn-sm">Open preview</button>
+      </div>
+
+      <div id="tab-files" class="tabpanel is-on">
+        <ul id="file-list" class="files"></ul>
+      </div>
+
+      <div id="tab-code" class="tabpanel">
+        <div id="code-name" class="code-name"></div>
+        <pre id="code-body" class="code"></pre>
+      </div>
+
+      <div id="tab-preview" class="tabpanel">
+        <div id="preview-empty" class="empty">
+          <p>No preview running.</p>
+          <p class="empty-sub">Open preview to serve this project from a container.</p>
+        </div>
+        <iframe id="preview-frame" class="preview" title="Project preview" hidden></iframe>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
