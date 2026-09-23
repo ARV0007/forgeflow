@@ -333,6 +333,10 @@ $('btn-build').addEventListener('click', async () => {
 
 $('btn-preview').addEventListener('click', async () => {
   switchTab('preview');
+  // Clear first: a failed call must not leave the previous preview showing.
+  const frame0 = $('preview-frame');
+  frame0.removeAttribute('src');
+  frame0.hidden = true;
   try {
     const p = await api(`/api/v1/projects/${projectId}/preview`, { method: 'POST' });
     const frame = $('preview-frame');

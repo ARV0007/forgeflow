@@ -3,6 +3,7 @@ package com.forgeflow.execution;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 
@@ -33,6 +34,8 @@ import java.util.stream.Stream;
  * that make up the security model stay visible right here in the code.
  */
 @Component
+@ConditionalOnProperty(name = "forgeflow.sandbox.provider", havingValue = "docker",
+        matchIfMissing = true)
 public class DockerSandboxProvider implements SandboxProvider {
 
     private static final Logger log = LoggerFactory.getLogger(DockerSandboxProvider.class);

@@ -24,6 +24,13 @@ public class SecurityConfig {
         http
             // No browser sessions, no forms - nothing for CSRF to protect.
             .csrf(csrf -> csrf.disable())
+            // X-Frame-Options: DENY is Spring's default and it is right for the
+            // app itself. But previews are now served by this same application,
+            // so the workbench cannot frame its own /p/ pages. SAMEORIGIN keeps
+            // other sites out while letting our iframe work. The generated code
+            // is still contained: every preview response carries a CSP sandbox
+            // directive, which is the control that actually matters here.
+            .headers(h -> h.frameOptions(f -> f.sameOrigin()))
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 // FIRST, deliberately. Tomcat re-dispatches errors to /error, and
@@ -33,6 +40,9 @@ public class SecurityConfig {
                 // The workbench UI. Static files carry no data of their own; every
                 // call they make still needs a token.
                 .requestMatchers("/", "/index.html", "/styles.css", "/app.js", "/favicon.ico").permitAll()
+                // Preview links are meant to be shareable. The token in the URL is the
+                // credential, and PreviewContentController checks it is live.
+                .requestMatchers("/p/**").permitAll()
                 .requestMatchers("/actuator/**").permitAll()
                 .requestMatchers("/api/v1/auth/**").permitAll()
                 .anyRequest().authenticated())
