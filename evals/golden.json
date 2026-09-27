@@ -1,0 +1,25 @@
+{
+  "_comment": "Twenty golden prompts. Each is scored on four checks; a case passes only if all four do. Keep this file stable - the whole point is comparing runs against the SAME prompts as the system changes.",
+  "cases": [
+    { "id": "recipe-cards",     "prompt": "A recipe page with three recipe cards, each showing a name, ingredients and prep time.",     "expect_files": ["index.html"] },
+    { "id": "tip-calculator",   "prompt": "A tip calculator: enter a bill amount and a tip percentage, show the tip and the total.",     "expect_files": ["index.html"], "expect_js": true },
+    { "id": "countdown",        "prompt": "A countdown timer to New Year's Day that updates every second.",                              "expect_files": ["index.html"], "expect_js": true },
+    { "id": "todo-list",        "prompt": "A to-do list where I can type a task, add it, and tick it off.",                              "expect_files": ["index.html"], "expect_js": true },
+    { "id": "portfolio",        "prompt": "A one-page portfolio site with a header, an about section and three project cards.",          "expect_files": ["index.html"] },
+    { "id": "pricing-table",    "prompt": "A pricing page with three plans side by side and a highlighted middle plan.",                 "expect_files": ["index.html"] },
+    { "id": "contact-form",     "prompt": "A contact form with name, email and message fields, and client-side validation.",             "expect_files": ["index.html"], "expect_js": true },
+    { "id": "unit-converter",   "prompt": "A unit converter between celsius and fahrenheit that converts as you type.",                  "expect_files": ["index.html"], "expect_js": true },
+    { "id": "faq-accordion",    "prompt": "An FAQ page with five questions that expand and collapse when clicked.",                      "expect_files": ["index.html"], "expect_js": true },
+    { "id": "image-gallery",    "prompt": "A photo gallery grid with six placeholder tiles and captions.",                               "expect_files": ["index.html"] },
+    { "id": "dice-roller",      "prompt": "A dice roller that shows a random number from one to six when you press a button.",           "expect_files": ["index.html"], "expect_js": true },
+    { "id": "quote-machine",    "prompt": "A page that shows a random quote from a built-in list, with a button for a new one.",         "expect_files": ["index.html"], "expect_js": true },
+    { "id": "restaurant-menu",  "prompt": "A restaurant menu page with starters, mains and desserts as three sections.",                 "expect_files": ["index.html"] },
+    { "id": "stopwatch",        "prompt": "A stopwatch with start, stop and reset buttons showing minutes, seconds and hundredths.",     "expect_files": ["index.html"], "expect_js": true },
+    { "id": "colour-picker",    "prompt": "A colour picker that changes the page background to the chosen colour and shows its hex.",    "expect_files": ["index.html"], "expect_js": true },
+    { "id": "landing-page",     "prompt": "A product landing page with a hero headline, three feature blocks and a call to action.",     "expect_files": ["index.html"] },
+    { "id": "word-counter",     "prompt": "A textarea that counts words and characters live as you type.",                               "expect_files": ["index.html"], "expect_js": true },
+    { "id": "blog-index",       "prompt": "A blog index page listing four posts with titles, dates and short excerpts.",                 "expect_files": ["index.html"] },
+    { "id": "password-gen",     "prompt": "A password generator with a length slider and a copy button.",                                "expect_files": ["index.html"], "expect_js": true },
+    { "id": "event-schedule",   "prompt": "A conference schedule page with a table of times, talks and speakers.",                       "expect_files": ["index.html"] }
+  ]
+}
