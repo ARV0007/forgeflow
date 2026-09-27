@@ -28,7 +28,8 @@ forgeflow:
     api-key: ${GOOGLE_API_KEY:}
     model: ${FORGEFLOW_MODEL:gemini-3.1-flash-lite}
     temperature: 0.2
-    timeout-seconds: 30
+    connect-timeout-seconds: 10
+    request-timeout-seconds: 60
   jwt:
     secret: ${JWT_SECRET:change-me-in-env-this-is-local-only}
     expiry-minutes: 120

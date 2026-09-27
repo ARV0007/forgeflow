@@ -47,11 +47,13 @@ public class GeminiClient implements LlmClient {
     private final double temperature;
     private final int maxRetries;
     private final long baseBackoffMillis;
+    private final Duration requestTimeout;
 
     public GeminiClient(@Value("${forgeflow.llm.api-key}") String apiKey,
                         @Value("${forgeflow.llm.model}") String model,
                         @Value("${forgeflow.llm.temperature}") double temperature,
-                        @Value("${forgeflow.llm.timeout-seconds}") long timeoutSeconds,
+                        @Value("${forgeflow.llm.connect-timeout-seconds:10}") long connectTimeoutSeconds,
+                        @Value("${forgeflow.llm.request-timeout-seconds:60}") long requestTimeoutSeconds,
                         @Value("${forgeflow.llm.max-retries:5}") int maxRetries,
                         @Value("${forgeflow.llm.base-backoff-millis:2000}") long baseBackoffMillis) {
         this.apiKey = apiKey;
@@ -59,8 +61,9 @@ public class GeminiClient implements LlmClient {
         this.temperature = temperature;
         this.maxRetries = maxRetries;
         this.baseBackoffMillis = baseBackoffMillis;
+        this.requestTimeout = Duration.ofSeconds(requestTimeoutSeconds);
         this.http = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(timeoutSeconds))
+                .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds))
                 .build();
     }
 
@@ -78,7 +81,7 @@ public class GeminiClient implements LlmClient {
                     .uri(URI.create(BASE + model + ":generateContent"))
                     .header("x-goog-api-key", apiKey)
                     .header("Content-Type", "application/json")
-                    .timeout(Duration.ofSeconds(120))
+                    .timeout(requestTimeout)
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
 
