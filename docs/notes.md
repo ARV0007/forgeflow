@@ -318,3 +318,23 @@ untrusted code and scales differently from everything else.
   *empty*, not malformed — usually because the server isn't running.
 - **Wrong directory** is the most common failure of all. Glance at the prompt
   before anything starting `./` or `git`. `ff` jumps to the project.
+
+## Fixed: LLM timeout was two timeouts under one name (27 Sep 2026)
+
+`forgeflow.llm.timeout-seconds` was wired to `HttpClient.connectTimeout` — how long to wait for the TCP connection to open. The *request* timeout, which bounds how long to wait for Gemini's response, was hardcoded to 120s and ignored config entirely.
+
+So the property that looked like it controlled generation timeouts controlled the one that almost never matters.
+
+Now split: `connect-timeout-seconds: 10` and `request-timeout-seconds: 60`.
+
+The request timeout must stay meaningfully below `agent.timeout-seconds` (240), which bounds the whole run. At 60 a run survives up to four hung calls before the agent gives up. Set it above 240 and it becomes unreachable — the agent timeout always fires first, and you'd have a dead knob again from the other direction.
+
+Verified by inversion: at 1 second a generation fails in 297ms; at the 60s default the same generation succeeds in 6.1s. A config fix isn't done until the knob is shown to move something.
+
+## Ctrl+C on spring-boot:run can leave an orphaned JVM (27 Sep 2026)
+
+`./mvnw spring-boot:run` forks a child Java process. Interrupting Maven does not reliably kill the child, so the JVM keeps running and holding port 8081. Symptoms: "Port 8081 was already in use" after a Ctrl+C, or — worse — a "restarted" app that still behaves like the old one, because the orphan answered the request.
+
+Diagnose with `lsof -i :8081` and compare the PID against the one printed in the startup line of the tab you think is serving. If they differ, you are testing the wrong process.
+
+Worse still: if the shell that spawned it carries a stale exported variable, killing the process is not enough — the tab can respawn with the same environment. Close the tab and open a fresh one. That was what finally resolved an hour of a config change appearing not to take effect.
