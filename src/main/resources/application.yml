@@ -24,7 +24,8 @@ management:
 
 forgeflow:
   mcp:
-    owner-id: ${FORGEFLOW_MCP_OWNER_ID:1}
+    # The identity MCP callers act as. Created on first use, never loginable.
+    service-account-email: ${FORGEFLOW_MCP_SERVICE_EMAIL:mcp-service@forgeflow.internal}
   llm:
     provider: gemini
     api-key: ${GOOGLE_API_KEY:}

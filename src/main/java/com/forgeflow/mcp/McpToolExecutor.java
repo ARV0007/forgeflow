@@ -1,5 +1,6 @@
 package com.forgeflow.mcp;
 
+import com.forgeflow.account.ServiceAccounts;
 import com.forgeflow.intelligence.AgentService;
 import com.forgeflow.workspace.ProjectFileRepository;
 import com.forgeflow.workspace.ProjectService;
@@ -15,9 +16,9 @@ import java.util.stream.Collectors;
 /**
  * Runs a named MCP tool against the real services.
  *
- * MCP requests carry no JWT, so everything here acts as one fixed service
- * account. Projects made through MCP belong to that user, not to whoever is
- * driving the client.
+ * MCP requests carry no JWT, so everything here acts as one service account,
+ * found by email and created on first use (see ServiceAccounts). Projects made
+ * through MCP belong to that account, not to whoever is driving the client.
  */
 @Component
 public class McpToolExecutor {
@@ -25,16 +26,40 @@ public class McpToolExecutor {
     private final ProjectService projects;
     private final AgentService agent;
     private final ProjectFileRepository files;
-    private final Long ownerId;
+    private final ServiceAccounts serviceAccounts;
+    private final String serviceAccountEmail;
+
+    /** Resolved on first use, then fixed for the life of the process. */
+    private volatile Long ownerId;
 
     public McpToolExecutor(ProjectService projects,
                            AgentService agent,
                            ProjectFileRepository files,
-                           @Value("${forgeflow.mcp.owner-id:1}") Long ownerId) {
+                           ServiceAccounts serviceAccounts,
+                           @Value("${forgeflow.mcp.service-account-email}") String serviceAccountEmail) {
         this.projects = projects;
         this.agent = agent;
         this.files = files;
-        this.ownerId = ownerId;
+        this.serviceAccounts = serviceAccounts;
+        this.serviceAccountEmail = serviceAccountEmail;
+    }
+
+    /**
+     * The identity every MCP call acts as. Provisioned lazily rather than at
+     * startup, so a database that is briefly unreachable cannot stop the app
+     * from booting.
+     */
+    private Long ownerId() {
+        Long id = ownerId;
+        if (id == null) {
+            synchronized (this) {
+                if (ownerId == null) {
+                    ownerId = serviceAccounts.ensure(serviceAccountEmail, "MCP service account");
+                }
+                id = ownerId;
+            }
+        }
+        return id;
     }
 
     /** A tool result: text the model reads, plus whether it went wrong. */
@@ -67,7 +92,7 @@ public class McpToolExecutor {
     private Map<String, Object> createProject(JsonNode args) {
         String name = args.path("name").asText();
         String desc = args.path("description").asText();
-        var p = projects.create(ownerId, new CreateProjectRequest(name, desc));
+        var p = projects.create(ownerId(), new CreateProjectRequest(name, desc));
         return content("Created project " + p.id() + " (\"" + p.name() + "\"). "
                 + "Use this project_id with generate_app.", false);
     }
@@ -75,7 +100,11 @@ public class McpToolExecutor {
     private Map<String, Object> generateApp(JsonNode args) {
         Long projectId = args.path("project_id").asLong();
         String prompt = args.path("prompt").asText();
-        var run = agent.generate(projectId, ownerId, prompt);
+        // AgentService does no access check of its own - AgentController does
+        // it, and MCP does not go through AgentController. Without this line an
+        // MCP caller could write into any project id it guessed.
+        projects.requireWrite(projectId, ownerId());
+        var run = agent.generate(projectId, ownerId(), prompt);
         String report = "runId=" + run.runId()
                 + " status=" + run.status()
                 + " stopReason=" + run.stopReason()
@@ -94,7 +123,7 @@ public class McpToolExecutor {
         // Ownership check first: throws if the project is not the service
         // account's, which is what turns a wrong project_id into a readable
         // tool error instead of someone else's file list.
-        projects.getById(projectId, ownerId);
+        projects.getById(projectId, ownerId());
         var found = files.findByProjectIdOrderByPath(projectId);
         if (found.isEmpty()) {
             return content("Project " + projectId + " has no files yet. "
