@@ -15,6 +15,11 @@ spring:
 
 server:
   port: ${PORT:8081}
+  # Behind Render's proxy every request arrives from the proxy's address. This
+  # makes Tomcat take the client's IP from X-Forwarded-For - but ONLY when the
+  # request came from a private-network proxy, so a client on the open internet
+  # can't spoof its IP by sending the header itself. Rate limits key on that IP.
+  forward-headers-strategy: native
 
 management:
   endpoints:
@@ -46,6 +51,16 @@ forgeflow:
       pro-price-id: ${STRIPE_PRO_PRICE_ID:}
       # whsec_... from the Stripe dashboard (or `stripe listen`). Blank = webhook answers 503.
       webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
+  ratelimit:
+    enabled: true
+    # Blank = in-memory buckets (fine for one instance). Set REDIS_URL
+    # (redis://... or rediss://... for TLS) to share limits across instances.
+    redis-url: ${REDIS_URL:}
+    auth-per-minute: 10      # login + signup, per IP
+    ai-per-minute: 6         # generate / chat / retry, per user
+    mcp-per-minute: 30       # /mcp, per IP
+    invites-per-hour: 20     # adding members, per user
+    api-per-minute: 300      # everything else under /api, per user
   chat:
     # Spec: "past 10 chat messages (session history)" - the model's memory window.
     memory-messages: 10

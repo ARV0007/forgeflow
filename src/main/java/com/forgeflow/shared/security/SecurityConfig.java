@@ -1,6 +1,10 @@
 package com.forgeflow.shared.security;
 
 import jakarta.servlet.http.HttpServletResponse;
+import com.forgeflow.shared.ratelimit.RateLimitFilter;
+import com.forgeflow.shared.ratelimit.RateLimitRules;
+import com.forgeflow.shared.ratelimit.RateLimiter;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.HttpMethod;
 import org.springframework.context.annotation.Configuration;
@@ -15,9 +19,16 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
+    private final RateLimiter rateLimiter;
+    private final RateLimitRules rateLimitRules;
+    private final boolean rateLimitEnabled;
 
-    public SecurityConfig(JwtAuthFilter jwtAuthFilter) {
+    public SecurityConfig(JwtAuthFilter jwtAuthFilter, RateLimiter rateLimiter, RateLimitRules rateLimitRules,
+                          @Value("${forgeflow.ratelimit.enabled:true}") boolean rateLimitEnabled) {
         this.jwtAuthFilter = jwtAuthFilter;
+        this.rateLimiter = rateLimiter;
+        this.rateLimitRules = rateLimitRules;
+        this.rateLimitEnabled = rateLimitEnabled;
     }
 
     @Bean
@@ -64,6 +75,12 @@ public class SecurityConfig {
                         (request, response, authException) ->
                                 response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized")))
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+
+        // Right after the JWT filter: late enough to know who is calling, early
+        // enough that a limited request never reaches a controller.
+        if (rateLimitEnabled) {
+            http.addFilterAfter(new RateLimitFilter(rateLimiter, rateLimitRules), JwtAuthFilter.class);
+        }
 
         return http.build();
     }

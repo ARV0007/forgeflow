@@ -31,12 +31,25 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      # The rate limiter's Redis tests skip when Redis is absent; here it is
+      # present, so they run. Same major version Render's Key Value offers.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
     env:
       DB_URL: jdbc:postgresql://localhost:5432/forgeflow
       # No Docker daemon inside the job's sandbox path, same as Render: use the
       # in-JVM provider. The config seam that made the deploy possible makes
       # CI possible too.
       FORGEFLOW_SANDBOX_PROVIDER: in-process
+      REDIS_TEST_URL: redis://localhost:6379
 
     steps:
       - uses: actions/checkout@v4

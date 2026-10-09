@@ -12,3 +12,7 @@ forgeflow:
     stripe:
       # Lets the tests sign webhook payloads the way Stripe would.
       webhook-secret: whsec_test_only_not_a_real_secret
+  ratelimit:
+    # Every test calls from 127.0.0.1 and signs up dozens of users; limits
+    # would trip constantly. RateLimitTest switches them back on, low.
+    enabled: false
