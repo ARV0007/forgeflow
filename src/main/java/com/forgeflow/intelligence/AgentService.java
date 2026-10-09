@@ -1,14 +1,13 @@
 package com.forgeflow.intelligence;
 
 import com.forgeflow.execution.BuildResult;
-import com.forgeflow.execution.SandboxProvider;
+import com.forgeflow.execution.ExecutionService;
 import com.forgeflow.intelligence.dto.GenerateResponse;
 import com.forgeflow.shared.llm.LlmClient;
 import com.forgeflow.shared.llm.LlmMessage;
 import com.forgeflow.shared.llm.LlmResponse;
 import com.forgeflow.shared.llm.ToolCall;
 import com.forgeflow.shared.llm.ToolResult;
-import com.forgeflow.workspace.ProjectFileService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -41,8 +40,7 @@ public class AgentService {
     private final LlmClient llm;
     private final AgentTools tools;
     private final GenerationRunRepository runs;
-    private final SandboxProvider sandbox;
-    private final ProjectFileService files;
+    private final ExecutionService execution;
 
     private final int maxToolCalls;
     private final long timeoutSeconds;
@@ -52,8 +50,7 @@ public class AgentService {
     public AgentService(LlmClient llm,
                         AgentTools tools,
                         GenerationRunRepository runs,
-                        SandboxProvider sandbox,
-                        ProjectFileService files,
+                        ExecutionService execution,
                         @Value("${forgeflow.agent.max-tool-calls}") int maxToolCalls,
                         @Value("${forgeflow.agent.timeout-seconds}") long timeoutSeconds,
                         @Value("${forgeflow.agent.max-input-tokens}") int maxInputTokens,
@@ -61,8 +58,7 @@ public class AgentService {
         this.llm = llm;
         this.tools = tools;
         this.runs = runs;
-        this.sandbox = sandbox;
-        this.files = files;
+        this.execution = execution;
         this.maxToolCalls = maxToolCalls;
         this.timeoutSeconds = timeoutSeconds;
         this.maxInputTokens = maxInputTokens;
@@ -208,7 +204,7 @@ public class AgentService {
                         continue;
                     }
 
-                    ToolResult result = tools.execute(projectId, call);
+                    ToolResult result = tools.execute(projectId, userId, call);
                     results.add(result);
 
                     if (!result.ok()) {
@@ -282,7 +278,8 @@ public class AgentService {
 
     private BuildResult verify(Long projectId, Consumer<AgentEvent> listener) {
         emit(listener, AgentEvent.status("Building"));
-        BuildResult check = sandbox.build(projectId, files.snapshot(projectId));
+        // Through ExecutionService, so the gate's builds show up in the Logs Stream.
+        BuildResult check = execution.build(projectId);
         emit(listener, AgentEvent.build(check.passed(), check.output()));
         return check;
     }

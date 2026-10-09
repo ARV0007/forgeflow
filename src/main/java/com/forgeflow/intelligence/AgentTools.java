@@ -3,8 +3,8 @@ package com.forgeflow.intelligence;
 import com.forgeflow.shared.llm.ToolCall;
 import com.forgeflow.shared.llm.ToolResult;
 import com.forgeflow.shared.llm.ToolSpec;
-import com.forgeflow.workspace.ProjectFile;
-import com.forgeflow.workspace.ProjectFileRepository;
+import com.forgeflow.workspace.ProjectFileService;
+import com.forgeflow.workspace.dto.FileEntry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -27,9 +27,9 @@ public class AgentTools {
     private static final Logger log = LoggerFactory.getLogger(AgentTools.class);
     private static final int MAX_FILE_BYTES = 200_000;
 
-    private final ProjectFileRepository files;
+    private final ProjectFileService files;
 
-    public AgentTools(ProjectFileRepository files) {
+    public AgentTools(ProjectFileService files) {
         this.files = files;
     }
 
@@ -70,13 +70,18 @@ public class AgentTools {
         return s;
     }
 
+    /**
+     * @param userId the person whose request this run serves. Files the model
+     *               writes are recorded as written by them - the model is their
+     *               tool, not an author of its own.
+     */
     @Transactional
-    public ToolResult execute(Long projectId, ToolCall call) {
+    public ToolResult execute(Long projectId, Long userId, ToolCall call) {
         try {
             return switch (call.name()) {
                 case "list_files" -> listFiles(projectId);
                 case "read_file" -> readFile(projectId, str(call, "path"));
-                case "write_file" -> writeFile(projectId, str(call, "path"), str(call, "content"));
+                case "write_file" -> writeFile(projectId, userId, str(call, "path"), str(call, "content"));
                 case "finish" -> ToolResult.ok("finish", "Done.");
                 default -> ToolResult.failed(call.name(), "Unknown tool: " + call.name());
             };
@@ -92,25 +97,25 @@ public class AgentTools {
     }
 
     private ToolResult listFiles(Long projectId) {
-        List<ProjectFile> all = files.findByProjectIdOrderByPath(projectId);
+        List<FileEntry> all = files.list(projectId);
         if (all.isEmpty()) {
             return ToolResult.ok("list_files", "(the project is empty)");
         }
         StringBuilder sb = new StringBuilder();
-        for (ProjectFile f : all) {
-            sb.append(f.getPath()).append("  (").append(f.getSizeBytes()).append(" bytes)\n");
+        for (FileEntry f : all) {
+            sb.append(f.path()).append("  (").append(f.sizeBytes()).append(" bytes)\n");
         }
         return ToolResult.ok("list_files", sb.toString());
     }
 
     private ToolResult readFile(Long projectId, String rawPath) {
         String path = safePath(rawPath);
-        return files.findByProjectIdAndPath(projectId, path)
-                .map(f -> ToolResult.ok("read_file", f.getContent()))
+        return files.read(projectId, path)
+                .map(content -> ToolResult.ok("read_file", content))
                 .orElseGet(() -> ToolResult.failed("read_file", "No such file: " + path));
     }
 
-    private ToolResult writeFile(Long projectId, String rawPath, String content) {
+    private ToolResult writeFile(Long projectId, Long userId, String rawPath, String content) {
         String path = safePath(rawPath);
         if (content == null) {
             throw new ToolException("content is required");
@@ -120,18 +125,7 @@ public class AgentTools {
             throw new ToolException("file too large: " + bytes + " bytes, limit is " + MAX_FILE_BYTES);
         }
 
-        ProjectFile file = files.findByProjectIdAndPath(projectId, path).orElseGet(() -> {
-            ProjectFile f = new ProjectFile();
-            f.setProjectId(projectId);
-            f.setPath(path);
-            f.setVersion(0);
-            return f;
-        });
-
-        file.setContent(content);
-        file.setSizeBytes(bytes);
-        file.setVersion(file.getVersion() + 1);
-        files.save(file);
+        files.write(projectId, path, content, userId);
 
         return ToolResult.ok("write_file", "Wrote " + path + " (" + bytes + " bytes)");
     }

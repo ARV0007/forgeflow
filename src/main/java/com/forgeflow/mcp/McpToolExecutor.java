@@ -2,7 +2,7 @@ package com.forgeflow.mcp;
 
 import com.forgeflow.account.ServiceAccounts;
 import com.forgeflow.intelligence.AgentService;
-import com.forgeflow.workspace.ProjectFileRepository;
+import com.forgeflow.workspace.ProjectFileService;
 import com.forgeflow.workspace.ProjectService;
 import com.forgeflow.workspace.dto.CreateProjectRequest;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,7 +25,7 @@ public class McpToolExecutor {
 
     private final ProjectService projects;
     private final AgentService agent;
-    private final ProjectFileRepository files;
+    private final ProjectFileService files;
     private final ServiceAccounts serviceAccounts;
     private final String serviceAccountEmail;
 
@@ -34,7 +34,7 @@ public class McpToolExecutor {
 
     public McpToolExecutor(ProjectService projects,
                            AgentService agent,
-                           ProjectFileRepository files,
+                           ProjectFileService files,
                            ServiceAccounts serviceAccounts,
                            @Value("${forgeflow.mcp.service-account-email}") String serviceAccountEmail) {
         this.projects = projects;
@@ -124,13 +124,13 @@ public class McpToolExecutor {
         // account's, which is what turns a wrong project_id into a readable
         // tool error instead of someone else's file list.
         projects.getById(projectId, ownerId());
-        var found = files.findByProjectIdOrderByPath(projectId);
+        var found = files.list(projectId);
         if (found.isEmpty()) {
             return content("Project " + projectId + " has no files yet. "
                     + "Call generate_app first.", false);
         }
         String listing = found.stream()
-                .map(f -> f.getPath() + "  " + f.getSizeBytes() + " bytes")
+                .map(f -> f.path() + "  " + f.sizeBytes() + " bytes")
                 .collect(Collectors.joining("\n"));
         return content(found.size() + " file(s) in project " + projectId + ":\n" + listing, false);
     }

@@ -35,6 +35,14 @@ public class ProjectFile {
     @Column(nullable = false)
     private Integer version = 1;
 
+    /** Who first wrote this path. Null for files older than V4. */
+    @Column(name = "created_by", updatable = false)
+    private Long createdBy;
+
+    /** Who wrote the current version. */
+    @Column(name = "updated_by")
+    private Long updatedBy;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -70,6 +78,12 @@ public class ProjectFile {
 
     public Integer getVersion() { return version; }
     public void setVersion(Integer version) { this.version = version; }
+
+    public Long getCreatedBy() { return createdBy; }
+    public void setCreatedBy(Long createdBy) { this.createdBy = createdBy; }
+
+    public Long getUpdatedBy() { return updatedBy; }
+    public void setUpdatedBy(Long updatedBy) { this.updatedBy = updatedBy; }
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
