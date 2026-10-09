@@ -172,6 +172,7 @@ public class AgentService {
         int promptTokens = 0;
         int completionTokens = 0;
         int totalTokens = 0;
+        int cachedTokens = 0;
         Boolean buildPassed = null;
         String summary = null;
         String stopReason = null;
@@ -206,12 +207,13 @@ public class AgentService {
                         call.error(e);
                         throw e;
                     }
-                    call.tag("llm.total_tokens", response.totalTokens());
+                    call.tag("llm.total_tokens", response.totalTokens()).tag("llm.cached_tokens", response.cachedTokens());
                 }
 
                 promptTokens += response.promptTokens();
                 completionTokens += response.completionTokens();
                 totalTokens += response.totalTokens();
+                cachedTokens += response.cachedTokens();
 
                 history.add(LlmMessage.model(response.rawParts()));
 
@@ -315,6 +317,7 @@ public class AgentService {
         run.setStatus(status);
         run.setStopReason(stopReason);
         run.setPromptTokens(promptTokens);
+        run.setCachedTokens(cachedTokens);
         run.setCompletionTokens(completionTokens);
         run.setToolCallCount(toolCallCount);
         run.setFilesWritten(written.size());

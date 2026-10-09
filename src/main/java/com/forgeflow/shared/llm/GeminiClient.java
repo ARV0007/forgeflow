@@ -220,7 +220,7 @@ public class GeminiClient implements LlmClient {
         return root;
     }
 
-    private LlmResponse parseResponse(JsonNode root) {
+    LlmResponse parseResponse(JsonNode root) {
         JsonNode candidates = root.path("candidates");
         if (!candidates.isArray() || candidates.isEmpty()) {
             throw new LlmException("Gemini returned no candidates: " + root);
@@ -254,10 +254,16 @@ public class GeminiClient implements LlmClient {
         int prompt = usage.path("promptTokenCount").asInt(0);
         int completion = usage.path("candidatesTokenCount").asInt(0);
         int total = usage.path("totalTokenCount").asInt(prompt + completion);
+        // Implicit caching: Gemini reuses a request's prefix it has seen
+        // recently - our system prompt, tool list and the history so far are
+        // identical from one round to the next - and reports how much of the
+        // prompt it served from cache. Those tokens cost a fraction of normal
+        // input. Nothing to switch on; it only had to be read.
+        int cached = usage.path("cachedContentTokenCount").asInt(0);
 
-        log.debug("Gemini: {} tool call(s), {} prompt + {} completion = {} total tokens",
-                calls.size(), prompt, completion, total);
+        log.debug("Gemini: {} tool call(s), {} prompt ({} cached) + {} completion = {} total tokens",
+                calls.size(), prompt, cached, completion, total);
 
-        return new LlmResponse(text.toString(), calls, parts.toString(), prompt, completion, total);
+        return new LlmResponse(text.toString(), calls, parts.toString(), prompt, completion, total, cached);
     }
 }

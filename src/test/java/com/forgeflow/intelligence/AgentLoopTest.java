@@ -28,6 +28,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class AgentLoopTest extends ApiTestSupport {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    org.springframework.jdbc.core.JdbcTemplate jdbc;
+
     private JsonNode generate(Account a, long projectId) {
         return post("/api/v1/projects/" + projectId + "/generate", a, Map.of("prompt", "build a page"), 200);
     }
@@ -127,6 +130,22 @@ class AgentLoopTest extends ApiTestSupport {
         for (JsonNode f : get("/api/v1/projects/" + id + "/files", a, 200)) {
             assertThat(f.path("path").asText()).doesNotContain("..");
         }
+    }
+
+    @Test
+    void cachedPromptTokensAreSummedOntoTheRun() {
+        Account a = signup("cache");
+        long id = createProject(a, "cache");
+        llm.then(new com.forgeflow.shared.llm.LlmResponse(null,
+                        java.util.List.of(write("index.html", INDEX), write("styles.css", CSS), write("app.js", JS)),
+                        "[]", 1000, 50, 1050, 0))
+           .then(new com.forgeflow.shared.llm.LlmResponse(null, java.util.List.of(finish("Built.")),
+                        "[]", 1200, 10, 1210, 900));     // round two re-sends round one's prefix
+
+        long runId = generate(a, id).path("runId").asLong();
+
+        assertThat(jdbc.queryForObject("SELECT cached_tokens FROM generation_runs WHERE id = ?", Integer.class, runId))
+                .isEqualTo(900);
     }
 
     @Test
