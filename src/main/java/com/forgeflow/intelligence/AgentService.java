@@ -76,18 +76,33 @@ public class AgentService {
 
     public GenerateResponse generate(Long projectId, Long userId, String prompt,
                                      Consumer<AgentEvent> listener) {
+        return generate(projectId, userId, prompt, List.of(), null, listener);
+    }
+
+    /**
+     * @param priorTurns earlier turns of the same conversation, oldest first,
+     *                   as plain USER / MODEL text. This is what gives a chat
+     *                   session memory: "make the header blue" means something
+     *                   only if the model can see what it built last time.
+     * @param sessionId  the chat session this run answers, or null for a
+     *                   one-off generate.
+     */
+    public GenerateResponse generate(Long projectId, Long userId, String prompt,
+                                     List<LlmMessage> priorTurns, Long sessionId,
+                                     Consumer<AgentEvent> listener) {
 
         long startedAt = System.currentTimeMillis();
         long deadline = startedAt + timeoutSeconds * 1000L;
 
         GenerationRun run = new GenerationRun();
         run.setProjectId(projectId);
+        run.setSessionId(sessionId);
         run.setUserId(userId);
         run.setStatus("RUNNING");
         run.setModel(llm.modelName());
         run = runs.save(run);
 
-        List<LlmMessage> history = new ArrayList<>();
+        List<LlmMessage> history = new ArrayList<>(priorTurns == null ? List.of() : priorTurns);
         history.add(LlmMessage.user(prompt));
 
         Set<String> written = new LinkedHashSet<>();
@@ -240,7 +255,8 @@ public class AgentService {
                 totalTokens, durationMs);
 
         GenerateResponse result = new GenerateResponse(run.getId(), status, stopReason, summary,
-                List.copyOf(written), toolCallCount, repairRounds, buildPassed, totalTokens, durationMs);
+                List.copyOf(written), toolCallCount, repairRounds, buildPassed, totalTokens, durationMs,
+                run.getErrorMessage());
 
         emit(listener, AgentEvent.done(result));
         return result;

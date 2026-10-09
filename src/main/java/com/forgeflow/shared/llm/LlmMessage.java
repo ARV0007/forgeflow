@@ -23,6 +23,15 @@ public record LlmMessage(Role role, String text, String rawModelParts, List<Tool
         return new LlmMessage(Role.MODEL, null, rawParts, null);
     }
 
+    /**
+     * A model turn from an EARLIER run, replayed as plain text for conversation
+     * memory. There are no raw parts to echo - that run is over, and its
+     * reasoning signatures belong to it - so the provider renders the text.
+     */
+    public static LlmMessage assistant(String text) {
+        return new LlmMessage(Role.MODEL, text, null, null);
+    }
+
     public static LlmMessage toolResults(List<ToolResult> results) {
         return new LlmMessage(Role.TOOL_RESULTS, null, null, results);
     }

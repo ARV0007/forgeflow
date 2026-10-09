@@ -2,7 +2,9 @@ package com.forgeflow.support;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
@@ -28,12 +30,22 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@Import(TestLlmConfig.class)
 public abstract class ApiTestSupport {
 
     @Autowired
     protected MockMvc mvc;
 
+    /** The model every test talks to. Empty by default: an unscripted call fails like a dead provider. */
+    @Autowired
+    protected ScriptedLlm llm;
+
     protected final ObjectMapper json = new ObjectMapper();
+
+    @BeforeEach
+    void resetModel() {
+        llm.reset();
+    }
 
     public record Account(Long id, String email, String token) {
     }

@@ -8,6 +8,7 @@ import java.util.List;
  * @param stopReason  the MECHANISM - how the loop ended. Kept separate from
  *                    status so a success that ended untidily (NO_TOOL_CALL)
  *                    stays visible to the eval harness.
+ * @param errorMessage why the run broke, when stopReason is ERROR; otherwise null.
  */
 public record GenerateResponse(
         Long runId,
@@ -19,5 +20,6 @@ public record GenerateResponse(
         int repairRounds,
         Boolean buildPassed,
         int totalTokens,
-        long durationMs) {
+        long durationMs,
+        String errorMessage) {
 }

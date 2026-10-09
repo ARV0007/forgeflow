@@ -180,10 +180,16 @@ public class GeminiClient implements LlmClient {
                     turn.putArray("parts").addObject().put("text", m.text());
                 }
                 case MODEL -> {
-                    // Echoed verbatim so thoughtSignature survives the round trip.
                     ObjectNode turn = contents.addObject();
                     turn.put("role", "model");
-                    turn.set("parts", mapper.readTree(m.rawModelParts()));
+                    if (m.rawModelParts() != null) {
+                        // This run's own turn: echoed verbatim so thoughtSignature
+                        // survives the round trip.
+                        turn.set("parts", mapper.readTree(m.rawModelParts()));
+                    } else {
+                        // A previous run's reply, replayed as conversation memory.
+                        turn.putArray("parts").addObject().put("text", m.text() == null ? "" : m.text());
+                    }
                 }
                 case TOOL_RESULTS -> {
                     ObjectNode turn = contents.addObject();
