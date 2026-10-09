@@ -46,7 +46,18 @@ public class PreviewLogs {
     /** Console lines arrive from strangers' browsers, so they are rate-capped per project. */
     static final int CONSOLE_PER_MINUTE = 120;
 
-    private final AtomicLong seq = new AtomicLong();
+    /**
+     * Seeded from the clock (microseconds since the epoch), not zero.
+     *
+     * Sequence numbers double as the SSE event id, and a reconnecting browser
+     * asks for "everything after the last id I saw". Starting at zero meant a
+     * restart - every deploy - handed out 1, 2, 3 again: lower than what the
+     * browser had already seen, so the browser filtered out every new line
+     * and the stream looked dead. Found on the live site after a deploy.
+     * Microseconds keep numbers rising across restarts and stay well inside
+     * JavaScript's exact-integer range.
+     */
+    private final AtomicLong seq = new AtomicLong(System.currentTimeMillis() * 1000);
 
     /** Access-ordered, so the least recently active project's buffer is the one dropped. */
     private final Map<Long, Deque<Line>> buffers = new LinkedHashMap<>(16, 0.75f, true) {
@@ -152,6 +163,11 @@ public class PreviewLogs {
         Set<Consumer<Line>> set = subscribers.computeIfAbsent(projectId, k -> ConcurrentHashMap.newKeySet());
         set.add(listener);
         return () -> set.remove(listener);
+    }
+
+    /** The newest sequence number handed out (by this instance). */
+    public long lastSeq() {
+        return seq.get();
     }
 
     int subscriberCount(Long projectId) {

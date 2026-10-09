@@ -58,6 +58,20 @@ class PreviewLogsTest {
     }
 
     @Test
+    void aRestartedInstanceNumbersAboveTheOldOne() throws Exception {
+        PreviewLogs before = new PreviewLogs();
+        before.info(1L, "build", "old");
+        long lastSeenByBrowser = before.since(1L, 0).get(0).seq();
+
+        Thread.sleep(2);                         // a deploy takes rather longer
+        PreviewLogs after = new PreviewLogs();   // the new instance
+        after.info(1L, "build", "new");
+
+        // The browser resumes "after the last id I saw" - the new line must qualify.
+        assertThat(after.since(1L, lastSeenByBrowser)).extracting(PreviewLogs.Line::message).containsExactly("new");
+    }
+
+    @Test
     void theBridgeGoesStraightAfterTheHeadTag() {
         String out = PreviewContentController.withConsoleBridge(
                 "<html><HEAD lang=\"en\"><title>t</title></HEAD></html>", "/p/abc/__log");

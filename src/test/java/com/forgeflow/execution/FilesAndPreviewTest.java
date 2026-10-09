@@ -267,6 +267,20 @@ class FilesAndPreviewTest extends ApiTestSupport {
         assertThat(count(stream.getResponse().getContentAsString(), "Build started")).isEqualTo(before + 1);
     }
 
+    @Test
+    void aResumeIdFromAnotherInstanceStillGetsTheBacklog() throws Exception {
+        Account owner = signup("owner");
+        long id = createProject(owner, "resume");
+        buildSite(owner, id);
+
+        var req = MockMvcRequestBuilders.get(project(id) + "/preview/logs/stream")
+                .header("Authorization", "Bearer " + owner.token())
+                .header("Last-Event-ID", String.valueOf(Long.MAX_VALUE / 2));    // "seen" lines we never sent
+        MvcResult stream = mvc.perform(req).andReturn();
+
+        assertThat(stream.getResponse().getContentAsString()).contains("Build started");
+    }
+
     private static int count(String haystack, String needle) {
         int n = 0;
         for (int i = haystack.indexOf(needle); i >= 0; i = haystack.indexOf(needle, i + 1)) {

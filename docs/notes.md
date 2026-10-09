@@ -807,4 +807,10 @@ Multi-round runs should show a healthy cached share; single-round runs ~0.
 - The eval runner logs in before every case, and logins are rate-limited
   (10/min per IP). It now waits out 429s; with the default 75s pause it never
   hits them.
+- **SSE event ids must survive restarts.** If they double as "resume after"
+  cursors (`Last-Event-ID`), a restart that numbers from 1 again silently
+  hides everything new. Seed them from the clock, and treat an id from the
+  future as "send everything".
+- Proxies drop idle connections. A long-lived SSE stream needs a periodic
+  comment line (`: keep-alive`) even when there's nothing to say.
 

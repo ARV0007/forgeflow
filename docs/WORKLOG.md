@@ -787,6 +787,16 @@ asked for a tip calculator, and the reply streamed in and was saved
 Logs tab connected live. That's the redesign, the new UI and the SSE fix
 working on the real deployment.
 
+**…and one bug only a deploy could show.** Testing the preview on the live
+site right after a deploy, the Logs tab sat on "connecting…" and showed
+nothing new. The page had seen log lines up to #6 from the *old* server;
+the new server numbered from #1 again; the browser resumed "after #6" and
+so threw every new line away. Log sequence numbers now start from the clock
+(microseconds), so they keep rising across restarts; the server also treats a
+resume id "from the future" as "send everything"; the page says "live" as soon
+as the stream connects; and a 25-second keep-alive stops proxies closing a
+quiet stream. Two regression tests, each sabotage-checked.
+
 ---
 
 ## Open items

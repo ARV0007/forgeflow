@@ -22,6 +22,10 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -33,6 +37,12 @@ import java.util.concurrent.atomic.AtomicLong;
 @RestController
 @RequestMapping("/api/v1/projects/{projectId}")
 public class ExecutionController {
+
+    private static final ScheduledExecutorService HEARTBEAT = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "sse-heartbeat");
+        t.setDaemon(true);
+        return t;
+    });
 
     private final ExecutionService execution;
     private final ProjectService projects;
@@ -97,6 +107,12 @@ public class ExecutionController {
                                 Authentication auth) {
         projects.getById(projectId, caller(auth));
         long from = Math.max(after, parseOrZero(lastEventId));
+        // An id from the future can't be ours: the client last spoke to a
+        // different instance (or this one before its clock moved back).
+        // Send everything rather than silently send nothing.
+        if (from > logs.lastSeq()) {
+            from = 0;
+        }
 
         SseEmitter emitter = new SseEmitter(ExecutionService.PREVIEW_TTL.toMillis());
         AtomicLong lastSent = new AtomicLong(from);
@@ -114,9 +130,26 @@ public class ExecutionController {
                     }
                 }
             });
-            emitter.onCompletion(unsubscribe);
-            emitter.onTimeout(unsubscribe);
-            emitter.onError(e -> unsubscribe.run());
+            // Proxies (Render's included) close a connection that has been
+            // silent for a while. A comment line every 25s costs nothing,
+            // keeps the stream open, and - when the browser has gone - fails,
+            // which cleans the subscriber up.
+            ScheduledFuture<?> keepAlive = HEARTBEAT.scheduleAtFixedRate(() -> {
+                synchronized (emitter) {
+                    try {
+                        emitter.send(SseEmitter.event().comment("keep-alive"));
+                    } catch (IOException | IllegalStateException e) {
+                        emitter.completeWithError(e);
+                    }
+                }
+            }, 25, 25, TimeUnit.SECONDS);
+            Runnable stop = () -> {
+                keepAlive.cancel(false);
+                unsubscribe.run();
+            };
+            emitter.onCompletion(stop);
+            emitter.onTimeout(stop);
+            emitter.onError(e -> stop.run());
 
             for (PreviewLogs.Line line : logs.since(projectId, from)) {
                 send(emitter, line);

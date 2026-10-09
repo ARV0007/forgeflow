@@ -72,7 +72,7 @@ function explain(err) {
  * Authorization header, so frames are parsed by hand: "event:", "id:" and
  * "data:" lines, separated by a blank line.
  */
-async function sse(path, { method = 'POST', body, signal, headers = {} }, onEvent) {
+async function sse(path, { method = 'POST', body, signal, headers = {}, onOpen }, onEvent) {
   const res = await fetch(path, {
     method,
     signal,
@@ -88,6 +88,7 @@ async function sse(path, { method = 'POST', body, signal, headers = {} }, onEven
     try { data = await res.json(); } catch { /* not JSON */ }
     throw explain(new ApiError(res.status, data));
   }
+  if (onOpen) onOpen();
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -603,11 +604,9 @@ function startLogs() {
       await sse(`/api/v1/projects/${project}/preview/logs/stream`, {
         method: 'GET', signal: controller.signal,
         headers: state.lastLogSeq ? { 'Last-Event-ID': String(state.lastLogSeq) } : {},
-      }, (event, line) => {
-        $('log-conn').textContent = 'live';
-        delay = 1000;
-        addLogLine(line);
-      });
+        // Connected is "live", whether or not anything has happened yet.
+        onOpen: () => { $('log-conn').textContent = 'live'; delay = 1000; },
+      }, (event, line) => addLogLine(line));
     } catch (err) {
       if (controller.signal.aborted) return;
       if (err.status === 401 || err.status === 404) { $('log-conn').textContent = 'unavailable'; return; }
