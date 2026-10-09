@@ -70,8 +70,15 @@ forgeflow:
     max-input-tokens: 120000
     timeout-seconds: 240
   retrieval:
+    # Up to this many files, the agent just reads the project; past it, each
+    # request carries the top-k most relevant chunks (RAG).
     whole-project-threshold: 15
     top-k: 8
+    # gemini (needs GOOGLE_API_KEY) | hashing (offline, keyword-level)
+    embedder: ${FORGEFLOW_EMBEDDER:gemini}
+    embedding-model: gemini-embedding-001
+    # async | sync | off - re-index after each run that changed files
+    index-on-generate: async
   sandbox:
     provider: docker
     cpu-limit: 0.5

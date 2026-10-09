@@ -6,6 +6,8 @@ import com.forgeflow.billing.UsageLog;
 import com.forgeflow.billing.UsageMeter;
 import com.forgeflow.execution.BuildResult;
 import com.forgeflow.execution.ExecutionService;
+import com.forgeflow.intelligence.retrieval.CodeIndex;
+import org.springframework.context.ApplicationEventPublisher;
 import com.forgeflow.intelligence.dto.GenerateResponse;
 import com.forgeflow.shared.llm.LlmClient;
 import com.forgeflow.shared.llm.LlmMessage;
@@ -47,6 +49,8 @@ public class AgentService {
     private final ExecutionService execution;
     private final Entitlements entitlements;
     private final UsageMeter usage;
+    private final CodeIndex index;
+    private final ApplicationEventPublisher events;
 
     private final int maxToolCalls;
     private final long timeoutSeconds;
@@ -59,6 +63,8 @@ public class AgentService {
                         ExecutionService execution,
                         Entitlements entitlements,
                         UsageMeter usage,
+                        CodeIndex index,
+                        ApplicationEventPublisher events,
                         @Value("${forgeflow.agent.max-tool-calls}") int maxToolCalls,
                         @Value("${forgeflow.agent.timeout-seconds}") long timeoutSeconds,
                         @Value("${forgeflow.agent.max-input-tokens}") int maxInputTokens,
@@ -69,6 +75,8 @@ public class AgentService {
         this.execution = execution;
         this.entitlements = entitlements;
         this.usage = usage;
+        this.index = index;
+        this.events = events;
         this.maxToolCalls = maxToolCalls;
         this.timeoutSeconds = timeoutSeconds;
         this.maxInputTokens = maxInputTokens;
@@ -114,7 +122,16 @@ public class AgentService {
         run = runs.save(run);
 
         List<LlmMessage> history = new ArrayList<>(priorTurns == null ? List.of() : priorTurns);
-        history.add(LlmMessage.user(prompt));
+        // RAG: on a project too big to send whole, the request travels with
+        // the excerpts most relevant to it. Retrieval failing is never fatal -
+        // the agent still has list_files, read_file and search_code.
+        String request = prompt;
+        try {
+            request = index.contextFor(projectId, prompt).map(ctx -> prompt + "\n\n" + ctx).orElse(prompt);
+        } catch (RuntimeException e) {
+            log.warn("retrieval for project {} failed, continuing without it: {}", projectId, e.toString());
+        }
+        history.add(LlmMessage.user(request));
 
         Set<String> written = new LinkedHashSet<>();
         int toolCallCount = 0;
@@ -265,6 +282,11 @@ public class AgentService {
         // prompt (not the project owner) means inviting someone onto your
         // project never lets them spend your allowance.
         usage.record(userId, projectId, UsageLog.AI_TOKENS, totalTokens, "run:" + run.getId());
+
+        if (!written.isEmpty()) {
+            events.publishEvent(new CodeGenerated(projectId, run.getId(), userId, status,
+                    List.copyOf(written), java.time.Instant.now()));
+        }
 
         log.info("run {} {} ({}) - {} tool calls, {} repair round(s), build {}, {} tokens, {} ms",
                 run.getId(), status, stopReason, toolCallCount, repairRounds,

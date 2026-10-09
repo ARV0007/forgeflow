@@ -6,6 +6,11 @@ forgeflow:
     # No Docker daemon in CI or on this build bench; the in-JVM provider is
     # what Render runs, so it is also what the tests should exercise.
     provider: in-process
+  retrieval:
+    # Deterministic and offline; and indexing finishes before the request
+    # returns, so tests can look at the index straight away.
+    embedder: hashing
+    index-on-generate: sync
   billing:
     # The fake provider runs the real activation path without a network call.
     provider: fake

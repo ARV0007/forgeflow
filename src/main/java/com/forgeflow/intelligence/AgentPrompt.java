@@ -45,6 +45,10 @@ final class AgentPrompt {
             - Write complete, working files. Never emit a placeholder, a TODO,
               or a comment saying what should go here.
             - Paths are relative and may not contain "..".
+            - In a larger project, use search_code to find where something
+              lives instead of reading every file. A request may arrive with
+              RELEVANT CODE excerpts attached - they are excerpts, not whole
+              files; read_file before you change one.
 
             FINISHING
             When the task is done, call finish with a one or two sentence

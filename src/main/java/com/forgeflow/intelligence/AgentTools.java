@@ -3,12 +3,12 @@ package com.forgeflow.intelligence;
 import com.forgeflow.shared.llm.ToolCall;
 import com.forgeflow.shared.llm.ToolResult;
 import com.forgeflow.shared.llm.ToolSpec;
+import com.forgeflow.intelligence.retrieval.CodeIndex;
 import com.forgeflow.workspace.ProjectFileService;
 import com.forgeflow.workspace.dto.FileEntry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
@@ -28,9 +28,11 @@ public class AgentTools {
     private static final int MAX_FILE_BYTES = 200_000;
 
     private final ProjectFileService files;
+    private final CodeIndex index;
 
-    public AgentTools(ProjectFileService files) {
+    public AgentTools(ProjectFileService files, CodeIndex index) {
         this.files = files;
+        this.index = index;
     }
 
     public List<ToolSpec> specs() {
@@ -43,6 +45,14 @@ public class AgentTools {
                         "Read the full contents of one file. Use this before editing a file you did not just write.",
                         schema(Map.of("path", prop("string", "Relative path, e.g. index.html")),
                                List.of("path"))),
+
+                new ToolSpec("search_code",
+                        "Search this project's code by meaning and by keyword. Returns the most relevant excerpts "
+                                + "with file names and line numbers. Use it to find where something lives in a "
+                                + "larger project, then read_file the file before changing it.",
+                        schema(Map.of("query", prop("string",
+                                        "What you are looking for, e.g. 'dark mode toggle' or 'renderTodos'")),
+                               List.of("query"))),
 
                 new ToolSpec("write_file",
                         "Create a file, or completely replace one that exists. Provide the entire file content.",
@@ -74,13 +84,17 @@ public class AgentTools {
      * @param userId the person whose request this run serves. Files the model
      *               writes are recorded as written by them - the model is their
      *               tool, not an author of its own.
+     *
+     * Not @Transactional: each file operation has its own short transaction
+     * in ProjectFileService, and search_code makes embedding calls that must
+     * not hold a database connection while they wait on the network.
      */
-    @Transactional
     public ToolResult execute(Long projectId, Long userId, ToolCall call) {
         try {
             return switch (call.name()) {
                 case "list_files" -> listFiles(projectId);
                 case "read_file" -> readFile(projectId, str(call, "path"));
+                case "search_code" -> searchCode(projectId, str(call, "query"));
                 case "write_file" -> writeFile(projectId, userId, str(call, "path"), str(call, "content"));
                 case "finish" -> ToolResult.ok("finish", "Done.");
                 default -> ToolResult.failed(call.name(), "Unknown tool: " + call.name());
@@ -113,6 +127,22 @@ public class AgentTools {
         return files.read(projectId, path)
                 .map(content -> ToolResult.ok("read_file", content))
                 .orElseGet(() -> ToolResult.failed("read_file", "No such file: " + path));
+    }
+
+    private ToolResult searchCode(Long projectId, String query) {
+        if (query == null || query.isBlank()) {
+            throw new ToolException("query is required");
+        }
+        List<CodeIndex.SearchHit> hits = index.search(projectId, query, 6);
+        if (hits.isEmpty()) {
+            return ToolResult.ok("search_code", "No matches. Use list_files to see what exists.");
+        }
+        StringBuilder sb = new StringBuilder();
+        for (CodeIndex.SearchHit h : hits) {
+            sb.append("--- ").append(h.path()).append(" lines ").append(h.startLine()).append('-')
+              .append(h.endLine()).append(" ---\n").append(h.content()).append("\n\n");
+        }
+        return ToolResult.ok("search_code", sb.toString().strip());
     }
 
     private ToolResult writeFile(Long projectId, Long userId, String rawPath, String content) {
