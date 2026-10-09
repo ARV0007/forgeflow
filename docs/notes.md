@@ -471,3 +471,60 @@ that would be the right call.
 
 One endpoint serves all three. The transport worry turned out not to fork the
 work at all.
+
+---
+
+## 13. Redesign notes (9 Oct 2026)
+
+### Testing on Spring Boot 4
+
+- The test annotations moved. `@AutoConfigureMockMvc` is now
+  `org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc`;
+  `@LocalServerPort` is `org.springframework.boot.test.web.server.LocalServerPort`.
+  Old imports fail with "cannot find symbol", not a helpful hint.
+- Jackson 3 lives in `tools.jackson.databind`, **but the annotations stayed** in
+  `com.fasterxml.jackson.annotation` (`@JsonInclude` and friends).
+- A base test class with a method called `post(...)` **hides** a static import
+  of MockMvc's `post(...)`, even though the parameters differ. Java looks up the
+  name in the class first and never reaches the import. Use the qualified
+  `MockMvcRequestBuilders.post(...)`.
+- Tests run against a real Postgres, in CI too (a `pgvector/pgvector:pg16`
+  service container). Every test signs up its own random-email users, so tests
+  never depend on a clean database.
+- `src/test/resources/application-test.yml` forces
+  `forgeflow.sandbox.provider: in-process` — no Docker needed to test.
+
+### The scripted model
+
+`ScriptedLlm` replaces Gemini in tests (`@Primary` in `TestLlmConfig`). You
+queue up what the model will "say" — `llm.then(calls(write(...), finish(...)))`
+— and it plays them back in order, recording every conversation it was shown
+(`llm.seen()`). An empty script throws, like a dead provider. This is how the
+self-healing loop is tested: script a broken file, a `finish`, a fix, another
+`finish`, and assert the refusal the model saw named the broken file.
+
+### Check that a test can fail
+
+A new test that passes first time proves nothing yet. Break the behaviour on
+purpose (comment out the access check, drop a field), run it, see red, put it
+back. Done for: 404 vs 403, the MCP access check, chat memory, the build gate,
+file authorship, live log delivery.
+
+### SSE with MockMvc
+
+An `SseEmitter` endpoint returns with `request.isAsyncStarted() == true`, and
+whatever the emitter has sent so far is already in
+`response.getContentAsString()`. So a test can open the stream, trigger
+something, and read the response again to see the new event — no real server
+needed.
+
+### Access rules in one place
+
+| Situation | Status |
+|---|---|
+| Not signed in | 401 |
+| Signed in, no relationship to the project | **404** (same body as a missing project) |
+| Member, but the role can't do this | 403 |
+| Two replies at once in one chat session | 409 |
+| Retry when the last reply succeeded | 409 |
+| Preview with no files | 409 |

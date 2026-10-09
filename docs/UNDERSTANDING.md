@@ -26,6 +26,9 @@ Transakt is a restaurant. ForgeFlow is a **building site**.
 | The caps | The **budget and the deadline** |
 | JWT | A **visitor badge** at the site gate |
 | The MCP server | The **trade line** — a standard phone line another firm's foreman can call to commission work |
+| Project members | The **keyholder list** — who may walk in, who may build, who may only look |
+| A chat session | The **job book** — every instruction and every reply, in order |
+| The logs stream | The **site radio** — everything happening on site, as it happens |
 
 The most important thing on this site: **the contractor never touches the
 building directly.** They ask the foreman, and the foreman checks every request
@@ -791,31 +794,281 @@ it runs locally and `claude mcp add --transport http` reaches localhost fine.
 
 ---
 
-## Chapter 14 — What's next
+## Chapter 14 — The keyholder list (members and roles)
+
+Until now every project had exactly one person: the owner. The spec wants
+teams — an owner, editors who can change things, viewers who can only look.
+
+**Plain English first.** Picture the site gate. The owner holds the master key.
+Editors have keys that open the site and the tool shed. Viewers have a visitor
+pass: they can walk round, but they can't pick anything up. Everybody else
+isn't on the list.
+
+In code that list is the `project_members` table, and every endpoint asks the
+same single question before doing anything:
+
+```java
+projectAccess.require(projectId, userId, Permission.WRITE);
+```
+
+It returns the caller's role, or throws. Three permissions, four roles:
+
+- **READ** — see the project, its files, its chat, its preview and logs
+- **WRITE** — generate, chat, build, start a preview (anything that spends compute)
+- **ADMIN** — rename, delete, manage members (owner only)
+
+A public project gives every signed-in user READ, and nothing more.
+
+### The 404 / 403 rule
+
+This is the bit worth understanding properly.
+
+- Someone with **no relationship** to the project gets **404 Not Found** — the
+  exact same response as for a project id that doesn't exist.
+- A **member whose role isn't enough** gets **403 Forbidden**.
+
+Why not 403 for everybody? Because "forbidden" means "this exists, and you
+can't have it". A stranger probing ids would learn which ones are real. A
+viewer already *knows* the project exists — they can see it in their list — so
+403 tells them nothing new, and it's more honest than pretending it's gone.
+
+### The owner isn't a member row
+
+The owner lives in `projects.owner_id`, not in `project_members`. If they were
+both, the two could disagree — a member row saying VIEWER for the owner, say —
+and then which one wins? One fact, one place.
+
+### The bug this found
+
+Moving every endpoint onto `require(...)` meant reading every endpoint. The MCP
+`generate_app` tool turned out to have **no check at all**: any MCP client
+could generate into any project by guessing its id. It also acted as user id 1
+— whoever happened to sign up first. The fix: a real access check, and a
+dedicated passwordless "service account" for MCP. Plus a test that fails if
+the check is ever removed.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why return 404 to a stranger instead of 403?**
+So probing ids teaches them nothing. 403 confirms the project exists. The test
+for this compares the two response bodies and requires them to be identical.
+
+**Q: An editor removes the owner from the members list. What happens?**
+Nothing — the owner isn't in that list. Removing members is ADMIN, which an
+editor doesn't have anyway, and `ProjectRole.isAssignable()` refuses OWNER as a
+role you can hand out.
+
+**Q: Why does starting a preview need WRITE, when it doesn't change any files?**
+Because it spends resources — a container, or a live link. "Can this cost
+money or capacity?" is the line between WRITE and READ, not "does it change
+data?".
+
+**Q: A viewer leaves the project. Whose permission do they need?**
+Nobody's. Removing *yourself* is always allowed — you can't be forced to stay
+on a project.
+
+**Q: Where would you look first if a user could see a project they shouldn't?**
+`ProjectRepository.findAccessible` (the list query) and `ProjectAccess.require`
+(every single-project call). Those two are the whole access model. That's the
+point of having one place.
+
+</details>
+
+---
+
+## Chapter 15 — The job book (chat sessions and memory)
+
+Before this, every generate started from nothing. You'd say "build a todo
+app", then "make the buttons blue", and the second request had no idea there
+was a todo app.
+
+**Plain English.** A chat session is a job book. Every instruction the client
+gives goes in, and every reply. When the contractor starts the next job, the
+foreman reads them the last few pages first.
+
+### What the model actually remembers
+
+The **last ten messages** — not the whole history. Ten is enough to know what
+"it" and "the button" refer to, and it keeps every request a sensible size.
+
+Two rules come from Gemini, which **rejects** a conversation that doesn't
+alternate user / model, or that starts with the model:
+
+1. If the ten-message window starts with a reply, drop that reply.
+2. If two replies sit next to each other — a failure, then a successful retry —
+   keep only the later one.
+
+Each past reply is remembered **with the files it wrote**:
+
+```
+Built a todo list with add and delete.
+[Files written: index.html, styles.css, app.js]
+```
+
+So "make the header blue" can work out that the header is in `index.html`
+without listing every file again.
+
+### Failed replies stay in the history
+
+If a run fails, the reply is still saved — with `status = FAILED` and a
+sentence a person can read ("I couldn't get the build to pass after 3 repair
+attempts"). Two reasons: it keeps user / model alternating, and it's what
+**retry** retries. Retry only works when the last reply failed — it's for
+recovering, not for rolling the dice again on something that worked (that's a
+409).
+
+### One reply at a time
+
+Two sends in quick succession would both read the same history and both append
+a reply: user, user, reply, reply. Nonsense to a person, rejected by Gemini.
+`SessionLocks` lets only one reply be in progress per session; the second send
+gets a 409.
+
+### Why a turn is split in two
+
+`begin()` runs on the request thread: access check, lock, save your message.
+Anything wrong there is a clean 403 / 404 / 409.
+
+`complete()` runs the agent — which can take a minute — and saves the reply.
+It's deliberately **not** one database transaction: holding a connection open
+for a minute per reply would let a handful of slow replies exhaust the pool
+for everyone.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why ten messages and not the whole conversation?**
+Cost and focus. Every message goes into every model call, every round. The
+whole conversation grows without bound; ten is enough for "it" and "that
+button" to make sense. It's a config value (`forgeflow.chat.memory-messages`).
+
+**Q: The app crashes halfway through a reply. What's left in the database?**
+Your message, saved by `begin()`, with no reply after it. The lock was in
+memory, so it's gone too. Next message: the window sees user, user — and
+collapses them to the later one, so the conversation stays valid.
+
+**Q: Why store `status` on the chat message instead of joining to `generation_runs`?**
+So the chat module never has to read the intelligence module's tables. The
+message keeps a `run_id` for the details, but answering "did this reply work?"
+shouldn't need another module's data.
+
+**Q: Why throw 409 from `begin()` instead of sending an error inside the stream?**
+Because once a stream starts, the HTTP status is already 200. An error inside
+it is just an event the client has to know to look for. Failing before the
+stream opens gives a real status code that every HTTP client understands.
+
+</details>
+
+---
+
+## Chapter 16 — The site radio (the logs stream)
+
+When you run a website on your own laptop, there's a terminal window telling
+you what's happening: files being served, a 404 for an image you forgot, the
+error your JavaScript just threw. A preview link on someone else's server has
+none of that. The spec's "logs stream" puts it back.
+
+**Plain English.** The site radio. Everyone on site can tune in and hear what's
+happening: the inspector starting and finishing, the show home opening, every
+visitor walking through a door — and every time something in the show home
+breaks.
+
+### Four kinds of line
+
+| source | what it is |
+|---|---|
+| `build` | every build — the agent's own gate *and* the Build button — with each problem on its own line |
+| `preview` | started, stopped, expired |
+| `http` | every file the preview served, and every **404** |
+| `console` | the generated app's own `console.log` / `console.error` and uncaught exceptions |
+
+### The clever bit: hearing the browser
+
+The generated app runs in *the visitor's* browser, not on our server. So how
+does its `console.error` reach us?
+
+When the preview serves an HTML page, it slips a tiny script in right after
+`<head>` — before the page's own scripts, so it's listening from the start. The
+script wraps `console.log/warn/error` and listens for uncaught errors, and
+sends each one back to `/p/{token}/__log`.
+
+Two details make that safe:
+
+- The preview page is sandboxed into an "opaque origin" (Chapter 9), so it
+  can't read anything of ours. It sends with `navigator.sendBeacon` — a plain
+  text POST that browsers allow from anywhere without a permission check, and
+  whose response the page never sees.
+- Anyone with the preview link could post fake lines. The worst they can do is
+  add noise to a log, so the endpoint only works while the preview is live and
+  is capped at 120 lines a minute per project.
+
+### Replay, then follow
+
+Opening the stream sends what's already buffered (the newest 500 lines), then
+each new line as it happens. Every line has a sequence number, sent as the SSE
+event id. If the connection drops, the browser reconnects with `Last-Event-ID`
+and gets only what it missed.
+
+There's a small race hidden in "send the backlog, then follow": a line added
+between reading the backlog and starting to listen would be lost — or, done the
+other way round, sent twice. The stream subscribes and sends the backlog under
+one lock, and the live listener skips anything the backlog already covered.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why keep logs in memory and not in Postgres?**
+They're high-volume, short-lived, and nobody needs last week's. A bounded
+buffer (500 lines × 200 projects) costs a few MB and no queries. The price:
+with two app instances, a viewer on one wouldn't see builds on the other. The
+fix then is a Redis stream or Kafka topic per project — the code comment says so.
+
+**Q: Why inject the script after `<head>` and not before `</body>`?**
+A page's own scripts can throw while they load. If the bridge loads last, it
+misses exactly the errors you most want to see.
+
+**Q: A subscriber's browser tab closes. What cleans up?**
+The next send to it throws. `PreviewLogs` catches that and removes the
+subscriber. The emitter's completion and timeout callbacks unsubscribe too.
+
+**Q: Couldn't the agent use these console errors?**
+Yes — and it should, eventually. Today the build gate checks structure. Feeding
+runtime errors from a real browser back into the repair loop would catch bugs
+the structural check can't. The log already has the data.
+
+</details>
+
+---
+
+## Chapter 17 — What's next
 
 Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
-the **workbench**, and the **MCP server** (Chapter 13). What is left:
+the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
+roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
+(Chapter 16). What's left, in order:
 
-- **`edit_file`** — change three lines instead of rewriting a whole file. Cheaper,
-  faster, and it won't overwrite changes the user made by hand.
-- **Prompt caching** — the rules and file list are identical every round; caching
-  them cuts the cost of every call.
-- **CI** — the eval harness already caught a model regression a day before anyone
-  noticed it, and that made no difference because nothing was watching. A result
-  nobody is notified of is a result that does not exist.
-- **Auth on `/mcp`** — before the endpoint is advertised anywhere public.
+- **Plans and quotas** — FREE and PRO: how many projects, how many tokens a
+  day, how many live previews. Stripe checkout to upgrade, and a signed webhook
+  so only Stripe can say "this person paid".
+- **Rate limiting** — a token bucket in Redis, so one client can't hammer the
+  model on everyone else's quota.
 - **RAG** — once a project has dozens of files, retrieve only the relevant ones
-  instead of sending everything. First to cut if time runs short.
+  instead of sending everything.
+- **Events and tracing** — a `code.generated` event (where Kafka would plug
+  in), and a trace id on every request so one user action can be followed
+  through the logs.
+- **`edit_file`** and **prompt caching**.
 
 <details>
 <summary><b>Counter-questions</b></summary>
 
 **Q: If you only had time for one of these, which?**
-CI. Evals were the answer when this chapter was written, and they got built — but
-Day 9 showed a suite nobody is notified about catches a regression and still lets
-it sit for a day. The measurement exists; the feedback loop doesn't.
+Quotas. Right now the only thing stopping one user from spending the whole
+model allowance is the free tier's own limit, and that hits *everyone*. Quotas
+make the cost per user a decision instead of an accident.
 
-**Q: Why is RAG last, when it's the most talked-about technique?**
+**Q: Why is RAG still not first, when it's the most talked-about technique?**
 Because it only helps when a project is too big to send whole — past about fifteen
 files. ForgeFlow's generated sites are smaller than that today. Building it first
 would be solving a problem I don't have yet.

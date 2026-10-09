@@ -1,13 +1,14 @@
 # ForgeFlow — Architecture
 
-**Version:** 0.2 — 22 Sep 2026
-**Status:** agent loop, streaming, sandbox and self-healing built and verified
+**Version:** 0.3 — 9 Oct 2026
+**Status:** agent loop, sandbox and self-healing built and tested; redesign to the Lovable-clone spec in progress (§17)
 **Author:** Aman Raj Verma
 
 | Version | Date | Change |
 |---|---|---|
 | 0.1 | 10 Sep 2026 | Initial design — the plan |
 | 0.2 | 22 Sep 2026 | Rewritten to match what was built. Spring AI dropped for a direct client; Boot 4.1.1; Gemini; sandbox and build gate as built. See §11 for every deviation from 0.1. |
+| 0.3 | 9 Oct 2026 | Redesign to the Lovable-clone spec: members and roles, chat sessions with memory, zip download, logs stream, CI. §17 maps the spec onto the code. |
 
 ---
 
@@ -402,31 +403,42 @@ others' resources; identical login failures; `ownerId` never read from requests;
 
 ## 12. Known gaps
 
-- `AgentTools` bypasses `ProjectFileService` (module-boundary exception)
-- `SandboxException` not mapped in `GlobalExceptionHandler` → default 500
-- No preview reaper; `expires_at` recorded but not enforced
-- `tool_calls`, `chat_*`, `file_chunks` unused; each run starts without memory
 - `cost_usd`, `cached_tokens` always 0
 - The timeout includes time spent waiting out rate limits
-- No tests beyond the default; no CI; not deployed
+- `/mcp` unauthenticated (runs as a service account, with real access checks)
+- Session locks and preview logs are per-instance memory
+- Not built yet from the spec: plans/quotas/Stripe, Redis rate limiting, RAG,
+  tracing, OpenAPI page — see §17.4
+
+Closed since 0.2: the module-boundary exceptions (`AgentTools`,
+`McpToolExecutor`), the unmapped `SandboxException`, previews never expiring,
+the unused `chat_*` tables, no tests, no CI, not deployed.
 
 ---
 
 ## 13. Build status
 
-| Day | Deliverable | Status |
+| Step | Deliverable | Status |
 |---|---|---|
 | 1 | Skeleton, Postgres, Flyway | ✅ 11 Sep |
 | 2 | Auth, projects, ownership | ✅ 12 Sep |
 | 3 | **Agent loop + tools** | ✅ 14 Sep |
 | 4 | SSE streaming | ✅ 18 Sep |
-| — | Rate-limit retry | ✅ 22 Sep |
 | 5 | **Docker sandbox** | ✅ 22 Sep |
 | 6 | **Self-healing** | ✅ 22 Sep |
-| 7 | `edit_file` + prompt caching | ⬜ |
-| 8 | Evals | ⬜ |
-| 9 | RAG | ⬜ first to cut |
-| 10 | Deploy, README, CI | ⬜ |
+| 7 | Workbench UI | ✅ 23 Sep |
+| 8 | Deploy (Render + Neon) | ✅ 25 Sep |
+| 9 | Evals, model migration | ✅ 27 Sep |
+| 10 | MCP server | ✅ 9 Oct |
+| R0 | CI on every push | ✅ 9 Oct |
+| R1 | Members, roles, `/me` | ✅ 9 Oct |
+| R2 | Chat sessions + memory | ✅ 9 Oct |
+| R3 | Zip, Get Preview, logs stream, authorship | ✅ 9 Oct |
+| R4 | Plans, quotas, Stripe | ⬜ |
+| R5 | Redis rate limiting | ⬜ |
+| R6 | RAG on pgvector | ⬜ |
+| R7 | Events, tracing, OpenAPI | ⬜ |
+| R8 | Chat-shaped UI | ⬜ |
 
 ---
 
@@ -528,3 +540,105 @@ recover. See `docs/notes.md` §12.
 have been quicker. Same reasoning as `GeminiClient`: no SDK, one fewer
 dependency to version-match against Boot 4, and the wire format stays visible.
 The protocol is three methods.
+
+---
+
+## 17. The redesign: the spec mapped onto the code
+
+### 17.1 Services become modules
+
+The spec draws separate services behind a gateway. ForgeFlow keeps **one
+deployable** with the same boundaries inside it. Each module exposes a service
+class as its public face, and other modules may only call that:
+
+| Spec service | Module | Public face |
+|---|---|---|
+| account / auth | `account` | `AuthService`, `UserDirectory`, `ServiceAccounts` |
+| workspace | `workspace` | `ProjectService`, `ProjectAccess`, `MemberService`, `ProjectFileService` |
+| chat | `chat` | `ChatService` |
+| intelligence | `intelligence` | `AgentService` |
+| execution | `execution` | `ExecutionService`, `PreviewLogs` |
+| (MCP gateway) | `mcp` | `McpController` |
+
+Why not split them now: one person, one free-tier host, and a split adds
+network failure modes to every call without adding a feature. The rule
+"call the service, never another module's repository" is what makes a later
+split mechanical — the method calls become HTTP calls and nothing else changes.
+
+### 17.2 The ER diagram, table by table
+
+| Spec table | Here | Notes |
+|---|---|---|
+| USER | `users` | + `provider`, `email_verified`, `stripe_customer_id`, soft delete (V2) |
+| PROJECT | `projects` | + `is_public`, `thumbnail_url` (V2) |
+| PROJECT_MEMBER | `project_members` | role `EDITOR` / `VIEWER`; the owner is not a row |
+| PROJECT_OWNERSHIP | — | **not built**: `projects.owner_id` already says it, and a second table could disagree with it |
+| PROJECT_FILE | `project_files` | + `created_by`, `updated_by` (V4); **no** `minio_object_key` — content stays in Postgres |
+| PREVIEW | `previews` | status `RUNNING` / `STOPPED` / `EXPIRED` |
+| CHAT_SESSION | `chat_sessions` | soft delete (V3) |
+| CHAT_MESSAGE | `chat_messages` | role, `tool_calls` jsonb, `tool_call_id`, `tokens_used` + `status`, `run_id`, `author_id` (V3) |
+| PLAN, SUBSCRIPTION, USAGE_LOG | — | next (R4) |
+
+### 17.3 Access: one question, asked everywhere
+
+`ProjectAccess.require(projectId, userId, permission)` returns the caller's
+role or throws. Roles map to permissions:
+
+| | READ | WRITE | ADMIN |
+|---|---|---|---|
+| OWNER | ✓ | ✓ | ✓ |
+| EDITOR | ✓ | ✓ | |
+| VIEWER | ✓ | | |
+| anyone, if the project is public | ✓ | | |
+
+No relationship at all → **404**, identical to a project that doesn't exist.
+A relationship without the permission → **403**.
+
+### 17.4 Endpoints by spec feature
+
+| Spec feature | Endpoint |
+|---|---|
+| Get my profile | `GET /api/v1/me` (`PATCH` to edit) |
+| Projects | `/api/v1/projects` — create, list (owned + shared), get, update, delete |
+| Members | `/api/v1/projects/{id}/members` — list, invite, change role, remove/leave |
+| List / create chat sessions | `GET` / `POST /api/v1/projects/{id}/chat/sessions` |
+| Load full chat history | `GET …/chat/sessions/{sid}/messages` |
+| Chat stream | `POST …/chat/sessions/{sid}/messages/stream` (SSE) |
+| Retry if failed | `POST …/chat/sessions/{sid}/retry[/stream]` |
+| File tree / content | `GET /api/v1/projects/{id}/files`, `…/files/content?path=` |
+| Download as zip | `GET /api/v1/projects/{id}/files/download` |
+| Get preview | `GET /api/v1/projects/{id}/preview` (`POST` start, `DELETE` stop) |
+| Logs stream | `GET /api/v1/projects/{id}/preview/logs/stream` (SSE), `…/preview/logs` (JSON) |
+
+### 17.5 The logs stream
+
+`PreviewLogs` holds the newest 500 lines per project (and at most 200
+projects), each tagged with a source:
+
+```
+build    ExecutionService.build — every build, manual or the agent's gate
+preview  started / stopped / expired
+http     every file /p/{token}/ served, and every 404
+console  the generated app's console.* and uncaught errors, from the browser
+```
+
+The `console` lines come from a small script injected after `<head>` in every
+HTML page the preview serves. It posts to `/p/{token}/__log` with
+`navigator.sendBeacon` — a text/plain "simple" request, so the sandboxed page
+(opaque origin, no `allow-same-origin`) can send it without a CORS preflight,
+and never reads anything back. That endpoint only opens for a live preview and
+is capped at 120 lines a minute per project.
+
+The SSE stream sends the buffer, then follows live, with the line's sequence
+number as the event id so a reconnect resumes rather than replays.
+
+### 17.6 Deliberately not built
+
+| Spec item | Instead | Why |
+|---|---|---|
+| Spring Cloud Gateway | one app, Spring Security in front | one deployable has nothing to route between |
+| Kubernetes pods per preview | Docker locally, in-process on Render | no cluster on a free tier; `SandboxProvider` is the seam |
+| MinIO | Postgres TEXT | small text files; `ProjectFileService` is the seam |
+| Kafka | in-process event (R7) | one consumer, one process; the event class is the seam |
+| Qdrant | pgvector (R6) | already in the database; no second store to keep consistent |
+

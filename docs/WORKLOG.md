@@ -485,34 +485,116 @@ fix is not done until the knob is shown to move something.
 
 ---
 
+## Day 10 — Redesign to the spec, part 1 · 9 Oct 2026
+
+The brief changed shape. The Lovable-clone spec lists features by area —
+Projects, Auth, AI generation, Files, Preview — plus an ER diagram (members with
+roles, chat sessions and messages, plans, subscriptions, usage logs) and a
+service diagram (gateway, Kafka, Qdrant, MinIO, Kubernetes). ForgeFlow had the
+hard part — the self-healing agent loop — and almost none of the product around
+it: one owner per project, no conversation memory, no zip download, no logs.
+
+### The ground rule: no new dependencies
+
+The build machine can't reach Maven Central, so every library has to already be
+in the local Maven cache. That sounds like a handicap and turned out to be a
+design discipline. Redis gets spoken to directly over its wire protocol, Stripe
+over plain HTTP, and the spec's service boxes become **modules inside one
+application** with the same seams. Each place a real service would go
+(Kafka, MinIO, Qdrant) gets a note in the code saying where the cut would be.
+
+### CI first, and Lombok out
+
+Day 9 ended with "the eval harness caught a regression and nobody was
+watching". So before any feature: a GitHub Actions workflow running the whole
+test suite against a real `pgvector/pgvector:pg16` Postgres on every push. Green
+on the first run. Lombok was declared, wired into the compiler, and used by
+nothing — removed.
+
+### Phase 1 — who may do what
+
+`project_members` with EDITOR / VIEWER roles, public projects, and `GET/PATCH
+/me`. Every endpoint now asks one question — `ProjectAccess.require(project,
+user, permission)` — instead of comparing owner ids by hand.
+
+The rule that matters most: **a stranger gets 404, a member without the right
+role gets 403.** A stranger shouldn't learn that a project id exists; a viewer
+already knows it does, so telling them "forbidden" leaks nothing and is more
+useful than "not found".
+
+**Mistake & fix (mine).** While moving every caller to the new check I found the
+MCP `generate_app` tool had **no access check at all** — any MCP client could
+generate into any project by id. It also ran everything as user id 1, which
+would have been whoever signed up first on a fresh database. Fixed with a real
+check and a dedicated passwordless service account, plus a regression test that
+fails if the check is ever removed.
+
+### Phase 2 — conversation memory
+
+The spec's five AI-generation features: list sessions, create a session, load
+full history, chat stream, retry if failed. `chat_sessions` and
+`chat_messages` had existed since V1 and nothing had ever written to them.
+
+The interesting part is what the model gets to remember. The last ten messages
+go in, as alternating user / model turns — and Gemini **rejects** a
+conversation that doesn't alternate or that opens with the model. So the
+window drops a leading reply and collapses a failure-then-retry pair to the
+later one. Past replies are remembered with the files they wrote
+(`[Files written: index.html, app.js]`), so "make the header blue" knows which
+file the header is in.
+
+One reply at a time per session (`SessionLocks`): two quick sends would
+otherwise both read the same history and append two replies in a row.
+
+Before any of this, the agent loop got real tests: a **scripted model** that
+plays back canned tool calls, so the self-healing gate is verified on every
+push instead of by hand.
+
+### Phase 3 — files and preview
+
+- **Zip download** of the whole project, under one folder named after it.
+- **Who wrote each file** — `created_by` / `updated_by`. The agent's writes
+  count as the requesting user's: the model is their tool, not an author.
+- **Get Preview** — what's running, and when it expires. An expired preview is
+  closed lazily the next time anyone asks.
+- **Logs stream** — builds, preview start/stop, every file the preview served
+  (and every 404), and the generated app's **own console output**. That last
+  one works by injecting a tiny script into served HTML that forwards
+  `console.*` and uncaught errors back to the server. It's the closest thing a
+  static site has to a dev-server terminal.
+
+`ProjectFileService` is now the only code that touches file contents, which
+pays off two open items at once.
+
+**Tests:** 58, every one against a real Postgres. Before trusting a new suite I
+break the behaviour on purpose and check it goes red — dropping `updated_by`
+and breaking live log delivery each failed it, as they should.
+
+---
+
 ## Open items
 
-- `AgentTools` still uses `ProjectFileRepository` directly, breaking the
-  module-boundary rule. New code goes through `ProjectFileService`.
-- `McpToolExecutor` also reads `ProjectFileRepository` directly, for the same
-  reason and with the same debt.
-- `SandboxException` isn't mapped in `GlobalExceptionHandler`, so it surfaces as
-  a default 500.
-- Previews record `expires_at` but nothing reaps them yet.
-- `tool_calls`, `chat_sessions`, `chat_messages` and `file_chunks` exist but
-  aren't written to. Each generate starts with no memory of earlier ones.
 - `cost_usd` and `cached_tokens` are always 0.
-- No tests beyond Initializr's default. **No CI** — and Day 9 showed exactly
-  what that costs: the eval harness recorded a regression a day before anyone
-  noticed it.
 - The agent timeout counts time spent waiting out rate limits.
 - `run_evals.py` writes its results file only after the whole loop, so a
-  `Ctrl+C` mid-sweep loses every completed case — precisely when the record
-  would be most useful.
-- `/mcp` is unauthenticated. Acceptable locally; a decision to make before the
-  endpoint is advertised publicly.
+  `Ctrl+C` mid-sweep loses every completed case.
+- `/mcp` is unauthenticated and runs as one service account. Acceptable
+  locally; a decision to make before the endpoint is advertised publicly.
+- Session locks and preview logs live in memory — correct for one instance
+  (Render runs one), wrong the moment there are two.
+- The live Gemini path hasn't been re-verified on Render since the redesign
+  started; the tests use a scripted model.
 
-## Still to build
+## Still to build (redesign, in order)
 
-1. `edit_file` — diff-based edits instead of full rewrites — plus prompt caching
-2. RAG over the codebase (first to go if time runs short)
-3. CI, so a failing eval run reaches someone
-4. README
+1. Plans and quotas — FREE / PRO, projects, tokens per day, previews; Stripe
+   checkout and a signed webhook
+2. Rate limiting on Redis
+3. RAG over the project's own code, on pgvector
+4. A `code.generated` event (the Kafka seam), request tracing, an OpenAPI page
+5. A chat-shaped workbench UI
+6. `edit_file` + prompt caching
+7. README
 
 ## Done since the original plan
 
@@ -520,4 +602,6 @@ fix is not done until the knob is shown to move something.
   decided on its evidence (Day 9)
 - Deploy — live on Render with a config-selected sandbox provider (Day 8)
 - Frontend — a workbench that makes the self-healing loop visible (Day 7)
-- MCP server — ForgeFlow drivable by another agent (Day 10)
+- MCP server — ForgeFlow drivable by another agent
+- CI — every push runs the suite against a real Postgres (Day 10)
+- Members and roles, chat memory, zip download, logs stream (Day 10)
