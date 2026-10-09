@@ -90,12 +90,15 @@ fi
 
 # ---------- 7. the MCP session ----------
 MCP=http://localhost:8081/mcp
+# If the server requires a key (FORGEFLOW_MCP_API_KEY), send the same one.
+AUTH=()
+if [ -n "${FORGEFLOW_MCP_API_KEY:-}" ]; then AUTH=(-H "Authorization: Bearer $FORGEFLOW_MCP_API_KEY"); fi
 rpc() {   # rpc <label> <json>
   echo "" >> "$OUT"
   echo "----- $1" >> "$OUT"
   echo "--> $2" >> "$OUT"
   printf '<-- ' >> "$OUT"
-  curl -s -m 180 -X POST "$MCP" -H "Content-Type: application/json" -d "$2" >> "$OUT" 2>&1
+  curl -s -m 180 -X POST "$MCP" "${AUTH[@]}" -H "Content-Type: application/json" -d "$2" >> "$OUT" 2>&1
   echo "" >> "$OUT"
 }
 
@@ -104,7 +107,7 @@ say "[7/7] driving an MCP session"
 rpc "initialize" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"verify-script","version":"1"}}}'
 
 echo "" >> "$OUT"; echo "----- notifications/initialized (expect empty body, HTTP 202)" >> "$OUT"
-curl -s -m 10 -o /dev/null -w "HTTP %{http_code}\n" -X POST "$MCP" \
+curl -s -m 10 -o /dev/null -w "HTTP %{http_code}\n" -X POST "$MCP" "${AUTH[@]}" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' >> "$OUT" 2>&1
 

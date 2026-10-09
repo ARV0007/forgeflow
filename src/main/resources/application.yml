@@ -31,6 +31,9 @@ forgeflow:
   mcp:
     # The identity MCP callers act as. Created on first use, never loginable.
     service-account-email: ${FORGEFLOW_MCP_SERVICE_EMAIL:mcp-service@forgeflow.internal}
+    # Blank = /mcp is open (fine locally). Set it on any public deployment;
+    # clients then send "Authorization: Bearer <key>" or "X-API-Key: <key>".
+    api-key: ${FORGEFLOW_MCP_API_KEY:}
   llm:
     provider: ${FORGEFLOW_LLM_PROVIDER:gemini}   # gemini | demo (offline stand-in, no key needed)
     api-key: ${GOOGLE_API_KEY:}

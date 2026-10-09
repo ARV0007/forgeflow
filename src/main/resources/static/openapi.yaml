@@ -494,6 +494,9 @@ paths:
       description: |
         Tools: `create_project`, `generate_app`, `list_project_files`. Runs as a
         service account on the INTERNAL plan. Notifications (no `id`) get 202.
+
+        When the server sets `FORGEFLOW_MCP_API_KEY`, every call must send it as
+        `Authorization: Bearer <key>` or `X-API-Key: <key>`, or gets 401.
       requestBody:
         required: true
         content:
@@ -509,6 +512,7 @@ paths:
       responses:
         "200": { description: JSON-RPC response }
         "202": { description: Notification accepted }
+        "401": { description: "The server requires an MCP key and none (or the wrong one) was sent" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
 components:
