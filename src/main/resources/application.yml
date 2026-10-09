@@ -36,6 +36,16 @@ forgeflow:
   jwt:
     secret: ${JWT_SECRET:change-me-in-env-this-is-local-only}
     expiry-minutes: 120
+  billing:
+    # none (default) | fake (local dev / tests - never on a public server) | stripe
+    provider: ${FORGEFLOW_BILLING_PROVIDER:none}
+    # Where Stripe sends the browser back to after checkout.
+    app-base-url: ${APP_BASE_URL:http://localhost:8081}
+    stripe:
+      secret-key: ${STRIPE_SECRET_KEY:}
+      pro-price-id: ${STRIPE_PRO_PRICE_ID:}
+      # whsec_... from the Stripe dashboard (or `stripe listen`). Blank = webhook answers 503.
+      webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
   chat:
     # Spec: "past 10 chat messages (session history)" - the model's memory window.
     memory-messages: 10

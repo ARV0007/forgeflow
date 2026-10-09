@@ -35,6 +35,10 @@ public class Preview {
     @Column(name = "started_at")
     private Instant startedAt;
 
+    /** Who started it - live previews count against their plan. */
+    @Column(name = "started_by")
+    private Long startedBy;
+
     /** Previews are not free - each one is a running container or a live link. */
     @Column(name = "expires_at")
     private Instant expiresAt;
@@ -64,6 +68,9 @@ public class Preview {
 
     public Instant getStartedAt() { return startedAt; }
     public void setStartedAt(Instant startedAt) { this.startedAt = startedAt; }
+
+    public Long getStartedBy() { return startedBy; }
+    public void setStartedBy(Long startedBy) { this.startedBy = startedBy; }
 
     public Instant getExpiresAt() { return expiresAt; }
     public void setExpiresAt(Instant expiresAt) { this.expiresAt = expiresAt; }

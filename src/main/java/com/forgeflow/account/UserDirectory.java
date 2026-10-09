@@ -48,6 +48,29 @@ public class UserDirectory {
         return out;
     }
 
+    /** The Stripe customer this user pays as, once they have paid once. */
+    public Optional<String> stripeCustomerId(Long userId) {
+        return users.findById(userId).map(User::getStripeCustomerId);
+    }
+
+    /**
+     * Remember the Stripe customer, so a second checkout reuses it instead of
+     * creating a duplicate customer with the same email. Never overwrites: the
+     * first customer id a user is linked to stays theirs.
+     */
+    @Transactional
+    public void linkStripeCustomer(Long userId, String customerId) {
+        if (customerId == null || customerId.isBlank()) {
+            return;
+        }
+        users.findById(userId).ifPresent(u -> {
+            if (u.getStripeCustomerId() == null) {
+                u.setStripeCustomerId(customerId);
+                users.save(u);
+            }
+        });
+    }
+
     static UserSummary summarise(User u) {
         return new UserSummary(u.getId(), u.getEmail(), u.getName(), u.getAvatarUrl());
     }

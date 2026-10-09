@@ -1,5 +1,9 @@
 package com.forgeflow.intelligence;
 
+import com.forgeflow.billing.Entitlements;
+import com.forgeflow.billing.Quota;
+import com.forgeflow.billing.UsageLog;
+import com.forgeflow.billing.UsageMeter;
 import com.forgeflow.execution.BuildResult;
 import com.forgeflow.execution.ExecutionService;
 import com.forgeflow.intelligence.dto.GenerateResponse;
@@ -41,6 +45,8 @@ public class AgentService {
     private final AgentTools tools;
     private final GenerationRunRepository runs;
     private final ExecutionService execution;
+    private final Entitlements entitlements;
+    private final UsageMeter usage;
 
     private final int maxToolCalls;
     private final long timeoutSeconds;
@@ -51,6 +57,8 @@ public class AgentService {
                         AgentTools tools,
                         GenerationRunRepository runs,
                         ExecutionService execution,
+                        Entitlements entitlements,
+                        UsageMeter usage,
                         @Value("${forgeflow.agent.max-tool-calls}") int maxToolCalls,
                         @Value("${forgeflow.agent.timeout-seconds}") long timeoutSeconds,
                         @Value("${forgeflow.agent.max-input-tokens}") int maxInputTokens,
@@ -59,6 +67,8 @@ public class AgentService {
         this.tools = tools;
         this.runs = runs;
         this.execution = execution;
+        this.entitlements = entitlements;
+        this.usage = usage;
         this.maxToolCalls = maxToolCalls;
         this.timeoutSeconds = timeoutSeconds;
         this.maxInputTokens = maxInputTokens;
@@ -86,6 +96,11 @@ public class AgentService {
     public GenerateResponse generate(Long projectId, Long userId, String prompt,
                                      List<LlmMessage> priorTurns, Long sessionId,
                                      Consumer<AgentEvent> listener) {
+
+        // Before anything is spent. A soft limit: a run that starts under the
+        // daily allowance is allowed to finish, so the overshoot is bounded by
+        // one run's own token budget (max-input-tokens) - never a half-built app.
+        entitlements.requireRoomFor(userId, Quota.AI_TOKENS_PER_DAY);
 
         long startedAt = System.currentTimeMillis();
         long deadline = startedAt + timeoutSeconds * 1000L;
@@ -244,6 +259,12 @@ public class AgentService {
         run.setBuildPassed(buildPassed);
         run.setDurationMs(durationMs);
         run = runs.save(run);
+
+        // Charged to whoever asked - including for failed runs, because the
+        // model calls were made either way. Charging the person who typed the
+        // prompt (not the project owner) means inviting someone onto your
+        // project never lets them spend your allowance.
+        usage.record(userId, projectId, UsageLog.AI_TOKENS, totalTokens, "run:" + run.getId());
 
         log.info("run {} {} ({}) - {} tool calls, {} repair round(s), build {}, {} tokens, {} ms",
                 run.getId(), status, stopReason, toolCallCount, repairRounds,

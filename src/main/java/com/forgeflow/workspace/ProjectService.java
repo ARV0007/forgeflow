@@ -1,5 +1,9 @@
 package com.forgeflow.workspace;
 
+import com.forgeflow.billing.Entitlements;
+import com.forgeflow.billing.Quota;
+import com.forgeflow.billing.UsageLog;
+import com.forgeflow.billing.UsageMeter;
 import com.forgeflow.workspace.dto.CreateProjectRequest;
 import com.forgeflow.workspace.dto.ProjectResponse;
 import com.forgeflow.workspace.dto.UpdateProjectRequest;
@@ -22,20 +26,34 @@ public class ProjectService {
     private final ProjectRepository projects;
     private final ProjectMemberRepository members;
     private final ProjectAccess access;
+    private final Entitlements entitlements;
+    private final UsageMeter usage;
 
-    public ProjectService(ProjectRepository projects, ProjectMemberRepository members, ProjectAccess access) {
+    public ProjectService(ProjectRepository projects, ProjectMemberRepository members, ProjectAccess access,
+                          Entitlements entitlements, UsageMeter usage) {
         this.projects = projects;
         this.members = members;
         this.access = access;
+        this.entitlements = entitlements;
+        this.usage = usage;
     }
 
+    /**
+     * 402 when the plan's project limit is reached. Checked, then inserted - two
+     * creates racing could both pass the check and land one over the limit.
+     * Accepted: the cost of one extra project is nothing, and closing the gap
+     * properly means a lock per user on every create.
+     */
     @Transactional
     public ProjectResponse create(Long ownerId, CreateProjectRequest req) {
+        entitlements.requireRoomFor(ownerId, Quota.PROJECTS);
         Project p = new Project();
         p.setOwnerId(ownerId);          // server-side, from the JWT
         p.setName(req.name());
         p.setDescription(req.description());
-        return ProjectResponse.from(projects.save(p), ProjectRole.OWNER);
+        Project saved = projects.save(p);
+        usage.record(ownerId, saved.getId(), UsageLog.PROJECT_CREATED, 1, null);
+        return ProjectResponse.from(saved, ProjectRole.OWNER);
     }
 
     /** Owned plus shared-with-me, each tagged with the caller's role. */

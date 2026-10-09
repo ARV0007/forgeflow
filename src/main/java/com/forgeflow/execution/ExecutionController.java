@@ -57,7 +57,7 @@ public class ExecutionController {
     @PostMapping("/preview")
     public PreviewResponse startPreview(@PathVariable Long projectId, Authentication auth) {
         projects.requireWrite(projectId, caller(auth));
-        return execution.startPreview(projectId);
+        return execution.startPreview(projectId, caller(auth));
     }
 
     /** Spec: "Get Preview". 404 when nothing is running, so a client can tell "none" from "error". */

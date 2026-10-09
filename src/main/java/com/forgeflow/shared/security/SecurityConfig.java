@@ -2,6 +2,7 @@ package com.forgeflow.shared.security;
 
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
+import org.springframework.http.HttpMethod;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -45,6 +46,13 @@ public class SecurityConfig {
                         .requestMatchers("/p/**").permitAll()
                         .requestMatchers("/actuator/**").permitAll()
                         .requestMatchers("/api/v1/auth/**").permitAll()
+                        // The pricing page is public. Stripe's webhook carries no JWT - its
+                        // HMAC signature is the credential, checked in BillingController.
+                        .requestMatchers(HttpMethod.GET, "/api/v1/billing/plans").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/billing/webhook/**").permitAll()
+                        // Test-mode checkout page; the controller only exists when billing=fake,
+                        // and the unguessable session id in the path is the credential.
+                        .requestMatchers("/billing/fake-checkout/**").permitAll()
                         // MCP clients arrive without a JWT; the tool layer runs as a fixed
                         // service account. See McpController.
                         .requestMatchers("/mcp").permitAll()

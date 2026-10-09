@@ -1,5 +1,9 @@
 package com.forgeflow.execution;
 
+import com.forgeflow.billing.Entitlements;
+import com.forgeflow.billing.Quota;
+import com.forgeflow.billing.UsageLog;
+import com.forgeflow.billing.UsageMeter;
 import com.forgeflow.execution.dto.PreviewResponse;
 import com.forgeflow.workspace.ProjectFileService;
 import org.springframework.stereotype.Service;
@@ -30,13 +34,18 @@ public class ExecutionService {
     private final ProjectFileService files;
     private final PreviewRepository previews;
     private final PreviewLogs logs;
+    private final Entitlements entitlements;
+    private final UsageMeter usage;
 
     public ExecutionService(SandboxProvider sandbox, ProjectFileService files,
-                            PreviewRepository previews, PreviewLogs logs) {
+                            PreviewRepository previews, PreviewLogs logs,
+                            Entitlements entitlements, UsageMeter usage) {
         this.sandbox = sandbox;
         this.files = files;
         this.previews = previews;
         this.logs = logs;
+        this.entitlements = entitlements;
+        this.usage = usage;
     }
 
     public BuildResult build(Long projectId) {
@@ -62,8 +71,13 @@ public class ExecutionService {
         return result;
     }
 
-    /** Starts a fresh preview, replacing any running one. */
-    public PreviewResponse startPreview(Long projectId) {
+    /**
+     * Starts a fresh preview, replacing any running one. Counts against the
+     * plan of whoever starts it - but a restart replaces this project's own
+     * preview, so that one is not counted against itself.
+     */
+    public PreviewResponse startPreview(Long projectId, Long userId) {
+        entitlements.requireRoomFor(userId, Quota.PREVIEWS, previews.countLive(userId, projectId, Instant.now()));
         markStopped(projectId);
         PreviewHandle handle;
         try {
@@ -79,9 +93,11 @@ public class ExecutionService {
         p.setContainerId(handle.containerName());
         p.setPreviewUrl(handle.url());
         p.setStatus("RUNNING");
+        p.setStartedBy(userId);
         p.setStartedAt(now);
         p.setExpiresAt(now.plus(PREVIEW_TTL));
         previews.save(p);
+        usage.record(userId, projectId, UsageLog.PREVIEW_STARTED, 1, "preview:" + p.getId());
 
         logs.info(projectId, "preview", "Preview started at " + handle.url()
                 + " (expires in " + PREVIEW_TTL.toMinutes() + " min)");

@@ -1,5 +1,7 @@
 package com.forgeflow.chat;
 
+import com.forgeflow.billing.Entitlements;
+import com.forgeflow.billing.Quota;
 import com.forgeflow.chat.dto.ChatMessageResponse;
 import com.forgeflow.chat.dto.ChatSessionResponse;
 import com.forgeflow.chat.dto.ChatTurnResponse;
@@ -47,6 +49,7 @@ public class ChatService {
     private final ChatMessageRepository messages;
     private final AgentService agent;
     private final SessionLocks locks;
+    private final Entitlements entitlements;
     private final ObjectMapper json = new ObjectMapper();
     private final int memoryMessages;
 
@@ -55,12 +58,14 @@ public class ChatService {
                        ChatMessageRepository messages,
                        AgentService agent,
                        SessionLocks locks,
+                       Entitlements entitlements,
                        @Value("${forgeflow.chat.memory-messages:10}") int memoryMessages) {
         this.projects = projects;
         this.sessions = sessions;
         this.messages = messages;
         this.agent = agent;
         this.locks = locks;
+        this.entitlements = entitlements;
         this.memoryMessages = memoryMessages;
     }
 
@@ -118,6 +123,9 @@ public class ChatService {
     public Turn begin(Long projectId, Long sessionId, Long userId, String content) {
         projects.requireWrite(projectId, userId);
         ChatSession session = load(projectId, sessionId);
+        // Out of tokens is a 402 now, before the message is saved - not a
+        // saved question followed by a failed reply.
+        entitlements.requireRoomFor(userId, Quota.AI_TOKENS_PER_DAY);
         acquire(sessionId);
         try {
             ChatMessage userMessage = new ChatMessage();
@@ -149,6 +157,7 @@ public class ChatService {
     public Turn beginRetry(Long projectId, Long sessionId, Long userId) {
         projects.requireWrite(projectId, userId);
         load(projectId, sessionId);
+        entitlements.requireRoomFor(userId, Quota.AI_TOKENS_PER_DAY);
         acquire(sessionId);
         try {
             ChatMessage last = messages.findFirstBySessionIdOrderByIdDesc(sessionId)

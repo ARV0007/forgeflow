@@ -25,6 +25,19 @@ public class GlobalExceptionHandler {
         return ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, e.getMessage());
     }
 
+    /** 402 with the numbers a client needs to say "you've used 3 of 3 projects - upgrade?". */
+    @ExceptionHandler(QuotaExceededException.class)
+    public ProblemDetail quota(QuotaExceededException e) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.PAYMENT_REQUIRED, e.getMessage());
+        pd.setTitle("Plan limit reached");
+        pd.setProperty("quota", e.quota());
+        pd.setProperty("limit", e.limit());
+        pd.setProperty("used", e.used());
+        pd.setProperty("plan", e.plan());
+        pd.setProperty("upgrade", "/api/v1/billing/checkout");
+        return pd;
+    }
+
     @ExceptionHandler(IllegalStateException.class)
     ProblemDetail conflict(IllegalStateException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());

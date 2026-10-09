@@ -6,3 +6,9 @@ forgeflow:
     # No Docker daemon in CI or on this build bench; the in-JVM provider is
     # what Render runs, so it is also what the tests should exercise.
     provider: in-process
+  billing:
+    # The fake provider runs the real activation path without a network call.
+    provider: fake
+    stripe:
+      # Lets the tests sign webhook payloads the way Stripe would.
+      webhook-secret: whsec_test_only_not_a_real_secret

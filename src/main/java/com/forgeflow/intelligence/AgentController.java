@@ -1,5 +1,7 @@
 package com.forgeflow.intelligence;
 
+import com.forgeflow.billing.Entitlements;
+import com.forgeflow.billing.Quota;
 import com.forgeflow.intelligence.dto.GenerateRequest;
 import com.forgeflow.intelligence.dto.GenerateResponse;
 import com.forgeflow.workspace.ProjectService;
@@ -26,14 +28,16 @@ public class AgentController {
 
     private final AgentService agent;
     private final ProjectService projects;
+    private final Entitlements entitlements;
 
     // Virtual threads: a generation spends nearly all its time blocked on the
     // model, so a platform thread per run would be almost pure waste.
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
-    public AgentController(AgentService agent, ProjectService projects) {
+    public AgentController(AgentService agent, ProjectService projects, Entitlements entitlements) {
         this.agent = agent;
         this.projects = projects;
+        this.entitlements = entitlements;
     }
 
     @PostMapping("/generate")
@@ -56,6 +60,8 @@ public class AgentController {
         // Do it inside the background task and a forbidden request would get
         // 200 plus an error event instead of a clean 404.
         projects.requireWrite(projectId, userId);
+        // Same reason: out of tokens must be a real 402, not an error event in a 200.
+        entitlements.requireRoomFor(userId, Quota.AI_TOKENS_PER_DAY);
 
         SseEmitter emitter = new SseEmitter(180_000L);
 

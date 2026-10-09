@@ -1,5 +1,6 @@
 package com.forgeflow.mcp;
 
+import com.forgeflow.billing.BillingService;
 import com.forgeflow.account.ServiceAccounts;
 import com.forgeflow.intelligence.AgentService;
 import com.forgeflow.workspace.ProjectFileService;
@@ -27,6 +28,7 @@ public class McpToolExecutor {
     private final AgentService agent;
     private final ProjectFileService files;
     private final ServiceAccounts serviceAccounts;
+    private final BillingService billing;
     private final String serviceAccountEmail;
 
     /** Resolved on first use, then fixed for the life of the process. */
@@ -36,11 +38,13 @@ public class McpToolExecutor {
                            AgentService agent,
                            ProjectFileService files,
                            ServiceAccounts serviceAccounts,
+                           BillingService billing,
                            @Value("${forgeflow.mcp.service-account-email}") String serviceAccountEmail) {
         this.projects = projects;
         this.agent = agent;
         this.files = files;
         this.serviceAccounts = serviceAccounts;
+        this.billing = billing;
         this.serviceAccountEmail = serviceAccountEmail;
     }
 
@@ -54,7 +58,9 @@ public class McpToolExecutor {
         if (id == null) {
             synchronized (this) {
                 if (ownerId == null) {
-                    ownerId = serviceAccounts.ensure(serviceAccountEmail, "MCP service account");
+                    Long id0 = serviceAccounts.ensure(serviceAccountEmail, "MCP service account");
+                    billing.ensureInternalPlan(id0);
+                    ownerId = id0;
                 }
                 id = ownerId;
             }
