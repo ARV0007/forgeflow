@@ -36,6 +36,9 @@ forgeflow:
   jwt:
     secret: ${JWT_SECRET:change-me-in-env-this-is-local-only}
     expiry-minutes: 120
+  chat:
+    # Spec: "past 10 chat messages (session history)" - the model's memory window.
+    memory-messages: 10
   agent:
     max-tool-calls: 25
     max-repair-rounds: 3
