@@ -781,6 +781,12 @@ all the way: bridge → logs → bar → fix run → bar gone after the new buil
 
 136 tests.
 
+**Verified live (10 Oct, 00:16).** On Render, with real Gemini: signed up,
+asked for a tip calculator, and the reply streamed in and was saved
+(index.html, styles.css, app.js; 7,626 tokens), the build passed, and the
+Logs tab connected live. That's the redesign, the new UI and the SSE fix
+working on the real deployment.
+
 ---
 
 ## Open items
@@ -800,9 +806,6 @@ all the way: bridge → logs → bar → fix run → bar gone after the new buil
   at this size; with many projects, a busy one could crowd a small one out of
   the candidate list (pgvector 0.8's iterative scans fix this).
 - Embedding calls aren't counted against the token quota.
-- The live Gemini path hasn't been re-verified on Render since the redesign
-  started; the tests use a scripted model and the browser walk uses the demo
-  model. (Couldn't reach Render from the build machine.)
 - Real Stripe is built and tested against a local stub, but never run against
   Stripe itself — that needs Aman's test-mode keys (notes.md §14).
 - Two project creates racing can both pass the quota check and land one over.
@@ -810,10 +813,9 @@ all the way: bridge → logs → bar → fix run → bar gone after the new buil
 
 ## Still to build
 
-1. Verify everything live on Render (Gemini path, MCP, the new UI)
-2. Run the eval suite against real Gemini with `edit_file` and the runtime
+1. Run the eval suite against real Gemini with `edit_file` and the runtime
    loop in place, and compare with Day 9's 20/20
-3. A headless browser in the build gate, so runtime errors are caught without
+2. A headless browser in the build gate, so runtime errors are caught without
    anyone opening the preview (needs a host that can run Chromium)
 
 ## Done since the original plan

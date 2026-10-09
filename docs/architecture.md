@@ -1,7 +1,7 @@
 # ForgeFlow — Architecture
 
 **Version:** 0.3 — 9 Oct 2026
-**Status:** agent loop, sandbox and self-healing built and tested; redesign to the Lovable-clone spec in progress (§17)
+**Status:** redesign to the Lovable-clone spec built, tested, and verified live on Render (§17)
 **Author:** Aman Raj Verma
 
 | Version | Date | Change |
