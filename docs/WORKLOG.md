@@ -735,14 +735,63 @@ and breaking live log delivery each failed it, as they should.
 
 ---
 
+## Day 11 — Closing the loops · 10 Oct 2026
+
+Three things from "Still to build", and three open items closed.
+
+### edit_file
+
+Until now, changing one line meant the agent rewrote the whole file — paying
+for every line in output tokens, and risking silently dropping parts it never
+meant to touch, including anything the user changed by hand. `edit_file` takes
+an exact piece of text and its replacement. The text must appear **exactly
+once**; if it doesn't, the agent is told why (not found → copy it from
+`read_file`; found 3 times → include more surrounding lines) and corrects
+itself, the same way it handles a rejected path. Fuzzy matching was the
+tempting alternative and the wrong one: "close enough" is how an edit lands in
+the wrong place.
+
+### The runtime loop
+
+The build gate proves the code parses and that `index.html` points at files
+that exist. It can't see a button that throws when clicked. The preview can —
+it runs in a real browser, and since Day 10 its console errors arrive in the
+logs stream. Now they also arrive in the **agent's next request**: every
+distinct error since the last build, under a RUNTIME ERRORS heading. And the
+workbench shows a bar — "Preview error: … · Ask the agent to fix it" — that
+needs no copy-pasting, because the server already attaches the errors.
+
+The browser walk now throws an error *inside the generated app* and follows it
+all the way: bridge → logs → bar → fix run → bar gone after the new build.
+
+### Closed open items
+
+- **Prompt caching / `cached_tokens`.** Gemini already caches a request's
+  prefix it has seen recently — our system prompt, tools and history are
+  identical between agent rounds — and reports how many tokens it reused. The
+  column was 0 because nobody read the field. Now it's recorded per run.
+- **`/mcp` authentication.** `FORGEFLOW_MCP_API_KEY`, when set, is required
+  on every MCP call (as a Bearer token or `X-API-Key`). Blank keeps it open
+  locally.
+- **Evals that survive interruption.** Results are saved after every case,
+  Ctrl+C keeps what finished, and the runner waits out the new login rate
+  limit instead of failing a case. Testing this taught me something: a
+  background job (`cmd &`) in a script ignores Ctrl+C entirely, so my first
+  "interrupt" test interrupted nothing.
+
+136 tests.
+
+---
+
 ## Open items
 
-- `cost_usd` and `cached_tokens` are always 0.
+- `cost_usd` is always 0 (cached tokens are now recorded; a price table per
+  model is still missing).
 - The agent timeout counts time spent waiting out rate limits.
-- `run_evals.py` writes its results file only after the whole loop, so a
-  `Ctrl+C` mid-sweep loses every completed case.
-- `/mcp` is unauthenticated and runs as one service account. Acceptable
-  locally; a decision to make before the endpoint is advertised publicly.
+- `/mcp` runs as one service account for every caller; set
+  `FORGEFLOW_MCP_API_KEY` on Render before advertising it.
+- Runtime errors only reach the agent if someone had the preview open when
+  they happened - nothing exercises the app on its own.
 - Session locks and preview logs live in memory — correct for one instance
   (Render runs one), wrong the moment there are two. (Rate limits already
   move to Redis when `REDIS_URL` is set.)
@@ -759,11 +808,13 @@ and breaking live log delivery each failed it, as they should.
 - Two project creates racing can both pass the quota check and land one over.
   Accepted; closing it needs a per-user lock on every create.
 
-## Still to build (redesign, in order)
+## Still to build
 
-1. Verify the redesign live on Render (Gemini path, MCP, the new UI)
-2. `edit_file` + prompt caching
-3. Feed the preview's runtime console errors back into the repair loop
+1. Verify everything live on Render (Gemini path, MCP, the new UI)
+2. Run the eval suite against real Gemini with `edit_file` and the runtime
+   loop in place, and compare with Day 9's 20/20
+3. A headless browser in the build gate, so runtime errors are caught without
+   anyone opening the preview (needs a host that can run Chromium)
 
 ## Done since the original plan
 
@@ -779,3 +830,4 @@ and breaking live log delivery each failed it, as they should.
 - RAG — hybrid pgvector + full-text search, `search_code` tool, `code.generated` event (Day 10)
 - Tracing (traceparent, Zipkin), OpenAPI with a contract test, module-boundary test (Day 10)
 - Chat-shaped workbench, demo model, browser walk-through, README (Day 10)
+- `edit_file`, runtime errors fed back to the agent, cached tokens, MCP key (Day 11)

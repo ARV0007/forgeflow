@@ -394,8 +394,8 @@ others' resources; identical login failures; `ownerId` never read from requests;
 | Stream model output | **Stream our own events** | a tool call arrives as one chunk |
 | docker-java library | **Docker CLI via `ProcessBuilder`** | no dependency to version-match |
 | `run_build` tool | **build gate inside `finish`** | the model can't skip verification |
-| `edit_file` tool | not yet | full rewrites only for now |
-| Prompt caching | not yet | |
+| `edit_file` tool | **built** (Day 11) | exact, unique match - see §17.13 |
+| Prompt caching | **implicit** (Gemini) | stable prefix; reused tokens recorded in `cached_tokens` |
 | Evals, RAG | not yet | |
 | 90s timeout | **240s** | free-tier rate limits stretch runs |
 
@@ -403,9 +403,9 @@ others' resources; identical login failures; `ownerId` never read from requests;
 
 ## 12. Known gaps
 
-- `cost_usd`, `cached_tokens` always 0
+- `cost_usd` always 0 (no per-model price table)
 - The timeout includes time spent waiting out rate limits
-- `/mcp` unauthenticated (runs as a service account, with real access checks)
+- `/mcp` open unless `FORGEFLOW_MCP_API_KEY` is set (runs as a service account, with real access checks)
 - Session locks and preview logs are per-instance memory
 - Real Stripe untested against Stripe itself (stub-tested only)
 
@@ -438,6 +438,7 @@ the unused `chat_*` tables, no tests, no CI, not deployed.
 | R6 | RAG on pgvector | ✅ 9 Oct |
 | R7 | Events, tracing, OpenAPI | ✅ 9 Oct |
 | R8 | Chat-shaped UI | ✅ 9 Oct |
+| 11 | `edit_file`, runtime loop, cached tokens, MCP key | ✅ 10 Oct |
 
 ---
 
@@ -810,4 +811,24 @@ re-dispatch through the filter chain; `SecurityConfig` permits
 **Demo model.** `FORGEFLOW_LLM_PROVIDER=demo` swaps in `DemoLlmClient`, which
 writes a fixed page through the real tools and build gate. Used by
 `scripts/ui-walk.py`.
+
+### 17.13 Two kinds of self-healing
+
+```
+             ┌──────────── build gate (every finish) ────────────┐
+  agent ──►  │ files parse? index.html's links exist?            │──► refuse finish, errors back to agent
+             └───────────────────────────────────────────────────┘
+             ┌──────────── runtime (whenever the preview runs) ──┐
+  browser ─► │ console.error / uncaught exceptions via the bridge │──► PreviewLogs ──► next request's
+             └───────────────────────────────────────────────────┘                    RUNTIME ERRORS section
+```
+
+`ExecutionService.runtimeErrors(project)` returns distinct console errors
+logged after the most recent "Build started" line — errors from the code as
+it is now. The workbench mirrors the same rule to show its "fix it" bar.
+
+**Agent tools:** `list_files`, `read_file`, `search_code`, `edit_file`,
+`write_file`, `finish`. `edit_file` replaces an exact `old_text` that must
+occur once; zero or several matches are refusals with instructions, never
+guesses.
 

@@ -1550,7 +1550,84 @@ UI reads the response body itself and splits it into events on blank lines.
 
 ---
 
-## Chapter 22 — What's next
+## Chapter 22 — Small repairs, and a second inspector
+
+**Plain English.** Two upgrades to the building site. First, the contractor
+can now fix a cracked tile without tearing down the wall — that's `edit_file`.
+Second, there's a second inspector. The first one (the build gate) checks the
+drawings: every door leads somewhere, every wall is where it says. The new one
+watches people actually *using* the show home — and when a door jams in
+someone's hand, the report lands on the contractor's desk before the next job.
+
+### edit_file: change a line, not the file
+
+Before, the only way to change a file was to rewrite all of it. That's
+expensive (the model "types" every line again) and risky (it can quietly drop
+something it didn't mean to touch — including a change the user made by hand).
+
+`edit_file` takes three things: the file, the exact text to replace, and what
+to put instead. The text must appear **exactly once**:
+
+- **Not found?** The agent is told to `read_file` and copy the text exactly.
+- **Found 3 times?** It's told to include more surrounding lines.
+
+Why not "close enough" matching? Because a fuzzy match that picks the wrong
+one of three similar lines is a bug that *looks* like a successful edit.
+Refusing and explaining costs one extra round; guessing can cost a broken app.
+
+### The second inspector: runtime errors
+
+The build gate can prove that `app.js` parses. It cannot prove that clicking
+"Add" doesn't throw `TypeError: total is undefined` — that only happens when
+the code *runs*, in a browser.
+
+ForgeFlow already had the pieces: the preview runs in a real browser, and a
+small script in every preview page reports console errors back to the server
+(Chapter 16). Now those errors go one step further: the next time the agent is
+asked anything about the project, the request comes with every distinct error
+the preview hit since the last build. And the chat shows a bar with "Ask the
+agent to fix it" — one click, no copy-pasting.
+
+"Since the last build" matters: errors from code that has since been replaced
+are old news, and feeding them back would send the agent chasing ghosts.
+
+### Two quiet fixes
+
+- **Prompt caching** was already happening — Gemini reuses the unchanged
+  start of each request — but ForgeFlow never read the number, so
+  `cached_tokens` sat at 0. Now it's recorded per run.
+- **`/mcp`** can require a key, so a public deployment isn't open to anyone
+  who finds the URL.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why must `old_text` be unique instead of replacing every match?**
+Because the model usually means one specific place. "Replace every
+`color: navy`" might be right, or might recolour three things it never looked
+at. Forcing uniqueness makes the model say exactly where.
+
+**Q: Why not let the agent decide when to use `edit_file` vs `write_file`?**
+It does — the prompt only says to prefer `edit_file` for small changes. Both
+go through the same build gate, so a bad edit gets caught and repaired like a
+bad rewrite.
+
+**Q: The runtime errors only exist if someone opened the preview. Isn't that a gap?**
+Yes, and it's written down as one. Closing it means running a headless
+browser inside the build gate, which needs a host that can run Chromium.
+Render's free tier can't. Until then, the errors are caught whenever a person
+actually uses the app — which is when they matter.
+
+**Q: How do you know prompt caching is doing anything?**
+Each run now records `cached_tokens` next to `prompt_tokens`. A multi-round run
+should show a large cached share, because every round re-sends the same
+system prompt, tools and history. One SQL query shows it.
+
+</details>
+
+---
+
+## Chapter 23 — What's next
 
 Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
 the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
@@ -1568,10 +1645,10 @@ roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
 <summary><b>Counter-questions</b></summary>
 
 **Q: If you only had time for one of these, which?**
-Closing the runtime loop. The build gate checks that files parse and link up;
-it can't see that a button throws when clicked. The preview already reports
-exactly that kind of error. Handing it back to the agent turns "it builds"
-into "it runs".
+Proving it live. Every feature since Day 10 is tested against a scripted or
+demo model. The eval suite against real Gemini is what says whether
+`edit_file` and the runtime loop actually make the agent better — and a
+measurement beats a belief.
 
 **Q: RAG is built now. Is it doing anything for today's projects?**
 Mostly not, and that's by design. Generated sites are usually under fifteen

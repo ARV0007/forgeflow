@@ -762,3 +762,49 @@ It prints `UI walk passed`, or the first step that failed and why.
 - Redis writes `dump.rdb` into the directory it was started from. Start it
   from somewhere else, or `redis-cli CONFIG SET dir /tmp`.
 
+---
+
+## 19. Day 11 notes
+
+### Locking /mcp
+
+Set `FORGEFLOW_MCP_API_KEY` (any long random string) on Render. Then:
+
+```bash
+claude mcp add --transport http forgeflow https://forgeflow-7m08.onrender.com/mcp \
+  --header "Authorization: Bearer <the key>"
+```
+
+`scripts/verify-mcp.sh` picks the key up from the same environment variable.
+
+### What the agent sees about runtime errors
+
+Every distinct `console.error` / uncaught exception the preview reported since
+the last build, appended to the request:
+
+```
+RUNTIME ERRORS - reported by the browser running this project's preview since
+the last build. The build check cannot see these. ...
+- Uncaught TypeError: total is undefined (app.js:3)
+```
+
+A build (the agent's own, or "Run build") starts the list over.
+
+### Is the prompt cache working?
+
+```sql
+SELECT id, prompt_tokens, cached_tokens,
+       round(100.0 * cached_tokens / nullif(prompt_tokens, 0)) AS pct_cached
+FROM generation_runs ORDER BY id DESC LIMIT 10;
+```
+
+Multi-round runs should show a healthy cached share; single-round runs ~0.
+
+### Gotchas
+
+- A background job (`cmd &`) in a non-interactive shell ignores SIGINT.
+  To test Ctrl+C handling, use `timeout -s INT 9 cmd` instead.
+- The eval runner logs in before every case, and logins are rate-limited
+  (10/min per IP). It now waits out 429s; with the default 75s pause it never
+  hits them.
+

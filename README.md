@@ -30,7 +30,7 @@ live preview · file tree · every step streamed to the browser
 |---|---|
 | **Projects** | create, list, rename, delete; share with **editors** and **viewers**; public projects |
 | **Auth** | sign up, log in (JWT), get / edit my profile |
-| **AI generation** | chat sessions with **memory** (last 10 messages); streaming replies; **retry if failed**; a self-healing build gate |
+| **AI generation** | chat sessions with **memory** (last 10 messages); streaming replies; **retry if failed**; a self-healing build gate; targeted `edit_file` changes; errors from the running preview fed back to the agent |
 | **Files** | file tree, file content, **download as zip**, who created / last changed each file |
 | **Preview** | live preview link, start / stop, **logs stream** — builds, requests, 404s and the generated app's own `console` output |
 | **Search (RAG)** | hybrid code search (pgvector + full-text, rank-fused); the agent has a `search_code` tool; big projects get relevant code attached to each request |
@@ -104,6 +104,7 @@ FORGEFLOW_EMBEDDER=hashing FORGEFLOW_SANDBOX_PROVIDER=in-process \
 | `STRIPE_SECRET_KEY`, `STRIPE_PRO_PRICE_ID`, `STRIPE_WEBHOOK_SECRET`, `APP_BASE_URL` | — | Stripe — setup in `docs/notes.md` §14 |
 | `ZIPKIN_URL` | — | export traces, e.g. `http://localhost:9411` |
 | `FORGEFLOW_MCP_SERVICE_EMAIL` | `mcp-service@forgeflow.internal` | the account MCP calls act as |
+| `FORGEFLOW_MCP_API_KEY` | — | require this key on `/mcp` (set it on any public deployment) |
 
 ## Tests
 
