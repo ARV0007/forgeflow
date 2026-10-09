@@ -407,7 +407,7 @@ others' resources; identical login failures; `ownerId` never read from requests;
 - The timeout includes time spent waiting out rate limits
 - `/mcp` unauthenticated (runs as a service account, with real access checks)
 - Session locks and preview logs are per-instance memory
-- Not built yet from the spec: RAG, tracing, OpenAPI page
+- Not built yet from the spec: tracing, OpenAPI page
 - Real Stripe untested against Stripe itself (stub-tested only)
 
 Closed since 0.2: the module-boundary exceptions (`AgentTools`,
@@ -436,7 +436,7 @@ the unused `chat_*` tables, no tests, no CI, not deployed.
 | R3 | Zip, Get Preview, logs stream, authorship | ✅ 9 Oct |
 | R4 | Plans, quotas, Stripe | ✅ 9 Oct |
 | R5 | Redis rate limiting | ✅ 9 Oct |
-| R6 | RAG on pgvector | ⬜ |
+| R6 | RAG on pgvector | ✅ 9 Oct |
 | R7 | Events, tracing, OpenAPI | ⬜ |
 | R8 | Chat-shaped UI | ⬜ |
 
@@ -617,6 +617,7 @@ A relationship without the permission → **403**.
 | My plan + usage | `GET /api/v1/billing/me` |
 | Upgrade / cancel | `POST /api/v1/billing/checkout`, `POST /api/v1/billing/cancel` |
 | Stripe webhook | `POST /api/v1/billing/webhook/stripe` (signature, no JWT) |
+| Code search | `GET /api/v1/projects/{id}/search?q=&k=` |
 
 ### 17.5 The logs stream
 
@@ -647,8 +648,8 @@ number as the event id so a reconnect resumes rather than replays.
 | Spring Cloud Gateway | one app, Spring Security in front | one deployable has nothing to route between |
 | Kubernetes pods per preview | Docker locally, in-process on Render | no cluster on a free tier; `SandboxProvider` is the seam |
 | MinIO | Postgres TEXT | small text files; `ProjectFileService` is the seam |
-| Kafka | in-process event (R7) | one consumer, one process; the event class is the seam |
-| Qdrant | pgvector (R6) | already in the database; no second store to keep consistent |
+| Kafka | in-process `CodeGenerated` event | one consumer, one process; the event record is the seam |
+| Qdrant | pgvector | already in the database; no second store to keep consistent |
 
 ### 17.7 Billing
 
@@ -720,4 +721,26 @@ Over the limit: **429** with `Retry-After` (seconds) and
 The client IP is trustworthy because `server.forward-headers-strategy: native`
 makes Tomcat honour `X-Forwarded-For` only from private-network proxies
 (Render's), never from a client on the open internet.
+
+### 17.9 Retrieval (RAG)
+
+```
+file ──CodeChunker──► ~40-line chunks (5 lines overlap, end on a blank line if near)
+      ──Embedder────► vector(768)          "File: <path>\n" + chunk, as RETRIEVAL_DOCUMENT
+      ──────────────► file_chunks           content · start/end line · file_hash · embedding_model · tsv (generated)
+
+query ─┬─ embed (RETRIEVAL_QUERY) ─► top 30 by cosine distance ─┐
+       └─ words → 'a | b | c'     ─► top 30 by ts_rank_cd ──────┴─► RRF: Σ 1/(60 + rank) ─► top k
+```
+
+| When | What happens |
+|---|---|
+| A run changes files | `CodeGenerated` published → `CodeIndexer` re-indexes (async in prod) |
+| Any search | `ensureIndexed` first: re-embed files whose hash changed, drop chunks of deleted files |
+| A run starts on a project with > 15 files | top-k excerpts appended to the request |
+| Any time | the agent may call `search_code` |
+| Embedder fails | chunks stored without vectors (keyword search still works), retried next pass |
+
+Embedders: `gemini-embedding-001` at 768 dims (`FORGEFLOW_EMBEDDER=gemini`,
+needs `GOOGLE_API_KEY`) or the offline `hashing` embedder.
 

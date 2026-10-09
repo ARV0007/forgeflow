@@ -32,6 +32,7 @@ Transakt is a restaurant. ForgeFlow is a **building site**.
 | A plan (FREE / PRO) | The **contract tier** — how many sites, how many show homes, how many contractor-hours a day |
 | The Stripe webhook | The **bank's signed letter** — the only proof of payment the office accepts |
 | Rate limiting | The **turnstile at the gate** — a few people can rush through, then it lets one in every so often |
+| RAG | The **site archivist** — finds the right few drawings in a filing room too big to carry around |
 
 The most important thing on this site: **the contractor never touches the
 building directly.** They ask the foreman, and the foreman checks every request
@@ -1289,19 +1290,129 @@ address.
 
 ---
 
-## Chapter 19 — What's next
+## Chapter 19 — The archivist (RAG)
+
+Chapter 14 of the original plan said RAG would come last, because it only
+helps once a project is too big to send whole. That's still true — and now
+the machinery exists for when it is.
+
+**Plain English.** On a small job the contractor carries every drawing. On a
+big one that's impossible, so the site has an archivist. The contractor says
+"I need whatever shows the dark-mode switch," and the archivist comes back
+with the three relevant sheets — with page numbers, so the contractor can pull
+the full drawing if needed.
+
+RAG — Retrieval-Augmented Generation — is exactly that: before asking the
+model to do something, *retrieve* the most relevant pieces of the project and
+put them in front of it.
+
+### Step 1: cut files into chunks
+
+A whole file is the wrong unit. Turn a 400-line file into one vector and you
+get an average of everything in it, close to nothing in particular. A single
+line is too little to mean anything. ~40 lines is roughly one function or one
+CSS block. Chunks overlap by 5 lines, so something sitting on a boundary still
+appears whole in one of them. Each chunk keeps its line numbers.
+
+### Step 2: turn each chunk into a vector
+
+An **embedding** model turns text into a list of numbers (768 here) such that
+texts with similar meaning get similar lists. "Toggle the dark theme" and
+"switch to night mode" end up close together even though they share no words.
+
+Embedding models want to know which side of the search a text is on: a
+**document** being stored, or a **query** looking for one. They're trained to
+put a question near its answer.
+
+### Step 3: search two ways at once
+
+Vectors understand meaning but are fuzzy about exact names. Ask for
+`renderTodos` and a chunk that *talks about* rendering might outrank the one
+that *defines* `renderTodos`. Plain keyword search is the opposite: exact
+names, no understanding.
+
+So both run, and the results are merged with **Reciprocal Rank Fusion**: each
+chunk scores `1/(60 + its rank)` in each list it appears in, summed. Two
+second-places beat one first-place and one absence. It uses positions only,
+so it doesn't matter that a cosine distance and a keyword rank are on
+completely different scales.
+
+### Step 4: keep it fresh without redoing everything
+
+Each file's chunks remember a SHA-256 of the file. Re-indexing compares
+hashes and only re-embeds files that changed. It runs in the background after
+every run, and again (cheaply) before every search — so search is always
+current even if the background job hasn't finished.
+
+### When does the agent actually use it?
+
+- **Up to 15 files:** nothing changes. The agent lists and reads the whole
+  project, which is more reliable than any retrieval.
+- **Past 15:** the request arrives with the top 8 relevant excerpts attached.
+- **Always:** the agent has a `search_code` tool for anything else.
+
+### Why Postgres and not Qdrant?
+
+The spec draws a separate vector database. But Postgres already has pgvector
+installed, and the chunks sit next to the files they came from. A separate
+store means two systems that can disagree — a file deleted in one, its chunks
+alive in the other. At this size, one database is simpler and correct.
+
+### The event
+
+When a run changes files, `AgentService` publishes a `CodeGenerated` event.
+It doesn't know who listens. Today the indexer does, in the same process. In
+the spec's design, that event goes onto a Kafka topic called `code.generated`
+and the indexer is a separate service. The event wouldn't change — only how
+it's delivered. That's what "seam" means.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why not embed whole files?**
+One vector per file averages everything in it. A file that handles todos,
+dark mode and local storage gets a vector that's a bit like all three and
+close to none. Chunks keep each idea separate.
+
+**Q: What is Reciprocal Rank Fusion, in one sentence?**
+Score each result by `1/(60 + rank)` in every list it appears in and add the
+scores up — so agreement between two searches beats a single strong vote.
+
+**Q: The embedding API is down. What happens?**
+Indexing stores chunks without vectors, so keyword search still works, and
+marks them so the next pass fills the vectors in. Searches embed the query
+too; if that fails, the search runs on keywords alone. Nothing errors.
+
+**Q: You switch from one embedding model to another. What breaks?**
+Nothing visibly — but vectors from different models live in different
+spaces, and comparing them is meaningless. Each chunk stores which model made
+it; the indexer sees the mismatch and re-embeds.
+
+**Q: Why are tests using a "hashing" embedder instead of Gemini?**
+Tests must be deterministic and work offline. The hashing embedder maps words
+to slots in a 768-long list. It only knows about shared words, not meaning —
+which is enough to check the pipeline end to end, and honest about what it
+isn't.
+
+**Q: Can one project's search return another project's code?**
+No. Both halves of the search filter by project id, and so does the final
+query that joins them. There's a test that searches with two projects
+present.
+
+</details>
+
+---
+
+## Chapter 20 — What's next
 
 Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
 the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
 roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
-(Chapter 16), **plans, quotas and Stripe** (Chapter 17) and **rate limiting**
-(Chapter 18). What's left, in order:
+(Chapter 16), **plans, quotas and Stripe** (Chapter 17), **rate limiting**
+(Chapter 18) and **RAG** (Chapter 19). What's left, in order:
 
-- **RAG** — once a project has dozens of files, retrieve only the relevant ones
-  instead of sending everything.
-- **Events and tracing** — a `code.generated` event (where Kafka would plug
-  in), and a trace id on every request so one user action can be followed
-  through the logs.
+- **Tracing** — a trace id on every request, so one user action can be
+  followed through the logs.
 - **`edit_file`** and **prompt caching**.
 
 <details>
@@ -1313,9 +1424,10 @@ line with no way to tie it to the request that caused it. A trace id on every
 request turns "something failed around 3pm" into "this request, this user,
 these steps".
 
-**Q: Why is RAG still not first, when it's the most talked-about technique?**
-Because it only helps when a project is too big to send whole — past about fifteen
-files. ForgeFlow's generated sites are smaller than that today. Building it first
-would be solving a problem I don't have yet.
+**Q: RAG is built now. Is it doing anything for today's projects?**
+Mostly not, and that's by design. Generated sites are usually under fifteen
+files, and below that the agent reads everything — more reliable than any
+retrieval. RAG is there for when projects grow, and `search_code` is there
+whenever the agent wants it.
 
 </details>

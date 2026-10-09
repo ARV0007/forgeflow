@@ -634,6 +634,35 @@ that moves it before the JWT filter goes red.
 
 94 tests; CI now runs a Redis container too.
 
+### Phase 6 — RAG over the project's own code
+
+The spec draws Qdrant. The vectors went into Postgres instead — pgvector was
+already installed, and V1 had already sketched a `file_chunks` table with a
+`vector(768)` column and a full-text `tsv` column side by side. One database
+means a chunk and its file can never disagree about whether the other exists.
+
+**Hybrid search, because code is full of exact names.** Embeddings are good
+at meaning ("where's the dark mode toggle?") and unreliable at identifiers —
+`renderTodos` might rank below a chunk that's merely *about* rendering.
+Keyword search is the opposite. Both run, and Reciprocal Rank Fusion merges
+them by position, so a chunk ranked well by both wins.
+
+**Incremental indexing.** Each file's SHA-256 is stored with its chunks; a
+re-index only re-embeds files whose hash changed. After a run, a background
+listener re-indexes; before every search, the index re-checks itself anyway,
+so freshness never depends on the listener.
+
+**When the agent uses it.** Up to 15 files, nothing changes — the agent can
+read the whole project. Past that, each request arrives with the most relevant
+excerpts attached, and the agent has a `search_code` tool for anything else.
+
+**The `code.generated` event exists now.** `AgentService` publishes it after
+every run that changed files; the indexer is its first listener. That's the
+seam where Kafka would plug in — the publisher doesn't know who's listening.
+
+108 tests. Tests use an offline "hashing" embedder: deterministic, no network,
+and honest that it only knows about shared words.
+
 **Tests:** 58, every one against a real Postgres. Before trusting a new suite I
 break the behaviour on purpose and check it goes red — dropping `updated_by`
 and breaking live log delivery each failed it, as they should.
@@ -652,6 +681,10 @@ and breaking live log delivery each failed it, as they should.
   (Render runs one), wrong the moment there are two. (Rate limits already
   move to Redis when `REDIS_URL` is set.)
 - Render isn't given a `REDIS_URL` yet, so production rate-limits in memory.
+- The HNSW index filters by project *after* the nearest-neighbour scan. Fine
+  at this size; with many projects, a busy one could crowd a small one out of
+  the candidate list (pgvector 0.8's iterative scans fix this).
+- Embedding calls aren't counted against the token quota.
 - The live Gemini path hasn't been re-verified on Render since the redesign
   started; the tests use a scripted model.
 - Real Stripe is built and tested against a local stub, but never run against
@@ -661,11 +694,10 @@ and breaking live log delivery each failed it, as they should.
 
 ## Still to build (redesign, in order)
 
-1. RAG over the project's own code, on pgvector
-2. A `code.generated` event (the Kafka seam), request tracing, an OpenAPI page
-3. A chat-shaped workbench UI (with the billing page)
-4. `edit_file` + prompt caching
-5. README
+1. Request tracing, an OpenAPI page, a module-boundary test
+2. A chat-shaped workbench UI (with the billing page)
+3. `edit_file` + prompt caching
+4. README
 
 ## Done since the original plan
 
@@ -678,3 +710,4 @@ and breaking live log delivery each failed it, as they should.
 - Members and roles, chat memory, zip download, logs stream (Day 10)
 - Plans, quotas, usage log, Stripe checkout and webhook (Day 10)
 - Rate limiting — token buckets in Redis, in-memory fallback (Day 10)
+- RAG — hybrid pgvector + full-text search, `search_code` tool, `code.generated` event (Day 10)

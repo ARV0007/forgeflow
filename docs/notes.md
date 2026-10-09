@@ -637,3 +637,40 @@ lengths count **bytes**, not characters — `"héllo"` is 6.
 - Test profile sets `forgeflow.ratelimit.enabled: false` — every test calls
   from 127.0.0.1 and signs up dozens of users.
 
+---
+
+## 16. RAG notes
+
+### Looking inside the index
+
+```sql
+SELECT file_path, chunk_index, start_line, end_line, embedding_model,
+       embedding IS NOT NULL AS has_vector, left(content, 60)
+FROM file_chunks WHERE project_id = 42 ORDER BY file_path, chunk_index;
+```
+
+Or through the API: `GET /api/v1/projects/42/search?q=renderTodos`.
+
+### pgvector from JDBC, without the pgvector library
+
+- Write a vector as its text form, `'[0.1,0.2,...]'`, with `CAST(? AS vector)`.
+  Postgres can cast any string type to any type through the type's input
+  function, so a plain `String` parameter works.
+- `<=>` is cosine distance (0 = same direction). `<->` is Euclidean, `<#>` is
+  negative inner product.
+- A `null` bound to a bare `? IS NOT NULL` fails: Postgres can't infer the
+  parameter's type. Build the SQL without that half instead.
+
+### Gotchas
+
+- Embedding models expect to be told whether the text is a **document** being
+  stored or a **query** being searched for (`RETRIEVAL_DOCUMENT` /
+  `RETRIEVAL_QUERY`). Mixing them up quietly lowers result quality.
+- Vectors from two different models aren't comparable at all. Each chunk
+  stores `embedding_model`; changing models means a re-embed, which the
+  indexer does on its own because the stored model no longer matches.
+- `to_tsquery` treats `& | ! ( ) :` as syntax. User text must never reach it
+  raw — `CodeIndex.keywordQuery` keeps only `[A-Za-z0-9_]` words.
+- Never call an embedding API inside a `@Transactional` method: the database
+  connection is held for the whole network wait.
+
