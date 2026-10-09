@@ -407,7 +407,7 @@ others' resources; identical login failures; `ownerId` never read from requests;
 - The timeout includes time spent waiting out rate limits
 - `/mcp` unauthenticated (runs as a service account, with real access checks)
 - Session locks and preview logs are per-instance memory
-- Not built yet from the spec: Redis rate limiting, RAG, tracing, OpenAPI page
+- Not built yet from the spec: RAG, tracing, OpenAPI page
 - Real Stripe untested against Stripe itself (stub-tested only)
 
 Closed since 0.2: the module-boundary exceptions (`AgentTools`,
@@ -435,7 +435,7 @@ the unused `chat_*` tables, no tests, no CI, not deployed.
 | R2 | Chat sessions + memory | ✅ 9 Oct |
 | R3 | Zip, Get Preview, logs stream, authorship | ✅ 9 Oct |
 | R4 | Plans, quotas, Stripe | ✅ 9 Oct |
-| R5 | Redis rate limiting | ⬜ |
+| R5 | Redis rate limiting | ✅ 9 Oct |
 | R6 | RAG on pgvector | ⬜ |
 | R7 | Events, tracing, OpenAPI | ⬜ |
 | R8 | Chat-shaped UI | ⬜ |
@@ -693,4 +693,31 @@ Rules the webhook follows:
   cancellation webhook must not grant the plan forever.
 - One live subscription per user, enforced by a partial unique index; others
   are retired (and flushed) before a new one is saved.
+
+### 17.8 Rate limiting
+
+```
+request ─► JwtAuthFilter ─► RateLimitFilter ─► authorization ─► controller
+                              │
+                              ├─ RateLimitRules.match(request, user) → (limit, key) or none
+                              └─ RateLimiter.tryAcquire(key, limit)
+                                    RedisRateLimiter  (REDIS_URL set)  ── Lua token bucket, atomic
+                                      └─ on any Redis error ─► InMemoryRateLimiter
+                                    InMemoryRateLimiter (no REDIS_URL)
+```
+
+| Bucket | Applies to | Key | Default |
+|---|---|---|---|
+| auth | `POST /api/v1/auth/login`, `/signup` | IP | 10 / min |
+| mcp | `POST /mcp` | IP | 30 / min |
+| ai | `POST` generate, chat messages, retry (incl. `/stream`) | user | 6 / min |
+| invites | `POST /api/v1/projects/{id}/members` | user | 20 / hour |
+| api | any other `/api/**` | user | 300 / min |
+
+Over the limit: **429** with `Retry-After` (seconds) and
+`X-RateLimit-Limit` / `X-RateLimit-Remaining` on every limited response.
+
+The client IP is trustworthy because `server.forward-headers-strategy: native`
+makes Tomcat honour `X-Forwarded-For` only from private-network proxies
+(Render's), never from a client on the open internet.
 

@@ -584,3 +584,56 @@ For local webhooks, the Stripe CLI forwards them and prints its own secret:
 - `Propagation.REQUIRES_NEW` plus a foreign key to a row the outer transaction
   just inserted = a deadlock the database can't see. (WORKLOG Day 10.)
 
+---
+
+## 15. Rate limiting and Redis
+
+### Turning on Redis
+
+Without `REDIS_URL` the limiter keeps its buckets in memory — fine while Render
+runs one instance. To share limits across instances, create a Redis (Render's
+**Key Value**, Upstash or Redis Cloud all work) and set:
+
+| Variable | Example |
+|---|---|
+| `REDIS_URL` | `rediss://default:<password>@<host>:6379` |
+
+`rediss://` (two s's) means TLS. The client handles a username, a password
+and a `/<db>` suffix.
+
+Locally: `redis-server --daemonize yes`, then
+`REDIS_URL=redis://localhost:6379 ./mvnw spring-boot:run`.
+
+### Looking at a bucket
+
+```bash
+redis-cli --scan --pattern 'ff:rl:*'
+redis-cli HGETALL ff:rl:ai:user:7      # tokens left, and when it was last touched
+```
+
+Keys expire on their own once a bucket would be full again.
+
+### RESP in five lines
+
+| First byte | Meaning | Example |
+|---|---|---|
+| `+` | simple string | `+OK` |
+| `-` | error | `-ERR unknown command` |
+| `:` | integer | `:42` |
+| `$` | bulk string (length, then bytes; `$-1` = nil) | `$5\r\nhello` |
+| `*` | array of any of these | `*2\r\n:1\r\n:0` |
+
+A command is always an array of bulk strings. The one real trap: bulk-string
+lengths count **bytes**, not characters — `"héllo"` is 6.
+
+### Gotchas
+
+- A `Filter` that is a `@Component` gets registered twice: once by Spring
+  Security (where you put it) and once by Spring Boot as a servlet filter
+  (before security). Build it with `new` inside `SecurityConfig` instead.
+- `RateLimitTest` gives each test its own fake client IP
+  (`.with(r -> { r.setRemoteAddr(...); return r; })`), or per-IP buckets
+  leak between tests.
+- Test profile sets `forgeflow.ratelimit.enabled: false` — every test calls
+  from 127.0.0.1 and signs up dozens of users.
+

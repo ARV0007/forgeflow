@@ -31,6 +31,7 @@ Transakt is a restaurant. ForgeFlow is a **building site**.
 | The logs stream | The **site radio** — everything happening on site, as it happens |
 | A plan (FREE / PRO) | The **contract tier** — how many sites, how many show homes, how many contractor-hours a day |
 | The Stripe webhook | The **bank's signed letter** — the only proof of payment the office accepts |
+| Rate limiting | The **turnstile at the gate** — a few people can rush through, then it lets one in every so often |
 
 The most important thing on this site: **the contractor never touches the
 building directly.** They ask the foreman, and the foreman checks every request
@@ -1186,16 +1187,116 @@ libraries anyway.
 
 ---
 
-## Chapter 18 — What's next
+## Chapter 18 — The turnstile (rate limiting)
+
+Chapter 8 was about the contractor telling *us* to slow down — Gemini's 429.
+This is the other side: us telling *clients* to slow down.
+
+**Plain English.** Quotas (Chapter 17) are a daily allowance: you get so many
+contractor-hours a day. A turnstile is different: it doesn't care how much
+you've used today, only how fast you're pushing through right now. A few
+people can rush through at once, then it lets one more in every few seconds.
+
+Why both? Someone with plenty of daily allowance can still fire fifty
+requests in one second. Each one is a model call, and fifty at once would hit
+Gemini's own per-minute limit — for *everyone* on the server, not just them.
+
+### The token bucket
+
+Every client has a bucket holding up to N tokens. Each request takes one. The
+bucket refills steadily, N per minute. Empty bucket → **429 Too Many
+Requests**, with a `Retry-After` header saying how many seconds until the next
+token.
+
+Why not just "count requests per minute and reset at :00"? Because of the
+boundary. With a limit of 10, someone can send 10 at 12:00:59 and 10 more at
+12:01:00: twenty in two seconds. The bucket never holds more than 10, however
+the requests line up.
+
+### Why Redis
+
+With one server, a bucket in memory is fine. With two, each server has its
+own bucket, and a client who alternates gets double the limit. Redis is one
+shared place for every server's buckets.
+
+There's a trap, though. "Read the bucket, work out the new value, write it
+back" as three separate commands is a race: two servers read "1 token left"
+at the same moment, and both spend it. So the whole thing is a small **Lua
+script**, and Redis runs a script start to finish without anything else
+interleaving. Read-decide-write becomes one step.
+
+The script also asks Redis for the time instead of using each server's own
+clock. Server clocks drift, and a fast clock would refill buckets early.
+
+### When Redis is down
+
+Three options:
+
+- **Fail closed** — refuse everything. Redis hiccups and the whole app is down.
+- **Fail open** — allow everything. Redis hiccups and there are no limits.
+- **Fall back** — use the same bucket in memory. Limits hold per server.
+
+ForgeFlow falls back. The limits get a bit looser (per server instead of
+shared) but never disappear.
+
+### Who is "a client"?
+
+- For login and signup, nobody is logged in yet, so it's **per IP address**.
+  This is what stops someone trying a thousand passwords a minute.
+- For everything else, it's **per user**, from the JWT. Many people behind one
+  office IP each get their own allowance.
+
+Getting the IP right on Render takes one setting. Every request arrives from
+Render's proxy, which puts the real client IP in an `X-Forwarded-For` header.
+But a client can send that header too, and lie. Tomcat's "native" mode only
+believes the header when the request came from a private-network address —
+the proxy, never the open internet.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Quotas already limit tokens per day. Why rate limit as well?**
+Different problems. A quota is about cost over a day; a rate limit is about
+load right now. A user well inside their quota can still fire fifty requests
+in a second and exhaust the model provider's per-minute limit for everyone.
+
+**Q: Why does the filter have to run after the JWT filter?**
+Before it, nobody is authenticated, so every request looks anonymous and all
+users share one bucket. One busy user would rate-limit everybody. There's a
+test that moves the filter before JWT and checks it fails.
+
+**Q: Why isn't `RateLimitFilter` a Spring `@Component`?**
+Spring Boot automatically registers every `Filter` bean as a servlet filter,
+which runs before Spring Security. You'd get a second copy, in the wrong
+place, limiting everyone as anonymous.
+
+**Q: Redis goes down for ten minutes. What do users notice?**
+Nothing, unless they were near a limit. Each server switches to its own
+in-memory buckets, logs a warning at most once a minute, and switches back
+when Redis returns.
+
+**Q: Why write a Redis client instead of using Lettuce or Jedis?**
+Partly necessity — this build can't download new libraries. But the protocol
+is genuinely small: five reply types, each marked by its first byte. The one
+real bug to avoid is counting characters instead of bytes in a length prefix.
+
+**Q: Someone sends `X-Forwarded-For: 1.2.3.4` to dodge the login limit. Does it work?**
+Not on Render. Tomcat only trusts that header when the request came from a
+private-network proxy. A request straight from the internet keeps its real
+address.
+
+</details>
+
+---
+
+## Chapter 19 — What's next
 
 Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
 the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
 roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
-(Chapter 16), and **plans, quotas and Stripe** (Chapter 17). What's left, in
-order:
+(Chapter 16), **plans, quotas and Stripe** (Chapter 17) and **rate limiting**
+(Chapter 18). What's left, in order:
 
-- **Rate limiting** — a token bucket in Redis, so one client can't hammer the
-  model on everyone else's quota.
 - **RAG** — once a project has dozens of files, retrieve only the relevant ones
   instead of sending everything.
 - **Events and tracing** — a `code.generated` event (where Kafka would plug
@@ -1207,10 +1308,10 @@ order:
 <summary><b>Counter-questions</b></summary>
 
 **Q: If you only had time for one of these, which?**
-Rate limiting. Quotas cap how much someone can spend in a day, but not how
-fast — a script can still fire a hundred requests in a second and hit the
-model provider's own limit for everyone. Quotas were the previous answer to
-this question; they're built now.
+Tracing. When something goes wrong in production today, the only clue is a log
+line with no way to tie it to the request that caused it. A trace id on every
+request turns "something failed around 3pm" into "this request, this user,
+these steps".
 
 **Q: Why is RAG still not first, when it's the most talked-about technique?**
 Because it only helps when a project is too big to send whole — past about fifteen

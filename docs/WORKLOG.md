@@ -603,6 +603,37 @@ ordering.
 81 tests. Sabotage-checked: skipping the signature check, the event ordering,
 and the preview-restart allowance each turn the suite red.
 
+### Phase 5 — rate limiting
+
+Quotas cap how much someone can use in a day; rate limits cap how *fast*. A
+script firing a hundred generate requests in a second wouldn't break its
+daily quota for a while, but it would hit Gemini's per-minute limit for
+everybody.
+
+**Token bucket, not a counter per minute.** "10 per minute" means a burst of
+10, then one more every six seconds. A fixed-window counter would allow 10 at
+12:00:59 and another 10 at 12:01:00 — twenty in two seconds.
+
+**Redis, without a Redis library.** The Redis protocol (RESP) turned out to be
+small enough to implement in one class: a request is an array of strings, a
+reply is one of five types marked by its first byte. The bucket itself is a
+Lua script, because Redis runs a script atomically — "read the bucket, decide,
+write it back" as three separate commands would let two servers both spend
+the last token.
+
+**When Redis is down**, the limiter quietly switches to the same bucket in
+memory. That limits per server instead of across all of them. Blocking
+everyone (fail closed) or letting everything through (fail open) would both be
+worse.
+
+**Placement mattered.** The filter has to run *after* the JWT filter, or it
+can't tell users apart. And it can't be a `@Component`, because Spring Boot
+would also register it as a plain servlet filter — one that runs before
+security, sees everyone as anonymous, and lumps every user together. A test
+that moves it before the JWT filter goes red.
+
+94 tests; CI now runs a Redis container too.
+
 **Tests:** 58, every one against a real Postgres. Before trusting a new suite I
 break the behaviour on purpose and check it goes red — dropping `updated_by`
 and breaking live log delivery each failed it, as they should.
@@ -618,7 +649,9 @@ and breaking live log delivery each failed it, as they should.
 - `/mcp` is unauthenticated and runs as one service account. Acceptable
   locally; a decision to make before the endpoint is advertised publicly.
 - Session locks and preview logs live in memory — correct for one instance
-  (Render runs one), wrong the moment there are two.
+  (Render runs one), wrong the moment there are two. (Rate limits already
+  move to Redis when `REDIS_URL` is set.)
+- Render isn't given a `REDIS_URL` yet, so production rate-limits in memory.
 - The live Gemini path hasn't been re-verified on Render since the redesign
   started; the tests use a scripted model.
 - Real Stripe is built and tested against a local stub, but never run against
@@ -628,12 +661,11 @@ and breaking live log delivery each failed it, as they should.
 
 ## Still to build (redesign, in order)
 
-1. Rate limiting on Redis
-2. RAG over the project's own code, on pgvector
-3. A `code.generated` event (the Kafka seam), request tracing, an OpenAPI page
-4. A chat-shaped workbench UI (with the billing page)
-5. `edit_file` + prompt caching
-6. README
+1. RAG over the project's own code, on pgvector
+2. A `code.generated` event (the Kafka seam), request tracing, an OpenAPI page
+3. A chat-shaped workbench UI (with the billing page)
+4. `edit_file` + prompt caching
+5. README
 
 ## Done since the original plan
 
@@ -645,3 +677,4 @@ and breaking live log delivery each failed it, as they should.
 - CI — every push runs the suite against a real Postgres (Day 10)
 - Members and roles, chat memory, zip download, logs stream (Day 10)
 - Plans, quotas, usage log, Stripe checkout and webhook (Day 10)
+- Rate limiting — token buckets in Redis, in-memory fallback (Day 10)
