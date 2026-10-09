@@ -36,7 +36,8 @@ with sync_playwright() as p:
     page.on("response", lambda r: expected_404.append(r.url) if r.status == 404 and r.url.endswith("/preview") else None)
     page.on("console", lambda m: errors.append(f"console.{m.type}: {m.text}")
             if m.type == "error" and "status of 404" not in m.text else None)
-    page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
+    # Step 5b throws inside the generated app on purpose; anything else is real.
+    page.on("pageerror", lambda e: errors.append(f"pageerror: {e}") if "total is undefined" not in str(e) else None)
 
     # 1. sign up
     page.goto(BASE + "/")
@@ -93,6 +94,18 @@ with sync_playwright() as p:
     expect(page.locator(".log", has_text="button clicked 1").first).to_be_visible()
     shot(page, "05-logs")
 
+    # 5b. the runtime loop: an error thrown INSIDE the generated app travels
+    #     bridge -> logs -> the bar above the composer -> "fix it" -> the agent
+    app_frame = next(f for f in page.frames if "/p/" in f.url)
+    app_frame.evaluate("setTimeout(() => { throw new TypeError('total is undefined') }, 0)")
+    expect(page.locator("#runtime-bar")).to_be_visible(timeout=10000)
+    expect(page.locator("#runtime-text")).to_contain_text("total is undefined")
+    shot(page, "05b-runtime-error")
+    page.click("#btn-fix")
+    expect(page.locator(".msg-user").last).to_have_text("Fix the error the preview reported.")
+    expect(page.locator(".msg-bot:not(.is-working)")).to_have_count(2, timeout=20000)
+    expect(page.locator("#runtime-bar")).to_be_hidden(timeout=10000)   # the run's build cleared it
+
     # 6. search
     page.click(".tab[data-tab=search]")
     page.fill("#search-q", "button clicked")
@@ -147,7 +160,7 @@ with sync_playwright() as p:
     expect(page2.locator("#role-badge")).to_have_text("viewer")
     expect(page2.locator("#prompt")).to_be_disabled()
     expect(page2.locator("#btn-build")).to_be_disabled()
-    expect(page2.locator(".msg-bot")).to_have_count(1, timeout=10000)   # can read the chat
+    expect(page2.locator(".msg-bot")).to_have_count(2, timeout=10000)   # can read the chat (build + fix)
     shot(page2, "10-viewer")
 
     # 10. a 402 surfaces as a friendly toast with a way to upgrade (viewer is on FREE)

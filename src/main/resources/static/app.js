@@ -587,6 +587,9 @@ function stopLogs() {
 function startLogs() {
   stopLogs();
   $('log-list').innerHTML = '';
+  runtimeErrors.clear();
+  state.runtimeDismissed = 0;
+  $('runtime-bar').hidden = true;
   state.lastLogSeq = 0;
   const controller = new AbortController();
   state.logs = controller;
@@ -617,8 +620,47 @@ function startLogs() {
   connect();
 }
 
+// Errors the generated app threw in the preview since the last build. The
+// server attaches the same list to the next request, so "fix it" needs no
+// copy-pasting - the agent already sees them.
+const runtimeErrors = new Set();
+
+function trackRuntime(l) {
+  if (l.source === 'build' && l.message.startsWith('Build started')) {
+    runtimeErrors.clear();
+  } else if (l.source === 'console' && l.level === 'error') {
+    runtimeErrors.add(l.message);
+  } else {
+    return;
+  }
+  showRuntimeBar();
+}
+
+function showRuntimeBar() {
+  const n = runtimeErrors.size;
+  if (n === 0 || state.runtimeDismissed === n) { $('runtime-bar').hidden = true; return; }
+  const first = [...runtimeErrors][0];
+  $('runtime-text').innerHTML = `<b>${n === 1 ? 'Preview error' : `${n} preview errors`}</b><code></code>`;
+  $('runtime-text').querySelector('code').textContent = first;
+  $('btn-fix').hidden = !canWrite();
+  $('runtime-bar').hidden = false;
+}
+
+$('btn-fix').addEventListener('click', () => {
+  $('runtime-bar').hidden = true;
+  $('prompt').value = runtimeErrors.size === 1
+    ? 'Fix the error the preview reported.'
+    : 'Fix the errors the preview reported.';
+  send();
+});
+$('btn-runtime-dismiss').addEventListener('click', () => {
+  state.runtimeDismissed = runtimeErrors.size;
+  $('runtime-bar').hidden = true;
+});
+
 function addLogLine(l) {
   state.lastLogSeq = Math.max(state.lastLogSeq, l.seq);
+  trackRuntime(l);
   const li = document.createElement('li');
   li.className = `log log-${l.level}`;
   const t = new Date(l.at);

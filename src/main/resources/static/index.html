@@ -76,6 +76,13 @@
           </div>
         </div>
 
+        <div id="runtime-bar" class="runtime-bar" hidden role="status">
+          <span class="runtime-icon">!</span>
+          <span id="runtime-text" class="runtime-text"></span>
+          <button id="btn-fix" type="button" class="btn btn-primary btn-xs">Ask the agent to fix it</button>
+          <button id="btn-runtime-dismiss" type="button" class="btn btn-quiet btn-xs" aria-label="Dismiss">Dismiss</button>
+        </div>
+
         <div class="composer">
           <textarea id="prompt" rows="2" placeholder="Describe what to build or change&hellip;" aria-label="Message"></textarea>
           <div class="composer-actions">

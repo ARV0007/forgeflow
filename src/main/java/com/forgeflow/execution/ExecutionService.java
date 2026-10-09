@@ -12,6 +12,9 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.Map;
 import java.util.Optional;
 
@@ -72,6 +75,35 @@ public class ExecutionService {
             }
         }
         return result;
+    }
+
+    /**
+     * Errors the generated app threw in a real browser since the last build -
+     * i.e. from the code as it is now. Distinct messages, oldest first, at
+     * most {@code limit}.
+     *
+     * The build gate checks that files parse and link up. It cannot see a
+     * button that throws when clicked. The preview can, because it is running
+     * in someone's browser - and the console bridge reports what it saw.
+     */
+    public List<String> runtimeErrors(Long projectId, int limit) {
+        List<PreviewLogs.Line> lines = logs.since(projectId, 0);
+        long lastBuild = 0;
+        for (PreviewLogs.Line l : lines) {
+            if ("build".equals(l.source()) && l.message().startsWith("Build started")) {
+                lastBuild = l.seq();
+            }
+        }
+        Set<String> out = new LinkedHashSet<>();
+        for (PreviewLogs.Line l : lines) {
+            if (l.seq() > lastBuild && "console".equals(l.source()) && "error".equals(l.level())) {
+                out.add(l.message());
+                if (out.size() >= limit) {
+                    break;
+                }
+            }
+        }
+        return List.copyOf(out);
     }
 
     /**

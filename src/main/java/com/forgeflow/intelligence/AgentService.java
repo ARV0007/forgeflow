@@ -155,6 +155,14 @@ public class AgentService {
         } catch (RuntimeException e) {
             log.warn("retrieval for project {} failed, continuing without it: {}", projectId, e.toString());
         }
+        // The runtime half of self-healing: what the app actually did in a
+        // browser since the last build, which the build gate can't see.
+        List<String> runtime = execution.runtimeErrors(projectId, MAX_RUNTIME_ERRORS);
+        if (!runtime.isEmpty()) {
+            emit(listener, AgentEvent.status("Reviewing " + runtime.size() + " error"
+                    + (runtime.size() == 1 ? "" : "s") + " from the preview"));
+            request = request + "\n\n" + runtimeSection(runtime);
+        }
         history.add(LlmMessage.user(request));
 
         Set<String> written = new LinkedHashSet<>();
@@ -363,6 +371,18 @@ public class AgentService {
         BuildResult check = execution.build(projectId);
         emit(listener, AgentEvent.build(check.passed(), check.output()));
         return check;
+    }
+
+    static final int MAX_RUNTIME_ERRORS = 10;
+
+    static String runtimeSection(List<String> errors) {
+        StringBuilder sb = new StringBuilder("RUNTIME ERRORS - reported by the browser running this project's "
+                + "preview since the last build. The build check cannot see these. If the request is about them, "
+                + "or they are clearly bugs in the code, find the cause and fix it:\n");
+        for (String e : errors) {
+            sb.append("- ").append(e).append('\n');
+        }
+        return sb.toString().strip();
     }
 
     private String repairInstruction(BuildResult check) {
