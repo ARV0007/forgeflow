@@ -40,3 +40,8 @@ evals/results/
 
 .verify/
 ui-walk-shots/
+
+# Local tool droppings
+dump.rdb
+__pycache__/
+*.pyc
