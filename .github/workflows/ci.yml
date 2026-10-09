@@ -1,0 +1,51 @@
+# Build and test on every push and pull request.
+#
+# Exists because of Day 9: the eval harness recorded a model regression a full
+# day before anyone looked, and it made no difference because nothing was
+# watching. A result nobody is notified of is a result that does not exist.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    # Same image as docker-compose.yml, so Flyway's CREATE EXTENSION vector
+    # works exactly as it does locally.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: forgeflow
+          POSTGRES_USER: forgeflow
+          POSTGRES_PASSWORD: forgeflow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U forgeflow -d forgeflow"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DB_URL: jdbc:postgresql://localhost:5432/forgeflow
+      # No Docker daemon inside the job's sandbox path, same as Render: use the
+      # in-JVM provider. The config seam that made the deploy possible makes
+      # CI possible too.
+      FORGEFLOW_SANDBOX_PROVIDER: in-process
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build and test
+        run: ./mvnw -B verify
