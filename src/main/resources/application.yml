@@ -32,7 +32,7 @@ forgeflow:
     # The identity MCP callers act as. Created on first use, never loginable.
     service-account-email: ${FORGEFLOW_MCP_SERVICE_EMAIL:mcp-service@forgeflow.internal}
   llm:
-    provider: gemini
+    provider: ${FORGEFLOW_LLM_PROVIDER:gemini}   # gemini | demo (offline stand-in, no key needed)
     api-key: ${GOOGLE_API_KEY:}
     model: ${FORGEFLOW_MODEL:gemini-3.1-flash-lite}
     temperature: 0.2
