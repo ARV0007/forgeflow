@@ -1,0 +1,713 @@
+openapi: 3.1.0
+info:
+  title: ForgeFlow API
+  version: "0.3"
+  description: |
+    Describe an app in plain English and get a working, running app back.
+
+    **Auth.** `POST /api/v1/auth/signup` or `/login` returns a JWT. Send it as
+    `Authorization: Bearer <token>` on everything else.
+
+    **Errors** are RFC 9457 problem details (`application/problem+json`) with
+    a `traceId` you can quote when reporting a problem.
+
+    | Status | Means |
+    |---|---|
+    | 401 | not signed in |
+    | 403 | you can see this project, but your role can't do that |
+    | 404 | doesn't exist - **or** you have no access to it (indistinguishable on purpose) |
+    | 402 | a plan limit (`quota`, `limit`, `used`, `plan` in the body) |
+    | 409 | conflicts with current state (a reply already running, nothing to retry, ...) |
+    | 429 | rate limited - see `Retry-After` |
+
+    Every response carries `traceparent` and `X-Trace-Id` headers. Send a W3C
+    `traceparent` and ForgeFlow continues your trace.
+
+    This document is checked against the running application by
+    `OpenApiContractTest`: an endpoint added without being documented here
+    fails the build.
+servers:
+  - url: /
+security:
+  - bearer: []
+
+tags:
+  - name: Auth
+  - name: Projects
+  - name: Members
+  - name: AI generation
+  - name: Chat
+  - name: Files
+  - name: Preview
+  - name: Search
+  - name: Billing
+  - name: MCP
+
+paths:
+  # ------------------------------------------------------------------ auth
+  /api/v1/auth/signup:
+    post:
+      tags: [Auth]
+      summary: Create an account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+                name: { type: string }
+      responses:
+        "201": { description: Signed up, content: { application/json: { schema: { $ref: "#/components/schemas/AuthResponse" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Sign in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        "200": { description: Signed in, content: { application/json: { schema: { $ref: "#/components/schemas/AuthResponse" } } } }
+        "401": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/v1/me:
+    get:
+      tags: [Auth]
+      summary: Get my profile
+      responses:
+        "200": { description: You, content: { application/json: { schema: { $ref: "#/components/schemas/Profile" } } } }
+        "401": { $ref: "#/components/responses/Problem" }
+    patch:
+      tags: [Auth]
+      summary: Update my name or avatar
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 120 }
+                avatarUrl: { type: string, description: "https:// only" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/Profile" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+
+  # -------------------------------------------------------------- projects
+  /api/v1/projects:
+    get:
+      tags: [Projects]
+      summary: List projects I own or am a member of
+      responses:
+        "200":
+          description: Projects, each with my role
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Project" } } } }
+    post:
+      tags: [Projects]
+      summary: Create a project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 120 }
+                description: { type: string }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+        "402": { $ref: "#/components/responses/QuotaExceeded" }
+
+  /api/v1/projects/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [Projects]
+      summary: Get a project (READ)
+      responses:
+        "200": { description: The project, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+        "404": { $ref: "#/components/responses/Problem" }
+    put:
+      tags: [Projects]
+      summary: Update a project (ADMIN - owner only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 120 }
+                description: { type: string }
+                isPublic: { type: boolean }
+                thumbnailUrl: { type: string }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [Projects]
+      summary: Delete a project (ADMIN - soft delete)
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  # --------------------------------------------------------------- members
+  /api/v1/projects/{projectId}/members:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    get:
+      tags: [Members]
+      summary: List the owner and members (READ)
+      responses:
+        "200": { description: Members, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Member" } } } } }
+    post:
+      tags: [Members]
+      summary: Invite someone by email (ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string, enum: [EDITOR, VIEWER] }
+      responses:
+        "201": { description: Added, content: { application/json: { schema: { $ref: "#/components/schemas/Member" } } } }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/v1/projects/{projectId}/members/{userId}:
+    parameters:
+      - { $ref: "#/components/parameters/projectId" }
+      - { name: userId, in: path, required: true, schema: { type: integer, format: int64 } }
+    patch:
+      tags: [Members]
+      summary: Change a member's role (ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [role], properties: { role: { type: string, enum: [EDITOR, VIEWER] } } }
+      responses:
+        "200": { description: Changed, content: { application/json: { schema: { $ref: "#/components/schemas/Member" } } } }
+    delete:
+      tags: [Members]
+      summary: Remove a member (ADMIN), or leave (yourself)
+      responses:
+        "204": { description: Removed }
+
+  # --------------------------------------------------------- AI generation
+  /api/v1/projects/{projectId}/generate:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    post:
+      tags: [AI generation]
+      summary: One-shot generation (WRITE) - waits for the whole run
+      requestBody: { $ref: "#/components/requestBodies/Prompt" }
+      responses:
+        "200": { description: The finished run, content: { application/json: { schema: { $ref: "#/components/schemas/GenerateResponse" } } } }
+        "402": { $ref: "#/components/responses/QuotaExceeded" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/v1/projects/{projectId}/generate/stream:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    post:
+      tags: [AI generation]
+      summary: Generation as Server-Sent Events (WRITE)
+      requestBody: { $ref: "#/components/requestBodies/Prompt" }
+      responses:
+        "200": { $ref: "#/components/responses/AgentEvents" }
+        "402": { $ref: "#/components/responses/QuotaExceeded" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  # ------------------------------------------------------------------ chat
+  /api/v1/projects/{projectId}/chat/sessions:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    get:
+      tags: [Chat]
+      summary: List chat sessions (READ), most recent first
+      responses:
+        "200": { description: Sessions, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ChatSession" } } } } }
+    post:
+      tags: [Chat]
+      summary: Create a chat session (WRITE)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, properties: { title: { type: string, maxLength: 200, description: "Defaults to the first message" } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/ChatSession" } } } }
+
+  /api/v1/projects/{projectId}/chat/sessions/{sessionId}:
+    parameters: [{ $ref: "#/components/parameters/projectId" }, { $ref: "#/components/parameters/sessionId" }]
+    patch:
+      tags: [Chat]
+      summary: Rename a session (WRITE)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [title], properties: { title: { type: string, maxLength: 200 } } }
+      responses:
+        "200": { description: Renamed, content: { application/json: { schema: { $ref: "#/components/schemas/ChatSession" } } } }
+    delete:
+      tags: [Chat]
+      summary: Delete a session (WRITE)
+      responses:
+        "204": { description: Deleted }
+
+  /api/v1/projects/{projectId}/chat/sessions/{sessionId}/messages:
+    parameters: [{ $ref: "#/components/parameters/projectId" }, { $ref: "#/components/parameters/sessionId" }]
+    get:
+      tags: [Chat]
+      summary: Load the full chat history (READ), oldest first
+      responses:
+        "200": { description: Messages, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ChatMessage" } } } } }
+    post:
+      tags: [Chat]
+      summary: Send a message and wait for the reply (WRITE)
+      requestBody: { $ref: "#/components/requestBodies/Message" }
+      responses:
+        "200": { description: The exchange, content: { application/json: { schema: { $ref: "#/components/schemas/ChatTurn" } } } }
+        "402": { $ref: "#/components/responses/QuotaExceeded" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/v1/projects/{projectId}/chat/sessions/{sessionId}/messages/stream:
+    parameters: [{ $ref: "#/components/parameters/projectId" }, { $ref: "#/components/parameters/sessionId" }]
+    post:
+      tags: [Chat]
+      summary: Chat stream - agent events, then a final `message` event (WRITE)
+      requestBody: { $ref: "#/components/requestBodies/Message" }
+      responses:
+        "200": { $ref: "#/components/responses/AgentEvents" }
+        "402": { $ref: "#/components/responses/QuotaExceeded" }
+        "409": { $ref: "#/components/responses/Problem" }
+
+  /api/v1/projects/{projectId}/chat/sessions/{sessionId}/retry:
+    parameters: [{ $ref: "#/components/parameters/projectId" }, { $ref: "#/components/parameters/sessionId" }]
+    post:
+      tags: [Chat]
+      summary: Retry the last question - only if its reply failed (WRITE)
+      responses:
+        "200": { description: The retried exchange, content: { application/json: { schema: { $ref: "#/components/schemas/ChatTurn" } } } }
+        "409": { $ref: "#/components/responses/Problem" }
+
+  /api/v1/projects/{projectId}/chat/sessions/{sessionId}/retry/stream:
+    parameters: [{ $ref: "#/components/parameters/projectId" }, { $ref: "#/components/parameters/sessionId" }]
+    post:
+      tags: [Chat]
+      summary: Retry, streamed (WRITE)
+      responses:
+        "200": { $ref: "#/components/responses/AgentEvents" }
+        "409": { $ref: "#/components/responses/Problem" }
+
+  # ----------------------------------------------------------------- files
+  /api/v1/projects/{projectId}/files:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    get:
+      tags: [Files]
+      summary: File tree (READ)
+      responses:
+        "200": { description: Files, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/FileEntry" } } } } }
+
+  /api/v1/projects/{projectId}/files/content:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    get:
+      tags: [Files]
+      summary: File content (READ)
+      parameters: [{ name: path, in: query, required: true, schema: { type: string }, example: index.html }]
+      responses:
+        "200":
+          description: The file
+          content: { application/json: { schema: { type: object, properties: { path: { type: string }, content: { type: string } } } } }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /api/v1/projects/{projectId}/files/download:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    get:
+      tags: [Files]
+      summary: Download every file as a zip (READ)
+      responses:
+        "200":
+          description: "A zip with one top-level folder named after the project"
+          content: { application/zip: { schema: { type: string, format: binary } } }
+
+  /api/v1/projects/{projectId}/build:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    post:
+      tags: [Preview]
+      summary: Run the build check (WRITE)
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  passed: { type: boolean }
+                  exitCode: { type: integer }
+                  output: { type: string }
+                  durationMs: { type: integer, format: int64 }
+                  timedOut: { type: boolean }
+
+  # --------------------------------------------------------------- preview
+  /api/v1/projects/{projectId}/preview:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    get:
+      tags: [Preview]
+      summary: Get the running preview (READ)
+      responses:
+        "200": { description: Running, content: { application/json: { schema: { $ref: "#/components/schemas/Preview" } } } }
+        "404": { description: Nothing running, content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } } }
+    post:
+      tags: [Preview]
+      summary: Start (or restart) a preview (WRITE)
+      responses:
+        "200": { description: Started, content: { application/json: { schema: { $ref: "#/components/schemas/Preview" } } } }
+        "402": { $ref: "#/components/responses/QuotaExceeded" }
+        "409": { description: No files to preview, content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } } }
+    delete:
+      tags: [Preview]
+      summary: Stop the preview (WRITE)
+      responses:
+        "204": { description: Stopped }
+
+  /api/v1/projects/{projectId}/preview/logs:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    get:
+      tags: [Preview]
+      summary: Buffered log lines as JSON (READ)
+      parameters: [{ name: after, in: query, schema: { type: integer, format: int64, default: 0 }, description: Only lines with a greater seq }]
+      responses:
+        "200": { description: Lines, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/LogLine" } } } } }
+
+  /api/v1/projects/{projectId}/preview/logs/stream:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    get:
+      tags: [Preview]
+      summary: Logs stream - buffered lines, then live (READ)
+      description: |
+        Server-Sent Events. Each event is `event: log`, `id: <seq>`, data a
+        LogLine. Reconnect with `Last-Event-ID` to resume without replaying.
+      parameters:
+        - { name: after, in: query, schema: { type: integer, format: int64, default: 0 } }
+        - { name: Last-Event-ID, in: header, schema: { type: string } }
+      responses:
+        "200": { description: Event stream, content: { text/event-stream: { schema: { type: string } } } }
+
+  # ---------------------------------------------------------------- search
+  /api/v1/projects/{projectId}/search:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    get:
+      tags: [Search]
+      summary: Search this project's code - hybrid vector + keyword (READ)
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string }, example: dark mode toggle }
+        - { name: k, in: query, schema: { type: integer, default: 8, maximum: 20 } }
+      responses:
+        "200": { description: Hits, best first, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/SearchHit" } } } } }
+
+  # --------------------------------------------------------------- billing
+  /api/v1/billing/plans:
+    get:
+      tags: [Billing]
+      summary: The plans you can buy (public)
+      security: []
+      responses:
+        "200": { description: Plans, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Plan" } } } } }
+
+  /api/v1/billing/me:
+    get:
+      tags: [Billing]
+      summary: My plan and how much of each limit I've used
+      responses:
+        "200": { description: Status, content: { application/json: { schema: { $ref: "#/components/schemas/BillingStatus" } } } }
+
+  /api/v1/billing/checkout:
+    post:
+      tags: [Billing]
+      summary: Start paying for a plan - returns the checkout page URL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [plan], properties: { plan: { type: string, example: PRO } } }
+      responses:
+        "200":
+          description: Send the browser here
+          content: { application/json: { schema: { type: object, properties: { sessionId: { type: string }, url: { type: string } } } } }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "503": { description: Payments are not configured on this server }
+
+  /api/v1/billing/cancel:
+    post:
+      tags: [Billing]
+      summary: Stop renewing - the plan lasts until the paid period ends
+      responses:
+        "200": { description: Status, content: { application/json: { schema: { $ref: "#/components/schemas/BillingStatus" } } } }
+        "409": { $ref: "#/components/responses/Problem" }
+
+  /api/v1/billing/webhook/stripe:
+    post:
+      tags: [Billing]
+      summary: Stripe's webhook (Stripe calls this, not you)
+      security: []
+      description: Authenticated by the `Stripe-Signature` header (HMAC-SHA256 of the raw body), not a JWT.
+      parameters: [{ name: Stripe-Signature, in: header, required: true, schema: { type: string } }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        "200": { description: "Processed, duplicate, or ignored" }
+        "400": { description: Bad signature or body }
+        "503": { description: Webhook secret not configured }
+
+  # ------------------------------------------------------------------- mcp
+  /mcp:
+    post:
+      tags: [MCP]
+      summary: Model Context Protocol endpoint (JSON-RPC 2.0, protocol 2025-06-18)
+      security: []
+      description: |
+        Tools: `create_project`, `generate_app`, `list_project_files`. Runs as a
+        service account on the INTERNAL plan. Notifications (no `id`) get 202.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [jsonrpc, method]
+              properties:
+                jsonrpc: { const: "2.0" }
+                id: { oneOf: [{ type: integer }, { type: string }] }
+                method: { type: string, example: tools/call }
+                params: { type: object }
+      responses:
+        "200": { description: JSON-RPC response }
+        "202": { description: Notification accepted }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+
+  parameters:
+    id: { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    projectId: { name: projectId, in: path, required: true, schema: { type: integer, format: int64 } }
+    sessionId: { name: sessionId, in: path, required: true, schema: { type: integer, format: int64 } }
+
+  requestBodies:
+    Prompt:
+      required: true
+      content:
+        application/json:
+          schema: { type: object, required: [prompt], properties: { prompt: { type: string, maxLength: 4000 } } }
+    Message:
+      required: true
+      content:
+        application/json:
+          schema: { type: object, required: [content], properties: { content: { type: string, maxLength: 4000 } } }
+
+  responses:
+    Problem:
+      description: Problem details
+      content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
+    QuotaExceeded:
+      description: A plan limit was reached
+      content: { application/problem+json: { schema: { $ref: "#/components/schemas/QuotaProblem" } } }
+    RateLimited:
+      description: Too many requests
+      headers:
+        Retry-After: { schema: { type: integer }, description: Seconds until the next request will be accepted }
+      content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
+    AgentEvents:
+      description: |
+        Server-Sent Events as the agent works: `status`, `thinking`, `tool`,
+        `file`, `tool_failed`, `build`, `repair`, then `done` (the
+        GenerateResponse) - or `error`.
+        Chat streams end with a `message` event holding the saved ChatTurn.
+      content: { text/event-stream: { schema: { type: string } } }
+
+  schemas:
+    Problem:
+      type: object
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+        traceId: { type: string }
+    QuotaProblem:
+      allOf:
+        - $ref: "#/components/schemas/Problem"
+        - type: object
+          properties:
+            quota: { type: string, enum: [PROJECTS, PREVIEWS, AI_TOKENS_PER_DAY] }
+            limit: { type: integer, format: int64 }
+            used: { type: integer, format: int64 }
+            plan: { type: string }
+            upgrade: { type: string }
+    AuthResponse:
+      type: object
+      properties: { token: { type: string }, userId: { type: integer, format: int64 }, email: { type: string } }
+    Profile:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        email: { type: string }
+        name: { type: string }
+        avatarUrl: { type: string }
+        provider: { type: string }
+        emailVerified: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    Role: { type: string, enum: [OWNER, EDITOR, VIEWER, PUBLIC] }
+    Project:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        description: { type: string }
+        ownerId: { type: integer, format: int64 }
+        role: { $ref: "#/components/schemas/Role" }
+        isPublic: { type: boolean }
+        thumbnailUrl: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Member:
+      type: object
+      properties:
+        userId: { type: integer, format: int64 }
+        email: { type: string }
+        name: { type: string }
+        avatarUrl: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        invitedBy: { type: integer, format: int64 }
+        invitedAt: { type: string, format: date-time }
+    GenerateResponse:
+      type: object
+      properties:
+        runId: { type: integer, format: int64 }
+        status: { type: string, enum: [SUCCEEDED, FAILED] }
+        stopReason: { type: string, enum: [FINISH_TOOL, NO_TOOL_CALL, MAX_REPAIRS, TIMEOUT, MAX_TOOL_CALLS, TOKEN_BUDGET, ERROR] }
+        summary: { type: string }
+        filesWritten: { type: array, items: { type: string } }
+        toolCalls: { type: integer }
+        repairRounds: { type: integer }
+        buildPassed: { type: boolean }
+        totalTokens: { type: integer }
+        durationMs: { type: integer, format: int64 }
+        errorMessage: { type: string }
+    ChatSession:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        projectId: { type: integer, format: int64 }
+        userId: { type: integer, format: int64 }
+        title: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ChatMessage:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        sessionId: { type: integer, format: int64 }
+        role: { type: string, enum: [user, assistant, system, tool] }
+        content: { type: string }
+        authorId: { type: integer, format: int64 }
+        toolCalls:
+          type: array
+          items: { type: object, properties: { name: { type: string }, path: { type: string } } }
+        tokensUsed: { type: integer }
+        status: { type: string }
+        runId: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+    ChatTurn:
+      type: object
+      properties:
+        userMessage: { $ref: "#/components/schemas/ChatMessage" }
+        assistantMessage: { $ref: "#/components/schemas/ChatMessage" }
+        run: { $ref: "#/components/schemas/GenerateResponse" }
+    FileEntry:
+      type: object
+      properties:
+        path: { type: string }
+        sizeBytes: { type: integer }
+        version: { type: integer }
+        createdBy: { type: integer, format: int64 }
+        updatedBy: { type: integer, format: int64 }
+        updatedAt: { type: string, format: date-time }
+    Preview:
+      type: object
+      properties:
+        url: { type: string }
+        status: { type: string }
+        startedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+    LogLine:
+      type: object
+      properties:
+        seq: { type: integer, format: int64 }
+        at: { type: string, format: date-time }
+        source: { type: string, enum: [build, preview, http, console] }
+        level: { type: string, enum: [info, warn, error] }
+        message: { type: string }
+    SearchHit:
+      type: object
+      properties:
+        path: { type: string }
+        startLine: { type: integer }
+        endLine: { type: integer }
+        score: { type: number }
+        content: { type: string }
+    Plan:
+      type: object
+      properties:
+        code: { type: string }
+        name: { type: string }
+        priceCents: { type: integer }
+        currency: { type: string }
+        maxProjects: { type: integer }
+        maxTokensPerDay: { type: integer, format: int64, description: "-1 = unlimited" }
+        maxPreviews: { type: integer }
+        features: { type: object }
+    BillingStatus:
+      type: object
+      properties:
+        plan: { $ref: "#/components/schemas/Plan" }
+        subscriptionStatus: { type: [string, "null"], enum: [ACTIVE, PAST_DUE, INCOMPLETE, CANCELED, null] }
+        currentPeriodEnd: { type: [string, "null"], format: date-time }
+        cancelAtPeriodEnd: { type: boolean }
+        usage:
+          type: array
+          items:
+            type: object
+            properties:
+              quota: { type: string }
+              used: { type: integer, format: int64 }
+              limit: { type: integer, format: int64, description: "-1 = no limit" }
+        paymentProvider: { type: string, enum: [none, fake, stripe] }

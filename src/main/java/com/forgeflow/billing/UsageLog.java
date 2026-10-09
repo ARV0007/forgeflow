@@ -19,10 +19,6 @@ import java.time.Instant;
 @Table(name = "usage_logs")
 public class UsageLog {
 
-    public static final String AI_TOKENS = "AI_TOKENS";
-    public static final String PROJECT_CREATED = "PROJECT_CREATED";
-    public static final String PREVIEW_STARTED = "PREVIEW_STARTED";
-
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

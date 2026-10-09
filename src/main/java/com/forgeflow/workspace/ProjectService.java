@@ -2,7 +2,7 @@ package com.forgeflow.workspace;
 
 import com.forgeflow.billing.Entitlements;
 import com.forgeflow.billing.Quota;
-import com.forgeflow.billing.UsageLog;
+import com.forgeflow.billing.UsageKind;
 import com.forgeflow.billing.UsageMeter;
 import com.forgeflow.workspace.dto.CreateProjectRequest;
 import com.forgeflow.workspace.dto.ProjectResponse;
@@ -52,7 +52,7 @@ public class ProjectService {
         p.setName(req.name());
         p.setDescription(req.description());
         Project saved = projects.save(p);
-        usage.record(ownerId, saved.getId(), UsageLog.PROJECT_CREATED, 1, null);
+        usage.record(ownerId, saved.getId(), UsageKind.PROJECT_CREATED, 1, null);
         return ProjectResponse.from(saved, ProjectRole.OWNER);
     }
 

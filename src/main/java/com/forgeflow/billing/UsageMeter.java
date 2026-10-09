@@ -49,7 +49,7 @@ public class UsageMeter implements UsageSource {
     @Override
     @Transactional(readOnly = true)
     public long used(Long userId) {
-        return logs.sumSince(userId, UsageLog.AI_TOKENS, startOfTodayUtc());
+        return logs.sumSince(userId, UsageKind.AI_TOKENS, startOfTodayUtc());
     }
 
     static Instant startOfTodayUtc() {

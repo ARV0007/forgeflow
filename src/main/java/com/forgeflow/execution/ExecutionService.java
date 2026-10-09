@@ -2,7 +2,7 @@ package com.forgeflow.execution;
 
 import com.forgeflow.billing.Entitlements;
 import com.forgeflow.billing.Quota;
-import com.forgeflow.billing.UsageLog;
+import com.forgeflow.billing.UsageKind;
 import com.forgeflow.billing.UsageMeter;
 import com.forgeflow.execution.dto.PreviewResponse;
 import com.forgeflow.shared.tracing.Tracer;
@@ -100,7 +100,7 @@ public class ExecutionService {
         p.setStartedAt(now);
         p.setExpiresAt(now.plus(PREVIEW_TTL));
         previews.save(p);
-        usage.record(userId, projectId, UsageLog.PREVIEW_STARTED, 1, "preview:" + p.getId());
+        usage.record(userId, projectId, UsageKind.PREVIEW_STARTED, 1, "preview:" + p.getId());
 
         logs.info(projectId, "preview", "Preview started at " + handle.url()
                 + " (expires in " + PREVIEW_TTL.toMinutes() + " min)");

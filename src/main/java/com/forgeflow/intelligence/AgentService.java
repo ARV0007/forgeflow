@@ -2,7 +2,7 @@ package com.forgeflow.intelligence;
 
 import com.forgeflow.billing.Entitlements;
 import com.forgeflow.billing.Quota;
-import com.forgeflow.billing.UsageLog;
+import com.forgeflow.billing.UsageKind;
 import com.forgeflow.billing.UsageMeter;
 import com.forgeflow.execution.BuildResult;
 import com.forgeflow.execution.ExecutionService;
@@ -315,7 +315,7 @@ public class AgentService {
         // model calls were made either way. Charging the person who typed the
         // prompt (not the project owner) means inviting someone onto your
         // project never lets them spend your allowance.
-        usage.record(userId, projectId, UsageLog.AI_TOKENS, totalTokens, "run:" + run.getId());
+        usage.record(userId, projectId, UsageKind.AI_TOKENS, totalTokens, "run:" + run.getId());
 
         if (!written.isEmpty()) {
             events.publishEvent(new CodeGenerated(projectId, run.getId(), userId, status,
