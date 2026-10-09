@@ -1,5 +1,6 @@
 package com.forgeflow.shared.security;
 
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletResponse;
 import com.forgeflow.shared.ratelimit.RateLimitFilter;
 import com.forgeflow.shared.ratelimit.RateLimitRules;
@@ -45,6 +46,14 @@ public class SecurityConfig {
                 .headers(h -> h.frameOptions(f -> f.sameOrigin()))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // An SSE response ends with an ASYNC re-dispatch of the SAME
+                        // request back through every filter. The JWT filter runs once
+                        // per request, so on that pass nobody is authenticated, and
+                        // without this line security threw AccessDenied onto a response
+                        // already streaming - the browser saw the stream break after a
+                        // successful run. The request was authorised on its way in;
+                        // this is its way out. (RealServerStreamTest.)
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                         // FIRST, deliberately. Tomcat re-dispatches errors to /error, and
                         // that dispatch arrives anonymous - without this, a real 500 comes
                         // back as an empty 403 and you debug the wrong thing for two days.
