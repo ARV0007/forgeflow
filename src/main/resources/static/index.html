@@ -12,24 +12,25 @@
 <section id="gate" class="gate">
   <div class="gate-card">
     <h1 class="wordmark">ForgeFlow</h1>
-    <p class="gate-lede">An agent that builds web apps &mdash; and is not allowed to
+    <p class="gate-lede">Describe an app. An agent builds it &mdash; and isn't allowed to
        finish until the code it wrote passes a build.</p>
 
     <div class="stack">
       <label class="field">
         <span>Email</span>
-        <input id="email" type="text" autocomplete="off" autocapitalize="none"
+        <input id="email" type="text" autocomplete="username" autocapitalize="none"
                autocorrect="off" spellcheck="false" placeholder="you@example.com">
       </label>
       <label class="field">
         <span>Password</span>
-        <input id="password" type="password" autocomplete="off" placeholder="your password">
+        <input id="password" type="password" autocomplete="current-password" placeholder="at least 8 characters">
       </label>
       <div class="gate-actions">
         <button id="btn-login" type="button" class="btn btn-primary">Sign in</button>
         <button id="btn-signup" type="button" class="btn btn-quiet">Create account</button>
       </div>
       <p id="gate-msg" class="msg" role="status"></p>
+      <p class="gate-foot"><a href="/docs.html">API reference</a></p>
     </div>
   </div>
 </section>
@@ -40,70 +41,151 @@
   <header class="topbar">
     <span class="wordmark wordmark-sm">ForgeFlow</span>
     <select id="project-select" class="select" aria-label="Project"></select>
+    <span id="role-badge" class="badge" title="Your role in this project"></span>
     <button id="btn-new-project" class="btn btn-quiet btn-sm">New project</button>
+    <button id="btn-share" class="btn btn-quiet btn-sm">Share</button>
     <span class="spacer"></span>
+    <button id="btn-plan" class="plan-pill" title="Your plan and usage" hidden></button>
     <span id="whoami" class="whoami"></span>
     <button id="btn-signout" class="btn btn-quiet btn-sm">Sign out</button>
   </header>
 
   <main class="panes">
 
-    <!-- left: the run record -->
-    <section class="pane pane-record">
-      <div class="pane-head">
-        <h2>Run record</h2>
-        <span id="run-state" class="run-state"></span>
+    <!-- left: conversation -->
+    <section class="pane pane-chat">
+      <div class="sessions">
+        <div class="sessions-head">
+          <span>Chats</span>
+          <button id="btn-new-chat" class="btn btn-quiet btn-xs" title="Start a new chat">New</button>
+        </div>
+        <ul id="session-list" class="session-list"></ul>
       </div>
 
-      <div id="record" class="record" aria-live="polite">
-        <div class="empty">
-          <p>Nothing built yet.</p>
-          <p class="empty-sub">Describe what you want and watch the agent work.</p>
-          <div class="chips">
-            <button class="chip" type="button">A recipe page with three cards</button>
-            <button class="chip" type="button">A countdown timer to new year</button>
-            <button class="chip" type="button">A tip calculator</button>
+      <div class="thread-wrap">
+        <div id="thread" class="thread" aria-live="polite">
+          <div class="empty">
+            <p>What should we build?</p>
+            <p class="empty-sub">Describe it in a sentence. The agent writes the files, runs a build,
+               and fixes what fails before it says it's done.</p>
+            <div class="chips">
+              <button class="chip" type="button">A recipe page with three cards</button>
+              <button class="chip" type="button">A countdown timer to new year</button>
+              <button class="chip" type="button">A tip calculator</button>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div class="composer">
-        <textarea id="prompt" rows="2" placeholder="Describe a change&hellip;" aria-label="Prompt"></textarea>
-        <button id="btn-send" type="button" class="btn btn-primary">Build</button>
+        <div class="composer">
+          <textarea id="prompt" rows="2" placeholder="Describe what to build or change&hellip;" aria-label="Message"></textarea>
+          <div class="composer-actions">
+            <button id="btn-retry" type="button" class="btn btn-quiet btn-sm" hidden>Retry</button>
+            <button id="btn-send" type="button" class="btn btn-primary">Send</button>
+          </div>
+        </div>
       </div>
     </section>
 
     <!-- right: the artifact -->
     <section class="pane pane-output">
       <div class="tabs" role="tablist">
-        <button class="tab is-on" data-tab="files" role="tab">Files</button>
+        <button class="tab is-on" data-tab="preview" role="tab">Preview</button>
         <button class="tab" data-tab="code" role="tab">Code</button>
-        <button class="tab" data-tab="preview" role="tab">Preview</button>
+        <button class="tab" data-tab="logs" role="tab">Logs <span id="log-dot" class="dot" hidden></span></button>
+        <button class="tab" data-tab="search" role="tab">Search</button>
         <span class="spacer"></span>
         <button id="btn-build" class="btn btn-quiet btn-sm">Run build</button>
-        <button id="btn-preview" class="btn btn-quiet btn-sm">Open preview</button>
+        <button id="btn-download" class="btn btn-quiet btn-sm" title="Download every file as a zip">Download</button>
       </div>
 
-      <div id="tab-files" class="tabpanel is-on">
-        <ul id="file-list" class="files"></ul>
+      <div id="tab-preview" class="tabpanel is-on">
+        <div class="preview-bar">
+          <span id="preview-status" class="preview-status">No preview running</span>
+          <span class="spacer"></span>
+          <a id="preview-open" class="btn btn-quiet btn-xs" target="_blank" rel="noopener" hidden>Open in new tab</a>
+          <button id="btn-preview-stop" class="btn btn-quiet btn-xs" hidden>Stop</button>
+          <button id="btn-preview" class="btn btn-quiet btn-xs">Start preview</button>
+        </div>
+        <div id="preview-empty" class="empty">
+          <p>No preview running.</p>
+          <p class="empty-sub">Start one to see the app live. Its console output shows up under Logs.</p>
+        </div>
+        <iframe id="preview-frame" class="preview" title="Project preview" hidden></iframe>
       </div>
 
       <div id="tab-code" class="tabpanel">
-        <div id="code-name" class="code-name"></div>
-        <pre id="code-body" class="code"></pre>
+        <div class="code-split">
+          <ul id="file-list" class="files"></ul>
+          <div class="code-view">
+            <div id="code-name" class="code-name">Pick a file</div>
+            <pre id="code-body" class="code"></pre>
+          </div>
+        </div>
       </div>
 
-      <div id="tab-preview" class="tabpanel">
-        <div id="preview-empty" class="empty">
-          <p>No preview running.</p>
-          <p class="empty-sub">Open preview to serve this project from a container.</p>
+      <div id="tab-logs" class="tabpanel">
+        <div class="logs-bar">
+          <span id="log-conn" class="log-conn">not connected</span>
+          <span class="spacer"></span>
+          <button id="btn-log-clear" class="btn btn-quiet btn-xs">Clear view</button>
         </div>
-        <iframe id="preview-frame" class="preview" title="Project preview" hidden></iframe>
+        <ol id="log-list" class="log-list"></ol>
+      </div>
+
+      <div id="tab-search" class="tabpanel">
+        <div class="search-bar">
+          <input id="search-q" type="search" placeholder="Search this project's code &mdash; by meaning or by name"
+                 aria-label="Search code">
+          <button id="btn-search" class="btn btn-quiet btn-sm">Search</button>
+        </div>
+        <ol id="search-results" class="search-results"></ol>
       </div>
     </section>
 
   </main>
 </div>
+
+<!-- ─────────────── dialogs ─────────────── -->
+<dialog id="dlg-share" class="dlg">
+  <h2>Share this project</h2>
+  <p class="dlg-sub">Editors can chat, build and preview. Viewers can look at everything but change nothing.</p>
+  <ul id="member-list" class="member-list"></ul>
+  <div id="invite-row" class="invite-row">
+    <input id="invite-email" type="text" placeholder="their@email.com" autocapitalize="none" spellcheck="false">
+    <select id="invite-role" class="select">
+      <option value="EDITOR">Editor</option>
+      <option value="VIEWER">Viewer</option>
+    </select>
+    <button id="btn-invite" class="btn btn-primary btn-sm">Invite</button>
+  </div>
+  <p id="share-msg" class="msg"></p>
+  <div class="dlg-actions"><button class="btn btn-quiet btn-sm" data-close>Done</button></div>
+</dialog>
+
+<dialog id="dlg-plan" class="dlg dlg-wide">
+  <h2>Your plan</h2>
+  <div id="usage" class="usage"></div>
+  <div id="plans" class="plans"></div>
+  <p id="plan-msg" class="msg"></p>
+  <div class="dlg-actions">
+    <button id="btn-cancel-plan" class="btn btn-quiet btn-sm" hidden>Cancel subscription</button>
+    <span class="spacer"></span>
+    <button class="btn btn-quiet btn-sm" data-close>Close</button>
+  </div>
+</dialog>
+
+<dialog id="dlg-new" class="dlg">
+  <h2>New project</h2>
+  <label class="field"><span>Name</span><input id="new-name" type="text" maxlength="120"></label>
+  <p id="new-msg" class="msg"></p>
+  <div class="dlg-actions">
+    <span class="spacer"></span>
+    <button class="btn btn-quiet btn-sm" data-close>Cancel</button>
+    <button id="btn-create" class="btn btn-primary btn-sm">Create</button>
+  </div>
+</dialog>
+
+<div id="toast" class="toast" role="status" hidden></div>
 
 <script src="/app.js"></script>
 </body>

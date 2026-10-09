@@ -39,3 +39,4 @@ build/
 evals/results/
 
 .verify/
+ui-walk-shots/
