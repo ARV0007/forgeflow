@@ -407,7 +407,6 @@ others' resources; identical login failures; `ownerId` never read from requests;
 - The timeout includes time spent waiting out rate limits
 - `/mcp` unauthenticated (runs as a service account, with real access checks)
 - Session locks and preview logs are per-instance memory
-- Not built yet from the spec: tracing, OpenAPI page
 - Real Stripe untested against Stripe itself (stub-tested only)
 
 Closed since 0.2: the module-boundary exceptions (`AgentTools`,
@@ -437,7 +436,7 @@ the unused `chat_*` tables, no tests, no CI, not deployed.
 | R4 | Plans, quotas, Stripe | ✅ 9 Oct |
 | R5 | Redis rate limiting | ✅ 9 Oct |
 | R6 | RAG on pgvector | ✅ 9 Oct |
-| R7 | Events, tracing, OpenAPI | ⬜ |
+| R7 | Events, tracing, OpenAPI | ✅ 9 Oct |
 | R8 | Chat-shaped UI | ⬜ |
 
 ---
@@ -565,6 +564,23 @@ Why not split them now: one person, one free-tier host, and a split adds
 network failure modes to every call without adding a feature. The rule
 "call the service, never another module's repository" is what makes a later
 split mechanical — the method calls become HTTP calls and nothing else changes.
+
+**Enforced by `ModuleBoundaryTest`**, which reads the sources and fails the
+build on any cross-module import that isn't on this graph, or that names
+another module's `*Repository` or `@Entity`:
+
+```
+shared        ◄── everything
+account       ◄── billing, workspace, mcp
+billing       ◄── workspace, execution, intelligence, chat, mcp
+workspace     ◄── execution, intelligence, chat, mcp
+execution     ◄── intelligence
+intelligence  ◄── chat, mcp
+```
+
+Billing needs counts that live in workspace and execution; it gets them
+through its own `UsageSource` interface, which they implement — so the arrow
+still points *into* billing.
 
 ### 17.2 The ER diagram, table by table
 
@@ -743,4 +759,29 @@ query ─┬─ embed (RETRIEVAL_QUERY) ─► top 30 by cosine distance ─┐
 
 Embedders: `gemini-embedding-001` at 768 dims (`FORGEFLOW_EMBEDDER=gemini`,
 needs `GOOGLE_API_KEY`) or the offline `hashing` embedder.
+
+### 17.10 Tracing
+
+```
+request ─► TracingFilter (first filter of all)          traceparent in? continue it : new trace
+             │  server span "POST /api/v1/projects/{id}/generate"
+             ├─ agent.run
+             │    ├─ llm.chat  (one per round)
+             │    ├─ sandbox.build
+             │    └─ llm.chat
+             └─ response headers: traceparent, X-Trace-Id
+```
+
+- Trace id → logging MDC → `%X{traceId}` on every line.
+- `Tracer.wrap(runnable)` carries it onto the SSE and indexing executors.
+- Every `ProblemDetail` error body gets `traceId` (`TraceIdAdvice`).
+- `generation_runs.trace_id` links a run to its request.
+- `ZIPKIN_URL` set → spans batched to `/api/v2/spans` every second from a
+  bounded queue; dropped (and counted) if Zipkin is down.
+
+### 17.11 API reference
+
+`/openapi.yaml` (OpenAPI 3.1, hand-written) and `/docs.html` (Swagger UI from a
+pinned CDN build). `OpenApiContractTest` requires the documented operations
+under `/api` and `/mcp` to equal the routes Spring serves.
 

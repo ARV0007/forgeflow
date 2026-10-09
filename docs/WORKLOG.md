@@ -663,6 +663,30 @@ seam where Kafka would plug in — the publisher doesn't know who's listening.
 108 tests. Tests use an offline "hashing" embedder: deterministic, no network,
 and honest that it only knows about shared words.
 
+### Phase 7 — tracing, an API reference, and enforced boundaries
+
+**Tracing.** Every request gets a trace id (or continues the caller's, from a
+W3C `traceparent` header), returned in `X-Trace-Id` and printed on every log
+line it causes. Inside it: spans for the agent run, each model call, each
+build and each indexing pass. Set `ZIPKIN_URL` and they appear in Zipkin as a
+timeline; leave it unset and you still get ids in headers, logs, error bodies,
+and on every `generation_runs` row. No tracing library — only the API jar was
+in the cache — so it's a ThreadLocal, the logging MDC, and a background
+batcher that drops spans rather than piling them up when Zipkin is down.
+
+**OpenAPI, kept honest.** A hand-written `openapi.yaml` with a Swagger UI page
+at `/docs.html`. Hand-written docs drift, so a test compares the document
+against every route Spring actually serves; adding an endpoint without
+documenting it now fails the build.
+
+**Module boundaries, enforced.** `architecture.md` has said since Day 1 that
+modules talk through service classes and never touch each other's tables. A
+new test reads the source and fails on any import that breaks that. It found
+one straight away: three modules imported billing's `UsageLog` *entity* just
+for its string constants. Moved to a plain `UsageKind` class.
+
+122 tests.
+
 **Tests:** 58, every one against a real Postgres. Before trusting a new suite I
 break the behaviour on purpose and check it goes red — dropping `updated_by`
 and breaking live log delivery each failed it, as they should.
@@ -694,10 +718,9 @@ and breaking live log delivery each failed it, as they should.
 
 ## Still to build (redesign, in order)
 
-1. Request tracing, an OpenAPI page, a module-boundary test
-2. A chat-shaped workbench UI (with the billing page)
-3. `edit_file` + prompt caching
-4. README
+1. A chat-shaped workbench UI (with the billing page)
+2. `edit_file` + prompt caching
+3. README
 
 ## Done since the original plan
 
@@ -711,3 +734,4 @@ and breaking live log delivery each failed it, as they should.
 - Plans, quotas, usage log, Stripe checkout and webhook (Day 10)
 - Rate limiting — token buckets in Redis, in-memory fallback (Day 10)
 - RAG — hybrid pgvector + full-text search, `search_code` tool, `code.generated` event (Day 10)
+- Tracing (traceparent, Zipkin), OpenAPI with a contract test, module-boundary test (Day 10)

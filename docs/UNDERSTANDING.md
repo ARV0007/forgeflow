@@ -33,6 +33,7 @@ Transakt is a restaurant. ForgeFlow is a **building site**.
 | The Stripe webhook | The **bank's signed letter** — the only proof of payment the office accepts |
 | Rate limiting | The **turnstile at the gate** — a few people can rush through, then it lets one in every so often |
 | RAG | The **site archivist** — finds the right few drawings in a filing room too big to carry around |
+| A trace id | The **job ticket number** — stamped on every form, delivery note and inspection for one job |
 
 The most important thing on this site: **the contractor never touches the
 building directly.** They ask the foreman, and the foreman checks every request
@@ -1403,26 +1404,102 @@ present.
 
 ---
 
-## Chapter 20 — What's next
+## Chapter 20 — The job ticket (tracing), and the rules on the wall
+
+**Plain English.** Every job on the site gets a ticket number, and everyone
+stamps it on everything they touch: the delivery note, the inspector's
+report, the contractor's timesheet. When the client calls to complain, you
+ask for one number and pull every piece of paper for that job — instead of
+leafing through the whole day's paperwork.
+
+That number is a **trace id**.
+
+### How it works here
+
+The very first thing that touches a request (`TracingFilter`, ahead even of
+security) gives it a trace id — or, if the caller sent a `traceparent`
+header, reuses theirs, so a trace can span several systems. The id goes:
+
+- into the **response headers** (`X-Trace-Id`), so the client has it;
+- into every **log line** the request causes (via the logging MDC);
+- into every **error body**, so "it said 500" becomes one string to search;
+- onto the **generation run** row in the database.
+
+Inside the trace, each step is a **span** with a start time and a duration:
+the agent run, each model call inside it, the build. Pointed at Zipkin, a slow
+generation shows *which* step was slow, rather than just "it took a minute".
+
+One trap: the trace lives in a ThreadLocal, and ThreadLocals don't follow work
+onto another thread. Streaming generations run on a separate thread, so the
+work is wrapped (`Tracer.wrap`) to carry the ticket number across.
+
+### The rules on the wall
+
+Two other things landed with tracing, both about keeping promises:
+
+- **The API reference can't drift.** `openapi.yaml` is written by hand, and a
+  test compares it with every route Spring actually serves. Add an endpoint
+  and forget the docs, and the build fails.
+- **Module boundaries can't drift.** The architecture says modules talk through
+  service classes and never reach into each other's tables. A test reads the
+  source and fails on any import that breaks that rule. It caught a real one
+  the moment it ran.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: What's the difference between a trace and a span?**
+A trace is one whole user action. A span is one timed step inside it. A trace
+is a tree of spans, all sharing the trace id, each pointing at its parent.
+
+**Q: Why does tracing start before security?**
+So rejected requests have trace ids too. A 401 or a 429 is exactly the kind of
+thing someone reports, and it should be just as easy to look up.
+
+**Q: Why name spans `/projects/{id}` instead of `/projects/42`?**
+Tracing tools group by span name. One name per project id means thousands of
+"operations", each seen once, and no useful averages. That's called
+cardinality, and it's the most common way to break a tracing setup.
+
+**Q: Zipkin is down. Does ForgeFlow slow down?**
+No. Spans go into a bounded queue and are sent in the background once a
+second. If Zipkin doesn't answer, that batch is dropped and counted. A request
+never waits on its own telemetry.
+
+**Q: Why test the module boundaries at all? Isn't that what code review is for?**
+Code review is a person remembering a rule on a busy day. A test remembers
+every time. And it found a violation immediately: three modules importing
+another module's database entity just to use its constants.
+
+**Q: Why hand-write the OpenAPI document instead of generating it?**
+The generator (springdoc) isn't something this build can download. But
+hand-written is fine *if* something checks it — and the contract test does.
+The real risk with docs isn't who wrote them, it's that nothing notices when
+they go stale.
+
+</details>
+
+---
+
+## Chapter 21 — What's next
 
 Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
 the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
 roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
 (Chapter 16), **plans, quotas and Stripe** (Chapter 17), **rate limiting**
-(Chapter 18) and **RAG** (Chapter 19). What's left, in order:
+(Chapter 18), **RAG** (Chapter 19) and **tracing** (Chapter 20). What's left:
 
-- **Tracing** — a trace id on every request, so one user action can be
-  followed through the logs.
+- **The workbench UI** — chat sessions, the logs stream, billing and search
+  in the browser; most of what's been built is API-only so far.
 - **`edit_file`** and **prompt caching**.
 
 <details>
 <summary><b>Counter-questions</b></summary>
 
 **Q: If you only had time for one of these, which?**
-Tracing. When something goes wrong in production today, the only clue is a log
-line with no way to tie it to the request that caused it. A trace id on every
-request turns "something failed around 3pm" into "this request, this user,
-these steps".
+The UI. Chat memory, the logs stream, plans and search all work and are all
+tested — but only through the API. A feature nobody can see is a feature
+nobody uses.
 
 **Q: RAG is built now. Is it doing anything for today's projects?**
 Mostly not, and that's by design. Generated sites are usually under fifteen

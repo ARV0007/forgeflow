@@ -674,3 +674,51 @@ Or through the API: `GET /api/v1/projects/42/search?q=renderTodos`.
 - Never call an embedding API inside a `@Transactional` method: the database
   connection is held for the whole network wait.
 
+---
+
+## 17. Tracing, API docs, boundaries
+
+### Following one request
+
+Every response has an `X-Trace-Id`. Every error body has `traceId`. Then:
+
+```bash
+grep 4bf92f3577b34da6a3ce929d0e0e4736 app.log           # every line from that request
+```
+
+```sql
+SELECT id, status, stop_reason FROM generation_runs WHERE trace_id = '4bf92f...';
+```
+
+### Seeing it as a timeline (Zipkin)
+
+```bash
+docker run -d -p 9411:9411 openzipkin/zipkin
+ZIPKIN_URL=http://localhost:9411 ./mvnw spring-boot:run
+```
+
+Open http://localhost:9411 and search by trace id. You'll see the request,
+the agent run inside it, and each model call and build inside that.
+
+### Continuing someone else's trace
+
+Send `traceparent: 00-<32 hex>-<16 hex>-01` and ForgeFlow joins that trace
+instead of starting a new one. All-zero ids or anything malformed are
+ignored (new trace), never an error.
+
+### API docs
+
+- http://localhost:8081/docs.html — Swagger UI. Click **Authorize** and paste
+  a token from `/api/v1/auth/login` to try calls.
+- Adding an endpoint? Add it to `src/main/resources/static/openapi.yaml` too,
+  or `OpenApiContractTest` fails.
+
+### Gotchas
+
+- MDC and ThreadLocals don't cross threads. Anything submitted to an executor
+  loses the trace unless wrapped in `Tracer.wrap(...)`.
+- Span names must be low-cardinality: `/projects/{id}`, never
+  `/projects/42`, or Zipkin's service view becomes thousands of one-off names.
+- `ModuleBoundaryTest` failing on a new import usually means the code wants
+  a method on the other module's *service*, not its repository.
+
