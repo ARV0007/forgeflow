@@ -279,6 +279,10 @@ public class AgentService {
                         written.add(path);
                         Object content = call.args().get("content");
                         emit(listener, AgentEvent.file(path, content == null ? 0 : content.toString().length()));
+                    } else if ("edit_file".equals(call.name()) && path != null) {
+                        written.add(path);
+                        Object replacement = call.args().get("new_text");
+                        emit(listener, AgentEvent.edited(path, replacement == null ? 0 : replacement.toString().length()));
                     }
                 }
 

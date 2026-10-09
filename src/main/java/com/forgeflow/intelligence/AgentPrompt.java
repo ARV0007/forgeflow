@@ -36,6 +36,11 @@ final class AgentPrompt {
             read_file first. Guessing at existing content overwrites the user's
             work.
 
+            To change part of an existing file, use edit_file: replace one exact
+            piece of text, copied from read_file. It is cheaper than rewriting
+            the file, and it cannot drop the parts you did not mean to touch.
+            Use write_file to create a file, or when most of it changes.
+
             RULES
             - Always create index.html as the entry point.
             - Keep CSS in styles.css and JavaScript in app.js unless the user

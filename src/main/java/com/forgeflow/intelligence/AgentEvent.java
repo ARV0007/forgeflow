@@ -25,6 +25,10 @@ public record AgentEvent(String type, String message, String path, Object data) 
         return new AgentEvent("file", "Wrote " + path, path, bytes);
     }
 
+    public static AgentEvent edited(String path, int bytes) {
+        return new AgentEvent("file", "Edited " + path, path, bytes);
+    }
+
     public static AgentEvent toolFailed(String toolName, String reason) {
         return new AgentEvent("tool_failed", reason, null, toolName);
     }

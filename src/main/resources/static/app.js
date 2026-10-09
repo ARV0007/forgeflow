@@ -357,7 +357,7 @@ function pendingReply() {
         case 'tool':
           if (ev.message !== 'write_file') step('st', `${esc(ev.message.replace('_', ' '))} <code>${esc(ev.path || '')}</code>`);
           break;
-        case 'file': step('st st-file', `wrote <code>${esc(ev.path)}</code>`); break;
+        case 'file': step('st st-file', `${String(ev.message).startsWith('Edited') ? 'edited' : 'wrote'} <code>${esc(ev.path)}</code>`); break;
         case 'tool_failed': step('st st-bad', `rejected: ${esc(ev.message)}`); break;
         case 'build':
           step(ev.message === 'Build passed' ? 'st st-pass' : 'st st-bad',

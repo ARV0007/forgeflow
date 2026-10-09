@@ -54,6 +54,17 @@ public class AgentTools {
                                         "What you are looking for, e.g. 'dark mode toggle' or 'renderTodos'")),
                                List.of("query"))),
 
+                new ToolSpec("edit_file",
+                        "Change part of an existing file: replace one exact piece of text with another. "
+                                + "old_text must appear in the file exactly once - copy it from read_file, "
+                                + "including enough surrounding lines to make it unique. Prefer this to "
+                                + "write_file for small changes.",
+                        schema(new LinkedHashMap<>(Map.of(
+                                        "path", prop("string", "Relative path of an existing file"),
+                                        "old_text", prop("string", "The exact text to replace, as it appears in the file"),
+                                        "new_text", prop("string", "What to put in its place (may be empty to delete)"))),
+                               List.of("path", "old_text", "new_text"))),
+
                 new ToolSpec("write_file",
                         "Create a file, or completely replace one that exists. Provide the entire file content.",
                         schema(new LinkedHashMap<>(Map.of(
@@ -95,6 +106,8 @@ public class AgentTools {
                 case "list_files" -> listFiles(projectId);
                 case "read_file" -> readFile(projectId, str(call, "path"));
                 case "search_code" -> searchCode(projectId, str(call, "query"));
+                case "edit_file" -> editFile(projectId, userId, str(call, "path"),
+                        str(call, "old_text"), str(call, "new_text"));
                 case "write_file" -> writeFile(projectId, userId, str(call, "path"), str(call, "content"));
                 case "finish" -> ToolResult.ok("finish", "Done.");
                 default -> ToolResult.failed(call.name(), "Unknown tool: " + call.name());
@@ -143,6 +156,49 @@ public class AgentTools {
               .append(h.endLine()).append(" ---\n").append(h.content()).append("\n\n");
         }
         return ToolResult.ok("search_code", sb.toString().strip());
+    }
+
+    /**
+     * A targeted edit instead of a full rewrite. Cheaper (the model sends a
+     * few lines, not the whole file), and safer: a full rewrite can silently
+     * drop parts of a file the model never meant to touch - or a change the
+     * user made by hand.
+     *
+     * The match must be exact and unique. Fuzzy matching would be friendlier
+     * and wrong: "close enough" is how an edit lands in the wrong place.
+     */
+    private ToolResult editFile(Long projectId, Long userId, String rawPath, String oldText, String newText) {
+        String path = safePath(rawPath);
+        if (oldText == null || oldText.isEmpty()) {
+            throw new ToolException("old_text is required - to create or replace a whole file, use write_file");
+        }
+        if (newText == null) {
+            throw new ToolException("new_text is required (use an empty string to delete)");
+        }
+        String current = files.read(projectId, path)
+                .orElseThrow(() -> new ToolException("No such file: " + path + ". Use write_file to create it."));
+
+        int first = current.indexOf(oldText);
+        if (first < 0) {
+            throw new ToolException("old_text was not found in " + path + ". It must match the file exactly, "
+                    + "including spaces and line breaks - read_file and copy the text you want to change.");
+        }
+        int count = 0;
+        for (int i = first; i >= 0; i = current.indexOf(oldText, i + 1)) {
+            count++;
+        }
+        if (count > 1) {
+            throw new ToolException("old_text appears " + count + " times in " + path
+                    + ". Include more of the surrounding lines so it matches exactly once.");
+        }
+
+        String updated = current.substring(0, first) + newText + current.substring(first + oldText.length());
+        int bytes = updated.getBytes(StandardCharsets.UTF_8).length;
+        if (bytes > MAX_FILE_BYTES) {
+            throw new ToolException("file would be too large: " + bytes + " bytes, limit is " + MAX_FILE_BYTES);
+        }
+        files.write(projectId, path, updated, userId);
+        return ToolResult.ok("edit_file", "Edited " + path + " (now " + bytes + " bytes)");
     }
 
     private ToolResult writeFile(Long projectId, Long userId, String rawPath, String content) {
