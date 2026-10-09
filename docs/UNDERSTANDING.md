@@ -25,6 +25,7 @@ Transakt is a restaurant. ForgeFlow is a **building site**.
 | `generation_runs` | The **site diary** — what happened, how long, what it cost |
 | The caps | The **budget and the deadline** |
 | JWT | A **visitor badge** at the site gate |
+| The MCP server | The **trade line** — a standard phone line another firm's foreman can call to commission work |
 
 The most important thing on this site: **the contractor never touches the
 building directly.** They ask the foreman, and the foreman checks every request
@@ -471,24 +472,348 @@ and compare how often the final code passes.
 
 ---
 
-## Chapter 11 — What's next
+## Chapter 11 — The shell is a language, not a text substituter
+
+**Plain English.** Most people read this line as *"put the value of `m` where
+`$m` is"*:
+
+```bash
+curl ".../models/$m:generateContent"
+```
+
+That is wrong, and the wrongness stays invisible until it costs you an hour. The
+shell is a **language with its own parser**. It reads your line as syntax first,
+and only then hands the resulting text to the program. If a character means
+something in that language, the shell acts on it before `curl` ever sees it.
+
+Three characters caused three separate failures in one afternoon: `:`, `*`, and
+the quoting on a heredoc.
+
+### Instance 1 — the colon is a modifier in zsh
+
+zsh lets you hang *history modifiers* off an unbraced parameter expansion with a
+colon. `$file:t` is the tail of a path, `$file:r` strips the extension, `$file:e`
+gives the extension. This works inside double quotes too. bash does not do it.
+
+So zsh reads `"$m:generateContent"` as: variable `m`, then modifiers. With
+`m=gemini-2.5-flash` the URL becomes:
+
+```
+models/5-flashnerateContent
+```
+
+Confirmed directly:
+
+```bash
+m=gemini-2.5-flash
+echo "models/$m:generateContent"     # models/5-flashnerateContent
+echo "models/${m}:generateContent"   # models/gemini-2.5-flash:generateContent
+```
+
+Braces end the variable name explicitly, so the colon is just a colon.
+
+### Instance 2 — the colon collides with Spring's syntax
+
+Spring's placeholder syntax is `${VAR:default}`. zsh's modifier syntax is
+`${VAR:modifier}`. Identical punctuation, different languages. Pasting a line of
+`application.yml` into a terminal gives `zsh: unrecognized modifier`. The YAML
+was correct; the shell was the wrong place to put it.
+
+### Instance 3 — the asterisk is a glob
+
+```bash
+grep -rn "Mapping" src/main/java --include=*Controller.java
+# zsh: no matches found
+```
+
+The `*` never reached grep. zsh tried to expand it against filenames in the
+current directory, found none, and **aborted the whole command**. bash would
+have passed the unmatched pattern through; zsh refuses by default. Quoting fixes
+it: `--include="*Controller.java"`.
+
+### The rule
+
+**Quote anything you mean literally.** `*`, `:`, `{`, `$`, `~`, `?`, `[` are all
+syntax in the shell's language, not text in yours. Three habits:
+
+- `${var}` not `$var` when anything follows the name
+- `<<'EOF'` not `<<EOF` for a heredoc you want taken literally
+- quote any argument containing a glob character
+
+### Why this project specifically keeps hitting it
+
+| what broke | layer A | layer B |
+|---|---|---|
+| `ForgeFlowApplication.java` vs class `ForgeflowApplication` | macOS filesystem (case-insensitive) | Linux filesystem (case-sensitive) |
+| `Context.md` vs `CONTEXT.md` in Transakt | same | same |
+| `$m:` vs `${m}:` | your intent | zsh's parser |
+| `${VAR:default}` in YAML vs in zsh | Spring's parser | zsh's parser |
+
+All four are **one string interpreted by two layers with different rules.** The
+Java has never hit this class of bug, because Java string concatenation has no
+opinion about colons, asterisks or case. These bugs live exactly where two
+languages meet.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: The first probe loop printed *nothing at all* for every model; a later loop
+printed `404` for every model. Both used the same mangled `$m:`. Why the
+difference?**
+Look at the mangled path: `models/5-flashnerateContent` has **no colon in it**.
+Google's API routes on `models/{name}:{method}`; with no `:method` the request
+never reaches the model router and dies at the gateway with a bare 404 and no
+body. The later loop used `-w '%{http_code}'`, which prints a status even when
+the body is empty. Same 404, two different origins — and `curl -s` was hiding
+the difference.
+
+**Q: `curl -s` hides curl's own errors. Name two failures that look identical
+under it.**
+A DNS or connection failure (curl never got a response) and a gateway 404 with
+an empty body (curl got a response with nothing in it). Both print a blank line.
+`-w '%{http_code}'` separates them: the first prints `000`, the second `404`.
+
+**Q: The YAML line was `${FORGEFLOW_MODEL:gemini-3.5-flash-lite}}` — two closing
+braces — and YAML rejected the file. Suppose it had been quoted. What then?**
+YAML would have parsed it happily, Spring would have resolved the placeholder,
+and `GeminiClient` would have received the model name `gemini-3.5-flash-lite}`
+with a trailing brace. The app starts, looks healthy, and every generation 404s.
+**A crash at startup is a gift** — it cost three minutes and pointed at the file.
+The quiet version costs an afternoon.
+
+**Q: The over-indented YAML produced *"mapping values are not allowed here, line
+29, column 12"*. The line had six leading spaces. Why column 12?**
+Count: `m`=7, `o`=8, `d`=9, `e`=10, `l`=11, `:`=12. The parser is objecting to
+the **colon**. At indent 6 the line cannot start a new key under a parent at
+indent 4, so YAML reads `model` as a continuation of the previous value — a
+plain multi-line scalar — and a `:` inside a plain scalar is illegal. The column
+number named the exact character, and reading it would have saved two wrong
+guesses.
+
+</details>
+
+---
+
+## Chapter 12 — What an eval suite is actually for
+
+**Plain English.** A test asks *"is this correct?"* An eval asks *"is this better
+or worse than it was?"*
+
+The difference matters because an LLM-backed system has no single correct
+output. `index.html` can be written a thousand valid ways. The only question you
+can meaningfully answer is a **comparative** one.
+
+That is why `golden.json` says at the top: keep this file stable. The prompts are
+not good because they are clever. They are good because they **do not change** —
+a fixed measuring stick against a moving system.
+
+### The four checks, and why each exists
+
+- `build_passed` — the sandbox approved it. Necessary but weak: an empty file
+  parses fine.
+- `has_index` — there is an entry point. Catches a run that wrote CSS and quit.
+- `no_empty_files` — nothing under 20 bytes. Catches the stub.
+- `js_when_needed` — a prompt asking for behaviour produced ≥100 bytes of JS.
+
+The fourth exists because of an observed failure: the agent would create a
+near-empty `app.js` purely to satisfy the system prompt's file convention,
+passing the first three checks while producing something that does nothing.
+
+**Every check in an eval suite should be traceable to a failure you actually
+saw.** Checks invented in the abstract test what is easy to measure rather than
+what matters.
+
+### Hard assertions versus soft metrics
+
+`build_passed` and `has_index` are pass/fail. Tokens and duration are recorded
+but never asserted on, because they vary run to run — a suite that fails on a
+10% token swing is a suite you will start ignoring. Soft metrics earn their keep
+in the **diff between runs**, not in any single run.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: The harness recorded the 2.5-flash collapse on 26 Sep at 01:16 — 1/20,
+119.2s mean — a full day before anyone investigated. Why did that signal not
+reach anyone?**
+Because nothing was watching. The run wrote a JSON file to disk and that was the
+end of it. That is precisely the gap between *having a test suite* and *having
+CI*: a result nobody is notified of is a result that does not exist. It is the
+single most valuable thing this project is still missing.
+
+**Q: The durations went 13s, 17s, 9s, 20s, then 17s, 230s, 285s, 225s, 583s. Two
+explanations fit. What one extra piece of data would separate them?**
+Per-call HTTP status, logged during the sweep. Steady 200s getting slower means
+the model is degraded. A burst of 429s means the quota is spent and
+`sendWithRetry` is backing off. The run-level timing cannot tell them apart;
+the status codes can.
+
+**Q: `js_when_needed` uses a 100-byte threshold. Give a file that passes it and
+is still worthless, and a legitimate one that fails.**
+Worthless pass: 100 bytes of comments, or a single `console.log` padded out.
+Legitimate fail: a genuinely tiny but correct handler —
+`document.querySelector('button').onclick=()=>alert('hi')` is under 100 bytes and
+does exactly what a simple prompt asked. Threshold checks are proxies: cheap,
+directionally useful, and wrong at the edges. The honest framing is that it
+catches the *specific* failure it was written for, not that it measures quality.
+
+**Q: Every case creates a fresh project, so a later case cannot pass on an
+earlier one's files. But real users edit existing projects — that is most of
+what the product does. What is the suite therefore not testing?**
+Iteration. Nothing in the twenty cases exercises "generate, then change what is
+already there", which is where `read_file` matters, where the model can overwrite
+work it should have kept, and where diff-based editing would show up. A case for
+it would run two prompts against one project and assert the second preserved
+something from the first.
+
+</details>
+
+---
+
+## Chapter 13 — The trade line (MCP)
+
+**Plain English.** So far there are two ways onto the site: the workbench, where
+a person types a brief, and the REST API behind it. Both assume a **human**
+client.
+
+MCP is a third door, for **machines**. It is a standard protocol an AI assistant
+speaks when it wants to use an external tool. The assistant knows nothing about
+ForgeFlow — it knows how to speak MCP, asks "what can you do?", and gets back a
+list. Expose an MCP server and someone sitting in a different AI tool can say
+*"build me a landing page"* and have ForgeFlow do it.
+
+On the site: a **trade line**. A standard phone number another firm's foreman
+can ring, in an industry-standard language, to commission work — without
+knowing anything about how your site is run.
+
+### The protocol is small
+
+It is JSON-RPC 2.0, which is a twenty-year-old convention for "call a method
+over a wire". Every message in:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}
+```
+
+Every message out echoes the `id` with **either** `result` **or** `error`,
+never both. Three methods are enough: `initialize` (who are you, what version),
+`tools/list` (what can you do), `tools/call` (do it).
+
+The whole server is one `POST /mcp` endpoint and a switch statement.
+
+### The tool list *is* a prompt
+
+`tools/list` returns names, descriptions and JSON Schemas, and the calling model
+reads them to decide what to call and how. They are literally part of its
+prompt. A vague description produces a model that calls the wrong tool or passes
+garbage.
+
+So ForgeFlow's descriptions are written for a reader who knows nothing about it:
+`generate_app` says it needs a `project_id` from `create_project`, that it takes
+5–20 seconds, and that calling it again on the same project iterates on what is
+there.
+
+Three tools, not six. `/build` and `/preview` exist in the REST API and are
+deliberately left out — the agent runs the build itself inside `finish`, and a
+preview URL means nothing to an agent.
+
+### The distinction that matters most
+
+There are two ways to report a failure, and getting them backwards breaks the
+client.
+
+| | means | the client sees |
+|---|---|---|
+| JSON-RPC `error` | **the client is wrong** — unknown method, malformed JSON | "the server is broken" |
+| `result` with `isError: true` | **the world is wrong** — no such project, build failed | a message the model can read and act on |
+
+"No such project" is a **tool** error. It goes back into the calling model's
+context, where it can read *"project 99999 not found"* and call `create_project`
+instead. That is the same reasoning as the self-healing loop one chapter back:
+feed the error to the model and let it recover.
+
+### Nobody is logged in
+
+Every service method takes an owner, and an MCP request has no JWT to derive one
+from. ForgeFlow uses a **fixed service account** — `forgeflow.mcp.owner-id`,
+default 1. Projects made through MCP belong to that user.
+
+The ownership check still runs inside the executor. That check is what turns a
+wrong `project_id` into a readable tool error instead of someone else's files.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why pin protocol version `2025-06-18` when `2026-07-28` exists?**
+Because the newest revision is not an increment — it removes the `initialize`
+handshake entirely, drops session headers, and adds required `resultType`,
+`ttlMs` and `cacheScope` fields. Two things make pinning safe: Anthropic's
+clients still perform the handshake, and the newer spec explicitly tells clients
+to treat a result from an earlier-protocol server that omits `resultType` as
+complete. Same reasoning as pinning the Gemini model instead of using `-latest`:
+a moving dependency under something you demo is a liability.
+
+**Q: Why not use Spring AI's MCP starter? It would have taken an afternoon.**
+Same reason `GeminiClient` has no SDK: one fewer dependency to version-match
+against Boot 4, and the wire format stays visible. The protocol is three methods.
+The honest counter-argument is that the starter is maintained and handles
+version negotiation — if ForgeFlow had users rather than an interviewer, that
+would be the right call.
+
+**Q: A JSON-RPC message arrives with no `id`. What do you do?**
+Nothing — return `202` with an empty body. A message with no `id` is a
+*notification* and expects no reply. MCP sends `notifications/initialized` right
+after the handshake, and answering it confuses clients that are not waiting for
+a response.
+
+**Q: `project_id` was first declared `"type": "string"`. What breaks?**
+The model reads the schema and sends `"43"` with quotes, and you end up parsing
+strings into `Long` at every call site. The schema is not documentation — it is
+the instruction the model follows.
+
+**Q: `/mcp` is `permitAll`. Is that acceptable?**
+Locally, yes. Publicly, it means anyone who finds the URL can spend the Gemini
+quota. The real options are a static API key header (Claude Desktop's
+custom-header support is only partial, so it may not survive the connector path)
+or proper OAuth 2.1, which is what Claude Desktop's custom connectors assume and
+is a substantial piece of work. It is a known gap, not an oversight.
+
+**Q: Claude Desktop's config file takes MCP servers. Why can't you just add a
+URL there?**
+Because that file is stdio-only — every entry describes a local *process to
+launch*, with command, args and env. There is no `url` field. Remote servers go
+through Settings → Connectors instead, and that runtime connects from
+Anthropic's infrastructure rather than from your machine, so it cannot see
+`localhost`. It needs the public Render URL. Claude Code's CLI is the opposite:
+it runs locally and `claude mcp add --transport http` reaches localhost fine.
+
+</details>
+
+---
+
+## Chapter 14 — What's next
+
+Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
+the **workbench**, and the **MCP server** (Chapter 13). What is left:
 
 - **`edit_file`** — change three lines instead of rewriting a whole file. Cheaper,
   faster, and it won't overwrite changes the user made by hand.
 - **Prompt caching** — the rules and file list are identical every round; caching
   them cuts the cost of every call.
-- **Evals** — twenty test prompts, a script that runs them, and a pass-rate number.
-  Turning *"it works"* into *"it passes 85%, up from 60% before self-healing."*
+- **CI** — the eval harness already caught a model regression a day before anyone
+  noticed it, and that made no difference because nothing was watching. A result
+  nobody is notified of is a result that does not exist.
+- **Auth on `/mcp`** — before the endpoint is advertised anywhere public.
 - **RAG** — once a project has dozens of files, retrieve only the relevant ones
   instead of sending everything. First to cut if time runs short.
-- **Deploy** — a public URL, a README, and CI running on every push.
 
 <details>
 <summary><b>Counter-questions</b></summary>
 
 **Q: If you only had time for one of these, which?**
-Evals. Everything else makes ForgeFlow better; evals are how you'd *know* it got
-better. Without them, every other change is a guess.
+CI. Evals were the answer when this chapter was written, and they got built — but
+Day 9 showed a suite nobody is notified about catches a regression and still lets
+it sit for a day. The measurement exists; the feedback loop doesn't.
 
 **Q: Why is RAG last, when it's the most talked-about technique?**
 Because it only helps when a project is too big to send whole — past about fifteen

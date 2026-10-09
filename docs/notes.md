@@ -338,3 +338,136 @@ Verified by inversion: at 1 second a generation fails in 297ms; at the 60s defau
 Diagnose with `lsof -i :8081` and compare the PID against the one printed in the startup line of the tab you think is serving. If they differ, you are testing the wrong process.
 
 Worse still: if the shell that spawned it carries a stale exported variable, killing the process is not enough — the tab can respawn with the same environment. Close the tab and open a fresh one. That was what finally resolved an hour of a config change appearing not to take effect.
+
+## 12. The MCP server
+
+MCP (Model Context Protocol) is how an AI assistant calls out to an external
+tool. The assistant knows nothing about ForgeFlow; it knows how to speak MCP.
+Expose an MCP server and ForgeFlow becomes something another agent can drive.
+
+### It is JSON-RPC 2.0 and nothing more
+
+Every message in has the same shape:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}
+```
+
+Every message out echoes that `id` with **either** `result` **or** `error`,
+never both — which is why `JsonRpc.Response` carries
+`@JsonInclude(NON_NULL)`. Without it a success serializes with a dangling
+`"error": null` sitting next to the result, and a strict client may reject it.
+
+Three methods are enough for a tools-only server: `initialize`, `tools/list`,
+`tools/call`.
+
+### Notifications have no id
+
+A JSON-RPC message with no `id` expects no reply. MCP sends
+`notifications/initialized` right after the handshake. Answering it confuses
+clients that are not waiting for a response, so the controller returns
+`202 Accepted` with an empty body when `req.id()` is null.
+
+### Why the protocol version is pinned
+
+The spec has moved at least five times: `2024-11-05`, `2025-03-26`,
+`2025-06-18`, `2025-11-25`, `2026-07-28`. The newest revision is not an
+increment — it **removes the `initialize` handshake entirely** and makes MCP
+stateless, drops the `Mcp-Session-Id` header, requires `Mcp-Method` and
+`Mcp-Name` headers on every POST, and adds required `resultType`, `ttlMs` and
+`cacheScope` fields.
+
+Two things make pinning safe rather than lazy:
+
+- Anthropic's clients still perform the `initialize` handshake.
+- The newer spec explicitly tells clients to treat a result from an
+  earlier-protocol server that omits `resultType` as `"complete"`.
+
+So `McpController` pins `2025-06-18` and says so in a comment. Same reasoning as
+pinning `gemini-3.1-flash-lite` over `gemini-flash-lite-latest`: a moving
+dependency under a thing you demo is a liability, and "I pinned it deliberately"
+is a better answer than "I used latest."
+
+### Tool error versus protocol error
+
+This is the distinction that matters most, and it is easy to get backwards.
+
+- **JSON-RPC `error`** means *the client is wrong*: unknown method, malformed
+  JSON, missing required parameter. Code `-32601` is the standard "method not
+  found". A client typically surfaces this to the user as "the server is
+  broken."
+- **A normal `result` with `isError: true`** means *the world is wrong*: no such
+  project, the build failed, the project was deleted. The request was
+  well-formed and the tool ran.
+
+The second goes back into the calling model's context, where it can read
+"project 99999 not found" and call `create_project` instead. That is the
+behaviour you want, and it is the same reasoning as the agent's own self-healing
+loop: feed the error back to the model and let it recover.
+
+Rule of thumb: **protocol error if the client is wrong, tool error if the world
+is wrong.** So `McpToolExecutor.call` wraps everything in a try/catch that
+returns a tool error — a bad `project_id` must not fail the JSON-RPC call.
+
+### The tool list is a prompt
+
+`tools/list` returns names, descriptions and JSON Schemas, and the calling model
+reads them to decide what to call. They are part of its prompt, so they are
+written for a reader who knows nothing about ForgeFlow: `generate_app`'s
+description says it needs a `project_id` from `create_project`, that it takes
+5–20 seconds, and that calling it again on the same project iterates.
+
+Three tools, not six. `/build` and `/preview` exist in the REST API but are left
+out: the agent already runs the build inside `finish`, and a preview URL means
+nothing to an agent. More tools with overlapping purposes makes a model *worse*
+at choosing.
+
+**Declare integers as integers.** `project_id` was first declared
+`"type": "string"` while the services take a `Long`. A model reading that
+schema will dutifully send `"43"` with quotes.
+
+### MCP requests carry no JWT
+
+Every service method takes an owner (`projects.create(ownerId, …)`), and an MCP
+request has no token to derive one from. ForgeFlow uses a **fixed service
+account**: `forgeflow.mcp.owner-id`, default 1. Projects created through MCP
+belong to that user, not to whoever is driving the client.
+
+This keeps the multi-tenancy model intact instead of punching a hole in it, and
+it is honest about what it is. The alternatives were an API key header (Claude
+Desktop's custom-header support is only partial) or making the caller pass a
+JWT as a tool argument (awkward — the model would have to carry a token
+around).
+
+`listFiles` still performs the ownership check (`projects.getById(id, ownerId)`)
+before reading files. That check is what turns a wrong `project_id` into a
+readable tool error rather than someone else's file listing.
+
+### Hand-rolled on purpose
+
+Spring AI 2.0 ships `spring-ai-starter-mcp-server-webmvc` with `@McpTool`
+annotations, and it would have taken an afternoon. It was not used, for the same
+reason `GeminiClient` has no SDK: one fewer dependency to version-match against
+Boot 4, and the request/response shape stays visible. The protocol is three
+methods over JSON-RPC — small enough that implementing it is cheaper than
+owning a milestone-version dependency.
+
+The honest counter-argument: the starter is maintained and handles version
+negotiation and edge cases. If ForgeFlow had users rather than an interviewer,
+that would be the right call.
+
+### Reaching it from a client
+
+- **Claude Desktop's `claude_desktop_config.json` cannot do HTTP.** Every entry
+  there describes a local process to launch — command, args, env. No `url`
+  field, no HTTP transport. That file is stdio-only.
+- **Remote servers go through Settings → Connectors → Add custom connector.**
+  But that runtime connects from Anthropic's infrastructure, not from the local
+  machine, so `http://localhost:8081/mcp` is invisible to it — a custom
+  connector needs a publicly reachable HTTPS server. The Render deployment is
+  already one.
+- **Claude Code CLI** supports `claude mcp add --transport http` and runs
+  locally, so it can reach `localhost:8081`.
+
+One endpoint serves all three. The transport worry turned out not to fork the
+work at all.

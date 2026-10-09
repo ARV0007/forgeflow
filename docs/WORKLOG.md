@@ -311,22 +311,213 @@ On a paid key, the same run is around 20 seconds.
 
 ---
 
+## Day 7 — The workbench · 23 Sep 2026
+
+**Goal.** Stop demoing ForgeFlow with curl. A person should be able to type a
+prompt and watch the site get built.
+
+**What was built.** A workbench UI in plain HTML, CSS and JavaScript, served
+straight out of Spring Boot's own `static/` resources. No separate frontend
+build, no second deployment, no framework.
+
+The left pane is the interesting half: a live **run record** of the SSE events
+as they arrive — status, thinking, each tool call, each file written, done. The
+self-healing loop is the thing that makes this project unusual, and it was
+previously invisible unless you read JSON. Now you watch the agent get stopped
+by the build check and go back to fix its own work.
+
+**Interview line.** *"The UI exists to make the loop visible. A build that
+fails and gets repaired is the whole point of the system, and you cannot see
+that in a final screenshot — only in the sequence."*
+
+**Why no framework.** One deployable, one language at the boundary, and the
+static files carry no data of their own: every call they make still needs a
+token. A React app would have added a build step and a second thing to deploy
+in exchange for nothing this page needs.
+
+---
+
+## Day 8 — Live · 25 Sep 2026
+
+**Goal.** A public URL. "Not just the backend part."
+
+**Where it runs.** Render free tier, Docker runtime, Singapore, against a new
+Neon Postgres project in the same region.
+
+**The constraint that shaped it.** Free hosting tiers cannot run a Docker
+daemon, and the sandbox depends on one. So `SandboxProvider` gained a second
+implementation chosen by config: `FORGEFLOW_SANDBOX_PROVIDER=in-process`
+validates in the JVM and serves previews from Spring at `/p/{token}/` instead
+of nginx. The deployed build check is therefore **structural only** — it parses
+and checks references, but nothing executes in a locked-down container.
+
+That is a real reduction in guarantee, and it is config, not a code fork: the
+interface was already the seam.
+
+**Two blockers on the way.**
+
+1. The main class file was `ForgeFlowApplication.java` while the class inside
+   was `ForgeflowApplication`. macOS's case-insensitive filesystem had hidden
+   this for weeks; Linux did not. Fixed with `git mv`. Same species of bug as
+   the Transakt `Context.md`/`CONTEXT.md` case — one string, two layers,
+   different rules.
+2. Lombok came out of all five entities in favour of explicit getters and
+   setters. `annotationProcessorPaths` carries no version from dependency
+   management, and it behaved differently on Render than locally. Explicit
+   accessors are more lines and no mystery.
+
+**Interview line.** *"The deploy didn't need a rewrite because the sandbox was
+already behind an interface. It needed a second implementation and one
+environment variable."*
+
+---
+
+## Day 9 — Evals, and a model that quietly died · 25–27 Sep 2026
+
+**Goal.** Turn *"it works"* into a number.
+
+### The harness
+
+`evals/golden.json` holds twenty fixed prompts. `evals/run_evals.py` runs each
+against a **fresh project** — accumulated files would let a later case pass on
+an earlier case's work — and scores four checks, all of which must pass:
+
+| check | what it catches |
+|---|---|
+| `build_passed` | the build gate approved it |
+| `has_index` | there is an entry point |
+| `no_empty_files` | nothing under 20 bytes |
+| `js_when_needed` | a prompt asking for behaviour produced ≥100 bytes of JS |
+
+The fourth exists because of an observed failure: the agent would write a
+near-empty `app.js` purely to satisfy the system prompt's file convention,
+passing the first three checks while producing something that does nothing.
+**Every check here is traceable to a failure actually seen.**
+
+The harness re-authenticates every case, because tokens expire in two hours and
+a full sweep takes longer than that.
+
+### The model migration
+
+`gemini-2.5-flash-lite` started returning 404 with an explicit message: *no
+longer available to new users, use `gemini-3.5-flash-lite`.* `gemini-2.5-flash`
+was on the same line and the deployed demo was sitting on it.
+
+Four probes, in increasing strictness:
+
+1. `GET /v1beta/models` — what the key can see. Stopped guessing names.
+2. POST `"hi"` — reachable and callable, separating 200 from 403/404.
+3. The same call with a real `functionDeclarations` block, grepping the reply
+   for `functionCall`. A model that chats is not necessarily a model that emits
+   structured tool calls, and the agent needs the latter.
+4. `time curl` — latency.
+
+| model | reachable | tool call | latency |
+|---|---|---|---|
+| `gemini-2.5-flash` | 200 | yes | 3.6s |
+| `gemini-2.5-flash-lite` | 404 | — | deprecated for new keys |
+| `gemini-3.1-flash-lite` | 200 | yes | **1.7s** |
+| `gemini-flash-lite-latest` | 200 | yes | 1.9s |
+| `gemini-3.5-flash-lite` | 200 | yes | **94s, then 134s** |
+| `gemini-3.5-flash` | 503 | yes on retry | intermittent |
+| `gemini-3.8-flash` | 200 | yes | 10.3s |
+
+**Pinned `gemini-3.1-flash-lite`.** Google's own named successor,
+`gemini-3.5-flash-lite`, passed both the reachability and the tool-call probe
+and was **rejected on latency** — 90 to 134 seconds for a three-line haiku,
+which blows the client's HTTP timeout on the first call of a run.
+
+**The lesson worth keeping: latency is a capability, and neither of the first
+two probes measured it.** A floating alias (`-latest`) was also rejected: it
+was observed inheriting a 503 from its target in the same session, and it would
+inherit the latency problem too.
+
+### Verification
+
+20/20 on the golden set, mean 5,236 tokens, mean 13.4s per case, all four
+checks green. The single-prompt comparison: 4,380 tokens / 8.4s against the Day
+3 baseline of 7,102 tokens / 15.4s on 2.5-flash — roughly half the tokens and
+half the wall time. Self-healing re-verified on the new model: asked to write
+deliberately invalid JavaScript, the agent wrote it, failed its own build, read
+the error and repaired it (1 repair round, build passed).
+
+### The head-to-head
+
+Flipping back to `gemini-2.5-flash` the same day, same machine, same prompts:
+
+| case | 2.5-flash | 3.1-flash-lite |
+|---|---|---|
+| 1 recipe-cards | PASS 13s | PASS 7s |
+| 4 todo-list | PASS 20s | PASS 11s |
+| 5 portfolio | FAIL 17s (`no_empty_files`) | PASS 10s |
+| 6 pricing-table | FAIL 230s | PASS 11s |
+| 7 contact-form | FAIL 285s (0 files) | PASS 10s |
+| 9 faq-accordion | FAIL 583s (0 files) | PASS 7s |
+| full suite | **abandoned** | **20/20** |
+
+The shape matters more than any number. The first four cases pass normally;
+from case 5 onward each is slower than the last, ending at 583 seconds —
+nearly ten minutes — producing nothing. That is a **progressive collapse, not
+constant slowness**, and the likeliest cause is free-tier quota rather than raw
+latency: 2.5-flash allows around 10 requests a minute, each case makes 4–6
+calls, and after the allowance is spent `sendWithRetry` backs off until the HTTP
+timeout fires.
+
+**Stated honestly:** this does not cleanly separate "2.5-flash is degraded" from
+"2.5-flash has a tighter quota than 3.1-flash-lite". Both hypotheses produce
+that curve. Separating them would need per-call HTTP status logging during a
+throttled sweep. For the decision at hand it does not matter — the old model
+cannot finish the suite and the new one can.
+
+**The part worth sitting with.** An eval run from 26 Sep at 01:16 scored 1/20
+with a 119.2s mean. Same collapse, recorded automatically, a full day before
+anyone went looking. **The harness caught the regression first and it made no
+difference, because nothing was watching.** That is the gap between having a
+test suite and having CI.
+
+**Mistake & fix.** A config bug found the same day: `llm.timeout-seconds` was
+wired to `HttpClient.connectTimeout` while the *request* timeout was hardcoded
+to 120s. The property that looked like it governed slow generations governed the
+one that almost never matters. Split into `connect-timeout-seconds: 10` and
+`request-timeout-seconds: 60`, and verified by inversion — at 1 second a
+generation fails in 297ms; at 60 the same generation succeeds in 6.1s. A config
+fix is not done until the knob is shown to move something.
+
+---
+
 ## Open items
 
 - `AgentTools` still uses `ProjectFileRepository` directly, breaking the
   module-boundary rule. New code goes through `ProjectFileService`.
+- `McpToolExecutor` also reads `ProjectFileRepository` directly, for the same
+  reason and with the same debt.
 - `SandboxException` isn't mapped in `GlobalExceptionHandler`, so it surfaces as
   a default 500.
 - Previews record `expires_at` but nothing reaps them yet.
 - `tool_calls`, `chat_sessions`, `chat_messages` and `file_chunks` exist but
   aren't written to. Each generate starts with no memory of earlier ones.
 - `cost_usd` and `cached_tokens` are always 0.
-- No tests beyond Initializr's default. No CI. Not deployed.
-- The timeout counts time spent waiting out rate limits.
+- No tests beyond Initializr's default. **No CI** — and Day 9 showed exactly
+  what that costs: the eval harness recorded a regression a day before anyone
+  noticed it.
+- The agent timeout counts time spent waiting out rate limits.
+- `run_evals.py` writes its results file only after the whole loop, so a
+  `Ctrl+C` mid-sweep loses every completed case — precisely when the record
+  would be most useful.
+- `/mcp` is unauthenticated. Acceptable locally; a decision to make before the
+  endpoint is advertised publicly.
 
 ## Still to build
 
 1. `edit_file` — diff-based edits instead of full rewrites — plus prompt caching
-2. Evals — 20 golden prompts, measured pass rate
-3. RAG over the codebase (first to go if time runs short)
-4. Deploy, README, CI
+2. RAG over the codebase (first to go if time runs short)
+3. CI, so a failing eval run reaches someone
+4. README
+
+## Done since the original plan
+
+- Evals — twenty golden prompts, a measured pass rate, and a model migration
+  decided on its evidence (Day 9)
+- Deploy — live on Render with a config-selected sandbox provider (Day 8)
+- Frontend — a workbench that makes the self-healing loop visible (Day 7)
+- MCP server — ForgeFlow drivable by another agent (Day 10)

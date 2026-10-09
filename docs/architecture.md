@@ -427,3 +427,104 @@ others' resources; identical login failures; `ownerId` never read from requests;
 | 8 | Evals | ⬜ |
 | 9 | RAG | ⬜ first to cut |
 | 10 | Deploy, README, CI | ⬜ |
+
+---
+
+## 14. LLM provider configuration
+
+The model is externalized, not hardcoded:
+
+```yaml
+forgeflow:
+  llm:
+    provider: gemini
+    api-key: ${GOOGLE_API_KEY:}
+    model: ${FORGEFLOW_MODEL:gemini-3.1-flash-lite}
+    temperature: 0.2
+    connect-timeout-seconds: 10
+    request-timeout-seconds: 60
+```
+
+Spring's relaxed binding maps the environment variable `FORGEFLOW_MODEL` onto
+`forgeflow.llm.model`, so the deployed instance can be switched to a different
+model from the Render dashboard without a rebuild or a code push.
+
+**Both layers matter.** The environment variable overrides at runtime; the YAML
+default is what local development and CI actually use. Relying on the dashboard
+alone means the repo no longer records what the application is supposed to run.
+
+Pinned to a specific version rather than a floating alias (`-latest`)
+deliberately: an alias can change the agent's behaviour and inherit its target's
+outages with no deploy on our side.
+
+**Two timeouts, named separately.** `connect-timeout-seconds` bounds the TCP
+handshake; `request-timeout-seconds` bounds how long to wait for the model's
+response. The second must stay meaningfully below `agent.timeout-seconds` (240),
+which bounds the whole run — at 60 a run survives up to four hung calls before
+the agent gives up. Set it above 240 and it becomes unreachable, and you have a
+dead config knob again from the other direction.
+
+---
+
+## 15. File storage
+
+Postgres (`project_files`) is the single source of truth for generated files.
+The filesystem holds only derived copies:
+
+```
+~/.forgeflow/
+  builds/          scratch space for sandbox build runs
+  previews/{id}/   materialized copy of files for a served preview
+```
+
+The build check materializes files **fresh from the database** into a temp
+directory on each run, validates them there, and discards the directory. It does
+not read `previews/`. Editing a file under `previews/` has no effect on what the
+build sees — confirmed empirically while trying to plant a broken file for a
+self-healing test.
+
+This is what makes the two sandbox providers interchangeable: neither owns the
+files, both receive a materialized snapshot.
+
+---
+
+## 16. The MCP server
+
+A second doorway onto the same services, for agents rather than people.
+
+```
+POST /mcp          one endpoint, JSON-RPC 2.0, protocol pinned to 2025-06-18
+```
+
+```
+com.forgeflow.mcp
+  JsonRpc            Request / Response / Error envelope records
+  McpController      dispatches on `method`; initialize, tools/list, tools/call
+  McpTools           the tool catalogue as static data (names, descriptions, schemas)
+  McpToolExecutor    runs a named tool against ProjectService / AgentService
+```
+
+**The split is deliberate.** `McpTools` is data — the catalogue a calling model
+reads. `McpToolExecutor` is behaviour. Adding a tool means a schema entry and a
+switch case, and the two concerns do not tangle.
+
+Three tools exposed: `create_project`, `generate_app`, `list_project_files`.
+`/build` and `/preview` are deliberately not exposed — the agent runs the build
+itself inside `finish`, and a preview URL is meaningless to an agent. A tool list
+is a prompt; more overlapping tools makes a model worse at choosing.
+
+**Authentication.** `/mcp` is `permitAll` in `SecurityConfig`, and the executor
+acts as a fixed service account (`forgeflow.mcp.owner-id`). MCP requests carry
+no JWT and there is nothing to derive an owner from. Ownership checks still run
+inside the executor, so a wrong `project_id` returns a tool error rather than
+another user's data.
+
+**Error mapping.** A malformed request gets a JSON-RPC `error` (`-32601` for an
+unknown method). A well-formed request whose operation failed gets a normal
+`result` with `isError: true`, so the calling model can read the failure and
+recover. See `docs/notes.md` §12.
+
+**Why not Spring AI.** `spring-ai-starter-mcp-server-webmvc` exists and would
+have been quicker. Same reasoning as `GeminiClient`: no SDK, one fewer
+dependency to version-match against Boot 4, and the wire format stays visible.
+The protocol is three methods.
