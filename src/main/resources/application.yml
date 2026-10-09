@@ -23,6 +23,8 @@ management:
         include: health,info,metrics
 
 forgeflow:
+  mcp:
+    owner-id: ${FORGEFLOW_MCP_OWNER_ID:1}
   llm:
     provider: gemini
     api-key: ${GOOGLE_API_KEY:}

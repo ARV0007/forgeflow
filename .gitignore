@@ -37,3 +37,5 @@ build/
 !.env.example
 
 evals/results/
+
+.verify/
