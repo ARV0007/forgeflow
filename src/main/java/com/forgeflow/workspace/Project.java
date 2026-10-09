@@ -38,6 +38,13 @@ public class Project {
     @Column(name = "deleted_at")
     private Instant deletedAt;
 
+    /** Readable by any signed-in user, as role PUBLIC. Writing still needs membership. */
+    @Column(name = "is_public", nullable = false)
+    private boolean isPublic;
+
+    @Column(name = "thumbnail_url")
+    private String thumbnailUrl;
+
     @PrePersist
     void onCreate() {
         Instant now = Instant.now();
@@ -70,4 +77,10 @@ public class Project {
 
     public Instant getDeletedAt() { return deletedAt; }
     public void setDeletedAt(Instant deletedAt) { this.deletedAt = deletedAt; }
+
+    public boolean isPublic() { return isPublic; }
+    public void setPublic(boolean isPublic) { this.isPublic = isPublic; }
+
+    public String getThumbnailUrl() { return thumbnailUrl; }
+    public void setThumbnailUrl(String thumbnailUrl) { this.thumbnailUrl = thumbnailUrl; }
 }

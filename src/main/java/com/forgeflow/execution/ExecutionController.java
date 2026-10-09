@@ -38,13 +38,13 @@ public class ExecutionController {
 
     @PostMapping("/build")
     public BuildResult build(@PathVariable Long projectId, Authentication auth) {
-        projects.getById(projectId, (Long) auth.getPrincipal());   // 404 if not yours
+        projects.requireWrite(projectId, (Long) auth.getPrincipal());   // costs compute: EDITOR+
         return sandbox.build(projectId, files.snapshot(projectId));
     }
 
     @PostMapping("/preview")
     public Map<String, Object> preview(@PathVariable Long projectId, Authentication auth) {
-        projects.getById(projectId, (Long) auth.getPrincipal());
+        projects.requireWrite(projectId, (Long) auth.getPrincipal());
 
         markStopped(projectId);
         PreviewHandle handle = sandbox.startPreview(projectId, files.snapshot(projectId));
@@ -68,7 +68,7 @@ public class ExecutionController {
 
     @DeleteMapping("/preview")
     public ResponseEntity<Void> stopPreview(@PathVariable Long projectId, Authentication auth) {
-        projects.getById(projectId, (Long) auth.getPrincipal());
+        projects.requireWrite(projectId, (Long) auth.getPrincipal());
         sandbox.stopPreview(projectId);
         markStopped(projectId);
         return ResponseEntity.noContent().build();

@@ -2,6 +2,7 @@ package com.forgeflow.workspace;
 
 import com.forgeflow.workspace.dto.CreateProjectRequest;
 import com.forgeflow.workspace.dto.ProjectResponse;
+import com.forgeflow.workspace.dto.UpdateProjectRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -41,9 +42,10 @@ public class ProjectController {
                 .body(created);
     }
 
+    /** Spec: "List Projects" - mine and the ones shared with me. */
     @GetMapping
     public List<ProjectResponse> list(Authentication auth) {
-        return projects.listForOwner(callerId(auth));
+        return projects.listAccessible(callerId(auth));
     }
 
     @GetMapping("/{id}")
@@ -53,7 +55,7 @@ public class ProjectController {
 
     @PutMapping("/{id}")
     public ProjectResponse update(@PathVariable Long id,
-                                  @Valid @RequestBody CreateProjectRequest req,
+                                  @Valid @RequestBody UpdateProjectRequest req,
                                   Authentication auth) {
         return projects.update(id, callerId(auth), req);
     }

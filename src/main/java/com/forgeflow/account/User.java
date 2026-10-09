@@ -23,6 +23,9 @@ import java.time.Instant;
 @Table(name = "users")
 public class User {
 
+    /** Accounts created with an email and password, as opposed to via Google. */
+    public static final String LOCAL_PROVIDER = "local";
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -30,16 +33,38 @@ public class User {
     @Column(nullable = false, unique = true)
     private String email;
 
-    @Column(name = "password_hash", nullable = false)
+    /** Null for accounts that sign in through an identity provider. */
+    @Column(name = "password_hash")
     private String passwordHash;
 
     private String name;
+
+    @Column(name = "avatar_url")
+    private String avatarUrl;
+
+    /** "local", or the identity provider that vouches for this account. */
+    @Column(nullable = false)
+    private String provider = LOCAL_PROVIDER;
+
+    /** The provider's own id for this person - stable even if the email changes. */
+    @Column(name = "provider_id")
+    private String providerId;
+
+    @Column(name = "email_verified", nullable = false)
+    private boolean emailVerified;
+
+    /** Set the first time this user starts a checkout; billing owns its meaning. */
+    @Column(name = "stripe_customer_id")
+    private String stripeCustomerId;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
 
     @PrePersist
     void onCreate() {
@@ -51,6 +76,10 @@ public class User {
     @PreUpdate
     void onUpdate() {
         this.updatedAt = Instant.now();
+    }
+
+    public boolean isActive() {
+        return deletedAt == null;
     }
 
     public Long getId() { return id; }
@@ -65,9 +94,27 @@ public class User {
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
 
+    public String getAvatarUrl() { return avatarUrl; }
+    public void setAvatarUrl(String avatarUrl) { this.avatarUrl = avatarUrl; }
+
+    public String getProvider() { return provider; }
+    public void setProvider(String provider) { this.provider = provider; }
+
+    public String getProviderId() { return providerId; }
+    public void setProviderId(String providerId) { this.providerId = providerId; }
+
+    public boolean isEmailVerified() { return emailVerified; }
+    public void setEmailVerified(boolean emailVerified) { this.emailVerified = emailVerified; }
+
+    public String getStripeCustomerId() { return stripeCustomerId; }
+    public void setStripeCustomerId(String stripeCustomerId) { this.stripeCustomerId = stripeCustomerId; }
+
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
 
     public Instant getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
+
+    public Instant getDeletedAt() { return deletedAt; }
+    public void setDeletedAt(Instant deletedAt) { this.deletedAt = deletedAt; }
 }

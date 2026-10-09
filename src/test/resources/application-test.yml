@@ -1,0 +1,8 @@
+# Test profile. Layered ON TOP of src/main/resources/application.yml, never
+# instead of it - a file with the same name here would silently replace the
+# real config on the test classpath.
+forgeflow:
+  sandbox:
+    # No Docker daemon in CI or on this build bench; the in-JVM provider is
+    # what Render runs, so it is also what the tests should exercise.
+    provider: in-process

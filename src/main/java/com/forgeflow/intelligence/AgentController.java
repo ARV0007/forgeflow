@@ -41,7 +41,7 @@ public class AgentController {
                                      @Valid @RequestBody GenerateRequest request,
                                      Authentication auth) {
         Long userId = (Long) auth.getPrincipal();
-        projects.getById(projectId, userId);   // ownership check, throws 404
+        projects.requireWrite(projectId, userId);   // 404 if no access, 403 if VIEWER
         return agent.generate(projectId, userId, request.prompt());
     }
 
@@ -55,7 +55,7 @@ public class AgentController {
         // Ownership runs on the REQUEST thread, before the emitter exists.
         // Do it inside the background task and a forbidden request would get
         // 200 plus an error event instead of a clean 404.
-        projects.getById(projectId, userId);
+        projects.requireWrite(projectId, userId);
 
         SseEmitter emitter = new SseEmitter(180_000L);
 
