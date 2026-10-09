@@ -29,6 +29,8 @@ Transakt is a restaurant. ForgeFlow is a **building site**.
 | Project members | The **keyholder list** — who may walk in, who may build, who may only look |
 | A chat session | The **job book** — every instruction and every reply, in order |
 | The logs stream | The **site radio** — everything happening on site, as it happens |
+| A plan (FREE / PRO) | The **contract tier** — how many sites, how many show homes, how many contractor-hours a day |
+| The Stripe webhook | The **bank's signed letter** — the only proof of payment the office accepts |
 
 The most important thing on this site: **the contractor never touches the
 building directly.** They ask the foreman, and the foreman checks every request
@@ -1041,16 +1043,157 @@ the structural check can't. The log already has the data.
 
 ---
 
-## Chapter 17 — What's next
+## Chapter 17 — The contract tier (plans, quotas and Stripe)
+
+Every model call costs real money, and a free tier with no limits is a free
+tier one enthusiastic user can empty for everybody. The spec asks for FREE and
+PRO plans with limits on projects, AI tokens and previews, paid for with Stripe.
+
+**Plain English.** Clients sign a contract tier. The basic tier gets three
+sites, one show home open at a time, and so many contractor-hours a day. The
+premium tier gets more. Before the foreman starts anything, he checks the
+client's tier against what they're already using. And the office only changes
+someone's tier when a **signed letter from the bank** arrives — not because a
+client walks in waving a receipt.
+
+### Three limits, one check
+
+```java
+entitlements.requireRoomFor(userId, Quota.PROJECTS);
+```
+
+Before creating a project, starting a preview, or running the agent, the code
+asks one question. `Entitlements` looks up the plan (a live subscription, or
+FREE if there isn't one), asks how much is used, and either returns or throws.
+
+The throw becomes **402 Payment Required**. It's the one HTTP status that
+means "this would work if you paid", which is exactly the situation. The body
+carries `quota`, `limit`, `used` and `plan`, so a UI can say "3 of 3 projects"
+without a second request.
+
+### Who counts what
+
+Billing knows the *limits*. It doesn't know how many projects you have —
+that's the workspace module's data. Rather than billing reaching into
+workspace's tables, billing defines a small interface:
+
+```java
+public interface UsageSource {
+    Quota quota();
+    long used(Long userId);
+}
+```
+
+Workspace implements it for projects, execution for previews, and billing
+itself for tokens (from `usage_logs`). Billing collects whichever ones exist.
+The data stays with its owner, and the arrows point the right way.
+
+### The decisions that aren't obvious
+
+- **Tokens are charged to whoever typed the prompt**, not the project owner.
+  Otherwise inviting someone onto your project lets them spend your allowance.
+- **The token limit is soft.** It's checked before a run starts. A run that
+  starts under the limit is allowed to finish, because stopping halfway leaves
+  a half-written app. The overshoot is bounded by one run's own token budget.
+- **Restarting a preview isn't a second preview.** The check is told how many
+  previews this action will free up, so a restart doesn't count against itself.
+- **Shared projects don't count** against your project limit. You didn't make
+  them.
+
+### Stripe: the browser lies, the webhook doesn't
+
+The tempting version: send the user to Stripe, and when Stripe sends them back
+to `/?billing=success`, upgrade them. But that URL is just a URL — anyone can
+type it. **Nothing the browser does grants a plan.**
+
+The plan is granted when Stripe calls our webhook, server to server, with a
+`Stripe-Signature` header:
+
+```
+t=1700000000,v1=5257a869e7ec...
+```
+
+That's an HMAC-SHA256 of `"<t>.<the exact request body>"` using a secret only
+Stripe and we know. We recompute it and compare. Three details matter:
+
+1. **Raw bytes.** The signature covers the exact bytes Stripe sent. Parse the
+   JSON and re-serialise it, and one reordered key breaks a genuine event.
+2. **Constant-time comparison.** An ordinary comparison stops at the first
+   wrong byte, so how long it takes leaks how much of a forged signature was
+   right. `MessageDigest.isEqual` always takes the same time.
+3. **A five-minute window** on the *signed* timestamp. A captured request
+   replayed tomorrow fails — and the attacker can't just change `t`, because
+   `t` is part of what's signed.
+
+### At least once, in any order
+
+Stripe promises every event arrives **at least** once — so sometimes twice —
+and in **no particular** order. Three defences:
+
+- **Event ids are remembered** (`stripe_events`), in the same transaction as
+  the change. If the change fails, the id rolls back too, and Stripe's retry
+  gets processed. Save the id first and fail afterwards, and the retry would
+  be thrown away as a duplicate — a customer who paid and got nothing.
+- **Upsert, never insert-then-update.** `subscription.created` can arrive before
+  `checkout.session.completed`. Each event carries the full current state, and
+  whichever comes first creates the row.
+- **Newest event wins.** Each subscription remembers when the last applied
+  event was created. A late, older "active" arriving after "deleted" is
+  ignored, instead of quietly giving the plan back.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why 402 and not 403 or 429?**
+403 means "you may never do this". 429 means "slow down and try again soon".
+402 means "this would work on a plan that allows it". Only one of those tells
+the client the right thing to do next.
+
+**Q: A user on PRO cancels. When do they lose PRO?**
+At the end of the period they paid for. Cancelling sets
+`cancel_at_period_end`; Stripe sends `customer.subscription.deleted` when the
+period actually ends, and that's when they drop to FREE.
+
+**Q: A card renewal fails. Does the user lose PRO immediately?**
+No. Stripe marks it `past_due` and retries over the next few days; PAST_DUE
+still counts as live. Taking the plan away the moment one charge bounces
+punishes people for an expired card.
+
+**Q: The cancellation webhook never arrives. Is the user on PRO forever?**
+No. A live subscription more than three days past its period end isn't
+honoured. Three days, not zero, because renewals also arrive by webhook and a
+slow one mustn't downgrade a paying customer.
+
+**Q: Two "create project" requests arrive at the same instant from a user with
+2 of 3 projects. What happens?**
+Both can pass the check and both get created — 4 of 3. It's a check-then-act
+race. Accepted on purpose: one extra project costs nothing, and closing it
+properly means a per-user lock on every create. If the limit were money, the
+answer would be different.
+
+**Q: Why does the MCP service account have its own plan?**
+It acts for everyone who calls `/mcp`, so FREE's three projects would last an
+afternoon. INTERNAL gives it more room — but it's still capped, because `/mcp`
+has no login, and an endpoint with no login must never be able to spend
+unlimited model tokens.
+
+**Q: Why no Stripe SDK?**
+The whole integration is one form POST and one HMAC check. The SDK would hide
+exactly the two things worth understanding — and this build can't download new
+libraries anyway.
+
+</details>
+
+---
+
+## Chapter 18 — What's next
 
 Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
 the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
 roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
-(Chapter 16). What's left, in order:
+(Chapter 16), and **plans, quotas and Stripe** (Chapter 17). What's left, in
+order:
 
-- **Plans and quotas** — FREE and PRO: how many projects, how many tokens a
-  day, how many live previews. Stripe checkout to upgrade, and a signed webhook
-  so only Stripe can say "this person paid".
 - **Rate limiting** — a token bucket in Redis, so one client can't hammer the
   model on everyone else's quota.
 - **RAG** — once a project has dozens of files, retrieve only the relevant ones
@@ -1064,9 +1207,10 @@ roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
 <summary><b>Counter-questions</b></summary>
 
 **Q: If you only had time for one of these, which?**
-Quotas. Right now the only thing stopping one user from spending the whole
-model allowance is the free tier's own limit, and that hits *everyone*. Quotas
-make the cost per user a decision instead of an accident.
+Rate limiting. Quotas cap how much someone can spend in a day, but not how
+fast — a script can still fire a hundred requests in a second and hit the
+model provider's own limit for everyone. Quotas were the previous answer to
+this question; they're built now.
 
 **Q: Why is RAG still not first, when it's the most talked-about technique?**
 Because it only helps when a project is too big to send whole — past about fifteen

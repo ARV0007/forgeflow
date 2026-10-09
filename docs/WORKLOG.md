@@ -566,6 +566,43 @@ push instead of by hand.
 `ProjectFileService` is now the only code that touches file contents, which
 pays off two open items at once.
 
+### Phase 4 — plans, quotas, Stripe
+
+FREE and PRO, enforced in three places: projects owned, previews running, AI
+tokens per day. Hitting a limit is a **402 Payment Required** with the numbers
+in the body (`quota`, `limit`, `used`, `plan`), so a UI can say "3 of 3
+projects — upgrade?" without guessing.
+
+Two decisions worth remembering:
+
+- **Who pays for tokens in a shared project?** Whoever typed the prompt. If the
+  owner paid, inviting someone would let them spend your allowance.
+- **The token limit is soft.** It's checked before a run, and a run that starts
+  under the limit finishes. Cutting a generation off halfway leaves a
+  half-written app, which is worse than going a little over.
+
+Stripe without the SDK: Checkout is one form-encoded POST, and the webhook
+signature is twenty lines of HMAC. **The plan is only ever granted by the
+signed webhook** — never by the browser landing on the success URL, which
+anyone could visit by hand.
+
+**Mistake & fix (mine, caught before commit).** The usage logger first ran in
+its own transaction (`REQUIRES_NEW`), so a failed run's tokens would still be
+recorded. But a new project's usage row has a foreign key to the project row,
+which isn't committed yet — the second connection would wait on the first,
+which is waiting on the second. A deadlock Postgres can't detect, because both
+halves are the same app. It now joins the caller's transaction.
+
+**Mistake & fix (caught by a test).** Webhook events can arrive out of order,
+so each subscription remembers the newest event it applied and ignores older
+ones. My first version used "now" when an event had no timestamp — which made
+that event look newer than everything after it. A test with a missing
+timestamp went red; an untimestamped event now just doesn't take part in
+ordering.
+
+81 tests. Sabotage-checked: skipping the signature check, the event ordering,
+and the preview-restart allowance each turn the suite red.
+
 **Tests:** 58, every one against a real Postgres. Before trusting a new suite I
 break the behaviour on purpose and check it goes red — dropping `updated_by`
 and breaking live log delivery each failed it, as they should.
@@ -584,17 +621,19 @@ and breaking live log delivery each failed it, as they should.
   (Render runs one), wrong the moment there are two.
 - The live Gemini path hasn't been re-verified on Render since the redesign
   started; the tests use a scripted model.
+- Real Stripe is built and tested against a local stub, but never run against
+  Stripe itself — that needs Aman's test-mode keys (notes.md §14).
+- Two project creates racing can both pass the quota check and land one over.
+  Accepted; closing it needs a per-user lock on every create.
 
 ## Still to build (redesign, in order)
 
-1. Plans and quotas — FREE / PRO, projects, tokens per day, previews; Stripe
-   checkout and a signed webhook
-2. Rate limiting on Redis
-3. RAG over the project's own code, on pgvector
-4. A `code.generated` event (the Kafka seam), request tracing, an OpenAPI page
-5. A chat-shaped workbench UI
-6. `edit_file` + prompt caching
-7. README
+1. Rate limiting on Redis
+2. RAG over the project's own code, on pgvector
+3. A `code.generated` event (the Kafka seam), request tracing, an OpenAPI page
+4. A chat-shaped workbench UI (with the billing page)
+5. `edit_file` + prompt caching
+6. README
 
 ## Done since the original plan
 
@@ -605,3 +644,4 @@ and breaking live log delivery each failed it, as they should.
 - MCP server — ForgeFlow drivable by another agent
 - CI — every push runs the suite against a real Postgres (Day 10)
 - Members and roles, chat memory, zip download, logs stream (Day 10)
+- Plans, quotas, usage log, Stripe checkout and webhook (Day 10)

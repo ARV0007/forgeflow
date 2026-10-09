@@ -407,8 +407,8 @@ others' resources; identical login failures; `ownerId` never read from requests;
 - The timeout includes time spent waiting out rate limits
 - `/mcp` unauthenticated (runs as a service account, with real access checks)
 - Session locks and preview logs are per-instance memory
-- Not built yet from the spec: plans/quotas/Stripe, Redis rate limiting, RAG,
-  tracing, OpenAPI page — see §17.4
+- Not built yet from the spec: Redis rate limiting, RAG, tracing, OpenAPI page
+- Real Stripe untested against Stripe itself (stub-tested only)
 
 Closed since 0.2: the module-boundary exceptions (`AgentTools`,
 `McpToolExecutor`), the unmapped `SandboxException`, previews never expiring,
@@ -434,7 +434,7 @@ the unused `chat_*` tables, no tests, no CI, not deployed.
 | R1 | Members, roles, `/me` | ✅ 9 Oct |
 | R2 | Chat sessions + memory | ✅ 9 Oct |
 | R3 | Zip, Get Preview, logs stream, authorship | ✅ 9 Oct |
-| R4 | Plans, quotas, Stripe | ⬜ |
+| R4 | Plans, quotas, Stripe | ✅ 9 Oct |
 | R5 | Redis rate limiting | ⬜ |
 | R6 | RAG on pgvector | ⬜ |
 | R7 | Events, tracing, OpenAPI | ⬜ |
@@ -558,6 +558,7 @@ class as its public face, and other modules may only call that:
 | chat | `chat` | `ChatService` |
 | intelligence | `intelligence` | `AgentService` |
 | execution | `execution` | `ExecutionService`, `PreviewLogs` |
+| billing | `billing` | `Entitlements`, `UsageMeter`, `BillingService` |
 | (MCP gateway) | `mcp` | `McpController` |
 
 Why not split them now: one person, one free-tier host, and a split adds
@@ -577,7 +578,10 @@ split mechanical — the method calls become HTTP calls and nothing else changes
 | PREVIEW | `previews` | status `RUNNING` / `STOPPED` / `EXPIRED` |
 | CHAT_SESSION | `chat_sessions` | soft delete (V3) |
 | CHAT_MESSAGE | `chat_messages` | role, `tool_calls` jsonb, `tool_call_id`, `tokens_used` + `status`, `run_id`, `author_id` (V3) |
-| PLAN, SUBSCRIPTION, USAGE_LOG | — | next (R4) |
+| PLAN | `plans` | FREE / PRO / INTERNAL (not purchasable); limits + `features` jsonb (V5) |
+| SUBSCRIPTION | `subscriptions` | one live row per user (partial unique index); `provider_event_at` for ordering |
+| USAGE_LOG | `usage_logs` | append-only: AI_TOKENS, PROJECT_CREATED, PREVIEW_STARTED |
+| — | `stripe_events` | webhook event ids already processed |
 
 ### 17.3 Access: one question, asked everywhere
 
@@ -609,6 +613,10 @@ A relationship without the permission → **403**.
 | Download as zip | `GET /api/v1/projects/{id}/files/download` |
 | Get preview | `GET /api/v1/projects/{id}/preview` (`POST` start, `DELETE` stop) |
 | Logs stream | `GET /api/v1/projects/{id}/preview/logs/stream` (SSE), `…/preview/logs` (JSON) |
+| Plans (public) | `GET /api/v1/billing/plans` |
+| My plan + usage | `GET /api/v1/billing/me` |
+| Upgrade / cancel | `POST /api/v1/billing/checkout`, `POST /api/v1/billing/cancel` |
+| Stripe webhook | `POST /api/v1/billing/webhook/stripe` (signature, no JWT) |
 
 ### 17.5 The logs stream
 
@@ -641,4 +649,48 @@ number as the event id so a reconnect resumes rather than replays.
 | MinIO | Postgres TEXT | small text files; `ProjectFileService` is the seam |
 | Kafka | in-process event (R7) | one consumer, one process; the event class is the seam |
 | Qdrant | pgvector (R6) | already in the database; no second store to keep consistent |
+
+### 17.7 Billing
+
+```
+                    ┌──────────── Entitlements.requireRoomFor(user, quota) ────────────┐
+                    │  limit  ← plan in force (live subscription, else FREE)           │
+                    │  used   ← UsageSource for that quota                             │
+                    │  used ≥ limit → 402                                              │
+                    └──────────────────────────────────────────────────────────────────┘
+    UsageSource:  PROJECTS → workspace   PREVIEWS → execution   AI_TOKENS_PER_DAY → billing (usage_logs)
+```
+
+Billing owns the limits; the module that owns a thing owns its count. The
+dependency points from workspace and execution *to* billing's interface, never
+from billing into their tables.
+
+| Checked at | Quota |
+|---|---|
+| `ProjectService.create` | PROJECTS |
+| `ExecutionService.startPreview` | PREVIEWS (minus this project's own running preview) |
+| `AgentService.generate`, `ChatService.begin/beginRetry`, the generate stream | AI_TOKENS_PER_DAY |
+
+**Payment flow (Stripe):**
+
+```
+POST /billing/checkout ──► Stripe Checkout session (form POST, metadata: user_id, plan)
+browser pays on stripe.com ──► returns to /?billing=success   (grants NOTHING)
+Stripe ──► POST /billing/webhook/stripe  (signed)
+              verify signature ─► INSERT event id (dedupe) ─► upsert subscription
+              all one transaction: a failure rolls the event id back and Stripe retries
+```
+
+Rules the webhook follows:
+
+- **Upsert by provider subscription id**, never insert-then-update —
+  `subscription.created` can beat `checkout.session.completed`.
+- **Newest event wins.** Each subscription stores the `created` time of the
+  last event applied; anything older is ignored.
+- **PAST_DUE keeps the plan** while Stripe retries the card; CANCELED (and
+  incomplete_expired, paused) drops to FREE.
+- **A live row 3 days past its period end isn't honoured** — a missed
+  cancellation webhook must not grant the plan forever.
+- One live subscription per user, enforced by a partial unique index; others
+  are retired (and flushed) before a new one is saved.
 

@@ -528,3 +528,59 @@ needed.
 | Two replies at once in one chat session | 409 |
 | Retry when the last reply succeeded | 409 |
 | Preview with no files | 409 |
+
+---
+
+## 14. Billing: running it for real
+
+Billing is **off** unless you switch it on. With `FORGEFLOW_BILLING_PROVIDER`
+unset, quotas are still enforced (everyone is on FREE) but checkout answers
+503.
+
+### Locally, without Stripe
+
+```bash
+FORGEFLOW_BILLING_PROVIDER=fake ./mvnw spring-boot:run
+```
+
+Checkout then returns a link to a test page with a "Complete test payment"
+button. It runs the same activation code a real webhook does. **Never set
+`fake` on Render** — anyone could upgrade for free.
+
+### With Stripe (test mode)
+
+1. In the Stripe dashboard (test mode): create a product "ForgeFlow Pro" with a
+   monthly recurring price. Copy the price id (`price_...`).
+2. Copy the test secret key (`sk_test_...`).
+3. Add a webhook endpoint: `https://<your-app>/api/v1/billing/webhook/stripe`,
+   with events `checkout.session.completed`, `customer.subscription.created`,
+   `customer.subscription.updated`, `customer.subscription.deleted`. Copy its
+   signing secret (`whsec_...`).
+4. Set on Render:
+
+| Variable | Value |
+|---|---|
+| `FORGEFLOW_BILLING_PROVIDER` | `stripe` |
+| `STRIPE_SECRET_KEY` | `sk_test_...` |
+| `STRIPE_PRO_PRICE_ID` | `price_...` |
+| `STRIPE_WEBHOOK_SECRET` | `whsec_...` |
+| `APP_BASE_URL` | `https://forgeflow-7m08.onrender.com` |
+
+Test card: `4242 4242 4242 4242`, any future date, any CVC.
+
+For local webhooks, the Stripe CLI forwards them and prints its own secret:
+`stripe listen --forward-to localhost:8081/api/v1/billing/webhook/stripe`.
+
+### Gotchas
+
+- **The webhook must read the raw body** (`@RequestBody byte[]`). Parse it into
+  an object and re-serialise, and the bytes change — the signature then fails
+  on genuine events.
+- Stripe moved `current_period_end` from the subscription onto its items in API
+  version 2025-03-31. `StripeWebhooks.periodEnd` reads both.
+- Hibernate runs INSERTs before UPDATEs when it flushes. Retiring an old live
+  subscription and saving a new one in the same flush would trip the
+  one-live-per-user index — hence the explicit `flush()` in between.
+- `Propagation.REQUIRES_NEW` plus a foreign key to a row the outer transaction
+  just inserted = a deadlock the database can't see. (WORKLOG Day 10.)
+
