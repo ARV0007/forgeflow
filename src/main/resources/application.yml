@@ -61,6 +61,10 @@ forgeflow:
     mcp-per-minute: 30       # /mcp, per IP
     invites-per-hour: 20     # adding members, per user
     api-per-minute: 300      # everything else under /api, per user
+  tracing:
+    # Blank = trace ids in logs and headers only. Set to e.g. http://localhost:9411
+    # (docker run -p 9411:9411 openzipkin/zipkin) to see every request as a timeline.
+    zipkin-url: ${ZIPKIN_URL:}
   chat:
     # Spec: "past 10 chat messages (session history)" - the model's memory window.
     memory-messages: 10
@@ -90,3 +94,7 @@ forgeflow:
 logging:
   level:
     com.forgeflow: DEBUG
+  pattern:
+    # Every line carries its request's trace id (blank outside a request), so
+    # grep <traceId> pulls one user action out of an interleaved log.
+    level: "%5p [%X{traceId:-}]"

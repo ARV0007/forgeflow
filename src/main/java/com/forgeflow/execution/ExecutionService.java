@@ -5,6 +5,7 @@ import com.forgeflow.billing.Quota;
 import com.forgeflow.billing.UsageLog;
 import com.forgeflow.billing.UsageMeter;
 import com.forgeflow.execution.dto.PreviewResponse;
+import com.forgeflow.shared.tracing.Tracer;
 import com.forgeflow.workspace.ProjectFileService;
 import org.springframework.stereotype.Service;
 
@@ -36,23 +37,25 @@ public class ExecutionService {
     private final PreviewLogs logs;
     private final Entitlements entitlements;
     private final UsageMeter usage;
+    private final Tracer tracer;
 
     public ExecutionService(SandboxProvider sandbox, ProjectFileService files,
                             PreviewRepository previews, PreviewLogs logs,
-                            Entitlements entitlements, UsageMeter usage) {
+                            Entitlements entitlements, UsageMeter usage, Tracer tracer) {
         this.sandbox = sandbox;
         this.files = files;
         this.previews = previews;
         this.logs = logs;
         this.entitlements = entitlements;
         this.usage = usage;
+        this.tracer = tracer;
     }
 
     public BuildResult build(Long projectId) {
         Map<String, String> snapshot = files.snapshot(projectId);
         logs.info(projectId, "build", "Build started - " + snapshot.size() + " file(s)");
 
-        BuildResult result = sandbox.build(projectId, snapshot);
+        BuildResult result = tracer.inSpan("sandbox.build", () -> sandbox.build(projectId, snapshot));
 
         if (result.passed()) {
             logs.info(projectId, "build", "Build passed in " + result.durationMs() + " ms - " + result.output());

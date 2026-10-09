@@ -73,6 +73,10 @@ public class GenerationRun {
     @Column(name = "error_message", columnDefinition = "text")
     private String errorMessage;
 
+    /** The request trace that started this run (V7). */
+    @Column(name = "trace_id")
+    private String traceId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -128,6 +132,9 @@ public class GenerationRun {
 
     public Long getDurationMs() { return durationMs; }
     public void setDurationMs(Long durationMs) { this.durationMs = durationMs; }
+
+    public String getTraceId() { return traceId; }
+    public void setTraceId(String traceId) { this.traceId = traceId; }
 
     public String getErrorMessage() { return errorMessage; }
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }

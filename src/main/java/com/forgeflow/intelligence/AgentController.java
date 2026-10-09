@@ -8,6 +8,7 @@ import com.forgeflow.workspace.ProjectService;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.forgeflow.shared.tracing.Tracer;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -65,7 +66,7 @@ public class AgentController {
 
         SseEmitter emitter = new SseEmitter(180_000L);
 
-        executor.submit(() -> {
+        executor.submit(Tracer.wrap(() -> {
             try {
                 agent.generate(projectId, userId, request.prompt(), event -> {
                     try {
@@ -81,7 +82,7 @@ public class AgentController {
                 log.debug("stream for project {} ended early: {}", projectId, e.toString());
                 emitter.completeWithError(e);
             }
-        });
+        }));
 
         return emitter;
     }

@@ -8,6 +8,7 @@ import com.forgeflow.execution.BuildResult;
 import com.forgeflow.execution.ExecutionService;
 import com.forgeflow.intelligence.retrieval.CodeIndex;
 import org.springframework.context.ApplicationEventPublisher;
+import com.forgeflow.shared.tracing.Tracer;
 import com.forgeflow.intelligence.dto.GenerateResponse;
 import com.forgeflow.shared.llm.LlmClient;
 import com.forgeflow.shared.llm.LlmMessage;
@@ -51,6 +52,7 @@ public class AgentService {
     private final UsageMeter usage;
     private final CodeIndex index;
     private final ApplicationEventPublisher events;
+    private final Tracer tracer;
 
     private final int maxToolCalls;
     private final long timeoutSeconds;
@@ -65,6 +67,7 @@ public class AgentService {
                         UsageMeter usage,
                         CodeIndex index,
                         ApplicationEventPublisher events,
+                        Tracer tracer,
                         @Value("${forgeflow.agent.max-tool-calls}") int maxToolCalls,
                         @Value("${forgeflow.agent.timeout-seconds}") long timeoutSeconds,
                         @Value("${forgeflow.agent.max-input-tokens}") int maxInputTokens,
@@ -77,6 +80,7 @@ public class AgentService {
         this.usage = usage;
         this.index = index;
         this.events = events;
+        this.tracer = tracer;
         this.maxToolCalls = maxToolCalls;
         this.timeoutSeconds = timeoutSeconds;
         this.maxInputTokens = maxInputTokens;
@@ -104,6 +108,25 @@ public class AgentService {
     public GenerateResponse generate(Long projectId, Long userId, String prompt,
                                      List<LlmMessage> priorTurns, Long sessionId,
                                      Consumer<AgentEvent> listener) {
+        // One span for the whole run; each model call and build inside it is
+        // a child, so a slow run shows exactly which step was slow.
+        try (Tracer.Span span = tracer.start("agent.run")) {
+            span.tag("project.id", projectId).tag("session.id", sessionId);
+            try {
+                GenerateResponse r = run(projectId, userId, prompt, priorTurns, sessionId, listener);
+                span.tag("run.id", r.runId()).tag("run.status", r.status()).tag("run.stop_reason", r.stopReason())
+                    .tag("run.tokens", r.totalTokens()).tag("run.repair_rounds", r.repairRounds());
+                return r;
+            } catch (RuntimeException e) {
+                span.error(e);
+                throw e;
+            }
+        }
+    }
+
+    private GenerateResponse run(Long projectId, Long userId, String prompt,
+                                 List<LlmMessage> priorTurns, Long sessionId,
+                                 Consumer<AgentEvent> listener) {
 
         // Before anything is spent. A soft limit: a run that starts under the
         // daily allowance is allowed to finish, so the overshoot is bounded by
@@ -119,6 +142,7 @@ public class AgentService {
         run.setUserId(userId);
         run.setStatus("RUNNING");
         run.setModel(llm.modelName());
+        run.setTraceId(Tracer.currentTraceId());
         run = runs.save(run);
 
         List<LlmMessage> history = new ArrayList<>(priorTurns == null ? List.of() : priorTurns);
@@ -165,7 +189,17 @@ public class AgentService {
                 round++;
                 emit(listener, AgentEvent.thinking(round, promptTokens));
 
-                LlmResponse response = llm.chat(AgentPrompt.SYSTEM, history, tools.specs());
+                LlmResponse response;
+                try (Tracer.Span call = tracer.start("llm.chat")) {
+                    call.tag("llm.model", llm.modelName()).tag("agent.round", round);
+                    try {
+                        response = llm.chat(AgentPrompt.SYSTEM, history, tools.specs());
+                    } catch (RuntimeException e) {
+                        call.error(e);
+                        throw e;
+                    }
+                    call.tag("llm.total_tokens", response.totalTokens());
+                }
 
                 promptTokens += response.promptTokens();
                 completionTokens += response.completionTokens();

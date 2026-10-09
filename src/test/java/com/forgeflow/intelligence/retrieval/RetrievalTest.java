@@ -5,6 +5,8 @@ import com.forgeflow.shared.llm.LlmException;
 import com.forgeflow.shared.llm.LlmMessage;
 import com.forgeflow.shared.llm.ToolCall;
 import com.forgeflow.shared.llm.ToolResult;
+import com.forgeflow.shared.tracing.SpanReporter;
+import com.forgeflow.shared.tracing.Tracer;
 import com.forgeflow.support.ApiTestSupport;
 import com.forgeflow.workspace.ProjectFileService;
 import org.junit.jupiter.api.Test;
@@ -182,7 +184,7 @@ class RetrievalTest extends ApiTestSupport {
                 return "broken";
             }
         };
-        CodeIndex degraded = new CodeIndex(files, broken, jdbc, tx, 15, 8);
+        CodeIndex degraded = new CodeIndex(files, broken, jdbc, tx, new Tracer(SpanReporter.NOOP), 15, 8);
 
         List<CodeIndex.SearchHit> hits = degraded.search(id, "renderTodos", 5);
         assertThat(hits).isNotEmpty();

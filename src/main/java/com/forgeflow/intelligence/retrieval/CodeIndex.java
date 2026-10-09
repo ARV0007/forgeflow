@@ -1,6 +1,7 @@
 package com.forgeflow.intelligence.retrieval;
 
 import com.forgeflow.shared.llm.Embedder;
+import com.forgeflow.shared.tracing.Tracer;
 import com.forgeflow.workspace.ProjectFileService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,10 +63,13 @@ public class CodeIndex {
     private final int wholeProjectThreshold;
     private final int topK;
     private final Map<Long, ReentrantLock> locks = new ConcurrentHashMap<>();
+    private final Tracer tracer;
 
     public CodeIndex(ProjectFileService files, Embedder embedder, JdbcTemplate jdbc, TransactionTemplate tx,
+                     Tracer tracer,
                      @Value("${forgeflow.retrieval.whole-project-threshold:15}") int wholeProjectThreshold,
                      @Value("${forgeflow.retrieval.top-k:8}") int topK) {
+        this.tracer = tracer;
         this.files = files;
         this.embedder = embedder;
         this.jdbc = jdbc;
@@ -87,8 +91,11 @@ public class CodeIndex {
     public IndexReport ensureIndexed(Long projectId) {
         ReentrantLock lock = locks.computeIfAbsent(projectId, k -> new ReentrantLock());
         lock.lock();
-        try {
-            return reindex(projectId);
+        try (Tracer.Span span = tracer.start("rag.index")) {
+            IndexReport r = reindex(projectId);
+            span.tag("project.id", projectId).tag("rag.files_indexed", r.filesIndexed())
+                .tag("rag.chunks_written", r.chunksWritten());
+            return r;
         } finally {
             lock.unlock();
         }

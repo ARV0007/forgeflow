@@ -1,6 +1,7 @@
 package com.forgeflow.intelligence.retrieval;
 
 import com.forgeflow.intelligence.CodeGenerated;
+import com.forgeflow.shared.tracing.Tracer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -49,7 +50,7 @@ public class CodeIndexer {
         if ("sync".equals(mode)) {
             job.run();
         } else {
-            executor.submit(job);
+            executor.submit(Tracer.wrap(job));       // logs from the job keep the run's trace id
         }
     }
 }
