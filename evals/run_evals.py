@@ -33,18 +33,27 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MIN_FILE_BYTES = 20          # below this, a file is a stub, not content
 
 
-def call(base, path, method="GET", body=None, token=None, timeout=420):
-    req = urllib.request.Request(base + path, method=method)
-    req.add_header("Content-Type", "application/json")
-    if token:
-        req.add_header("Authorization", "Bearer " + token)
+def call(base, path, method="GET", body=None, token=None, timeout=420, retries=3):
     data = json.dumps(body).encode() if body is not None else None
-    try:
-        with urllib.request.urlopen(req, data, timeout=timeout) as r:
-            raw = r.read().decode()
-            return json.loads(raw) if raw else None
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"{method} {path} -> {e.code}: {e.read().decode()[:300]}")
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(base + path, method=method)
+        req.add_header("Content-Type", "application/json")
+        if token:
+            req.add_header("Authorization", "Bearer " + token)
+        try:
+            with urllib.request.urlopen(req, data, timeout=timeout) as r:
+                raw = r.read().decode()
+                return json.loads(raw) if raw else None
+        except urllib.error.HTTPError as e:
+            # ForgeFlow rate-limits (429 + Retry-After). An eval is a polite
+            # client: wait as told and try again, rather than scoring the
+            # case as a failure of the agent.
+            if e.code == 429 and attempt < retries:
+                wait = int(e.headers.get("Retry-After") or 5)
+                print(f"(rate limited, waiting {wait}s) ", end="", flush=True)
+                time.sleep(wait)
+                continue
+            raise RuntimeError(f"{method} {path} -> {e.code}: {e.read().decode()[:300]}")
 
 
 def sign_in(base, email, password):
@@ -106,6 +115,36 @@ def main():
 
     results, started = [], time.time()
 
+    # The results file is created now and rewritten after EVERY case. It used
+    # to be written once, at the end - so a Ctrl+C, a crash or a closed laptop
+    # mid-sweep lost every completed case, exactly when the record mattered.
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out_dir = os.path.join(HERE, "results")
+    os.makedirs(out_dir, exist_ok=True)
+    out = os.path.join(out_dir, f"run-{stamp}.json")
+
+    def save(finished):
+        ok_now = sum(1 for r in results if r.get("passed"))
+        tmp = out + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"base": args.base, "ranAt": stamp, "finished": finished,
+                       "casesPlanned": len(cases), "casesRun": len(results),
+                       "passRate": 100.0 * ok_now / len(results) if results else 0.0,
+                       "results": results}, f, indent=2)
+        os.replace(tmp, out)      # atomic: a crash mid-write can't leave half a file
+
+    try:
+        run_cases(args, cases, results, save)
+    except KeyboardInterrupt:
+        print("\n\ninterrupted - keeping the cases that finished")
+    save(finished=len(results) == len(cases))
+    report(results, started)
+    print(f"\nwritten to {os.path.relpath(out, os.getcwd())}")
+    sys.exit(0 if results and all(r.get("passed") for r in results) and len(results) == len(cases) else 1)
+
+
+def run_cases(args, cases, results, save):
+    token = None
     for i, case in enumerate(cases, 1):
         label = f"[{i}/{len(cases)}] {case['id']:<16}"
         print(label, end=" ", flush=True)
@@ -146,10 +185,12 @@ def main():
             print(f"ERROR  {e}")
             results.append({"id": case["id"], "passed": False, "error": str(e)})
 
+        save(finished=False)
         if i < len(cases):
             time.sleep(args.pause)
 
-    # ---- report ----
+
+def report(results, started):
     ok = [r for r in results if r.get("passed")]
     done = [r for r in results if "error" not in r]
     rate = 100.0 * len(ok) / len(results) if results else 0.0
@@ -169,16 +210,6 @@ def main():
         n = sum(1 for r in done if r.get("checks", {}).get(name))
         print(f"  {name:<17}{n}/{len(done)}")
     print("=" * 62)
-
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out_dir = os.path.join(HERE, "results")
-    os.makedirs(out_dir, exist_ok=True)
-    out = os.path.join(out_dir, f"run-{stamp}.json")
-    json.dump({"base": args.base, "ranAt": stamp, "passRate": rate,
-               "results": results}, open(out, "w"), indent=2)
-    print(f"\nwritten to {os.path.relpath(out, os.getcwd())}")
-
-    sys.exit(0 if len(ok) == len(results) else 1)
 
 
 if __name__ == "__main__":
