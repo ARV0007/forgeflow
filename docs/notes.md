@@ -722,3 +722,43 @@ ignored (new trace), never an error.
 - `ModuleBoundaryTest` failing on a new import usually means the code wants
   a method on the other module's *service*, not its repository.
 
+---
+
+## 18. The workbench and the browser walk
+
+### Running the UI with no API key
+
+```bash
+FORGEFLOW_LLM_PROVIDER=demo FORGEFLOW_BILLING_PROVIDER=fake \
+FORGEFLOW_EMBEDDER=hashing FORGEFLOW_SANDBOX_PROVIDER=in-process \
+./mvnw spring-boot:run
+```
+
+Every feature works; the "model" just writes the same starter page each time.
+
+### The browser walk
+
+```bash
+pip install playwright && playwright install chromium
+python3 scripts/ui-walk.py          # screenshots in ui-walk-shots/
+```
+
+It prints `UI walk passed`, or the first step that failed and why.
+
+### Gotchas
+
+- **SSE + stateless security:** a finished `SseEmitter` re-dispatches the
+  request (`DispatcherType.ASYNC`) through every filter. A `OncePerRequestFilter`
+  JWT filter skips that pass, so Security sees an anonymous request. Permit
+  `ASYNC` dispatches. MockMvc never does this dispatch — only a real server
+  test shows it.
+- `EventSource` can't send an `Authorization` header. Read SSE off `fetch()` and
+  split frames on blank lines.
+- A link can't carry a JWT either; downloads are fetched as a blob and saved
+  through an object URL.
+- In a `<pre>`, block-level line spans joined with `\n` render double-spaced.
+- `GET /preview` answers 404 when nothing runs (by design); the browser
+  console logs that as a failed resource.
+- Redis writes `dump.rdb` into the directory it was started from. Start it
+  from somewhere else, or `redis-cli CONFIG SET dir /tmp`.
+

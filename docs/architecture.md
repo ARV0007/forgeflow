@@ -437,7 +437,7 @@ the unused `chat_*` tables, no tests, no CI, not deployed.
 | R5 | Redis rate limiting | ✅ 9 Oct |
 | R6 | RAG on pgvector | ✅ 9 Oct |
 | R7 | Events, tracing, OpenAPI | ✅ 9 Oct |
-| R8 | Chat-shaped UI | ⬜ |
+| R8 | Chat-shaped UI | ✅ 9 Oct |
 
 ---
 
@@ -784,4 +784,30 @@ request ─► TracingFilter (first filter of all)          traceparent in? cont
 `/openapi.yaml` (OpenAPI 3.1, hand-written) and `/docs.html` (Swagger UI from a
 pinned CDN build). `OpenApiContractTest` requires the documented operations
 under `/api` and `/mcp` to equal the routes Spring serves.
+
+### 17.12 The workbench
+
+Plain HTML/CSS/JS in `src/main/resources/static`, served by the same jar.
+Every call it makes is in the OpenAPI document.
+
+| Area | Calls |
+|---|---|
+| Chat | sessions list/create; history; `messages/stream` and `retry/stream` (SSE read off `fetch()`, since `EventSource` can't send a JWT) |
+| Preview | `GET/POST/DELETE /preview`; the iframe is the sandboxed `/p/{token}/` link |
+| Logs | `preview/logs/stream`, reconnecting with `Last-Event-ID` and backoff |
+| Code / Search | files, content, `search`; a hit opens the file with its lines highlighted |
+| Download | `files/download` fetched as a blob (a plain link can't carry the JWT) |
+| Share / Plan | members CRUD (owner-only controls); `billing/me`, `plans`, `checkout`, `cancel` |
+
+Roles shape the UI: a VIEWER sees everything with the composer and the
+build/preview controls disabled. 402 and 429 become plain-English messages.
+
+**Async dispatch and security.** An SSE response ends with an ASYNC
+re-dispatch through the filter chain; `SecurityConfig` permits
+`DispatcherType.ASYNC`, because the request was authorised on the way in.
+`RealServerStreamTest` (real Tomcat, random port) guards it — MockMvc can't.
+
+**Demo model.** `FORGEFLOW_LLM_PROVIDER=demo` swaps in `DemoLlmClient`, which
+writes a fixed page through the real tools and build gate. Used by
+`scripts/ui-walk.py`.
 

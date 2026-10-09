@@ -1481,25 +1481,97 @@ they go stale.
 
 ---
 
-## Chapter 21 — What's next
+## Chapter 21 — Walking the site (the browser test that found a real bug)
+
+Unit tests check the parts. A walk-through checks what a person actually
+experiences. ForgeFlow now has both, and the walk-through found something
+122 tests had missed.
+
+**Plain English.** Every inspection on site had passed. Then someone walked
+the show home as a buyer would — and the front door jammed on the way out.
+Nothing inside was wrong; the problem was in the last step, which no
+inspector had been asked to check.
+
+### What the walk-through does
+
+`scripts/ui-walk.py` drives a real Chrome (headless) through the product the
+way a person would: sign up, ask for an app, watch the reply stream in, reload
+the page, open the code, start the preview, click a button *inside the
+generated app*, check that click shows up in the Logs tab, search, download
+the zip, upgrade, share with a second account, check that account can't edit.
+
+To run it without an API key, ForgeFlow has a **demo model**: it writes the
+same small page for any request, but through the real pipeline, so the walk
+tests the real system and not a mock of it.
+
+### The bug
+
+The very first run failed: the reply never appeared. The server said the run
+had succeeded — then logged `AccessDenied`.
+
+When a streamed response (SSE) finishes, the web server sends the request back
+through every filter one last time. That last pass is called an **async
+dispatch**. ForgeFlow's JWT filter, by design, only runs once per request — so
+on that last pass nobody was logged in, and Spring Security threw an error
+onto a response that was already half-sent. The browser saw the stream break
+off. The old UI happened to ignore that; the new one couldn't.
+
+Why didn't the tests catch it? They use MockMvc, which simulates requests
+without a real web server — and never performs that final dispatch. So the
+fix (let async dispatches through; the request was already checked on the way
+in) comes with a test that starts a **real** server and reads the stream over
+a real socket.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: 122 tests passed. How did a browser find a bug they missed?**
+They tested with a simulated server that skips the step where the bug lived.
+Every layer of testing has blind spots; the walk-through's blind spots are
+different ones. That's the argument for having more than one kind.
+
+**Q: Is permitting async dispatches a security hole?**
+No. An async dispatch is the same request finishing, not a new one. It was
+authenticated and authorised when it arrived. Nothing new can arrive this way
+from outside.
+
+**Q: Why build a fake "demo" model instead of mocking the API in the browser test?**
+A mocked API would test the UI against what I *think* the server does. The
+demo model runs the real server — tools, build gate, memory, logs — and only
+replaces the part that needs a paid key. That's how the walk found a real
+server bug at all.
+
+**Q: Why does the UI read the stream with `fetch()` instead of `EventSource`?**
+`EventSource` is the browser's built-in SSE client, but it can't send an
+`Authorization` header — and every ForgeFlow endpoint needs the JWT. So the
+UI reads the response body itself and splits it into events on blank lines.
+
+</details>
+
+---
+
+## Chapter 22 — What's next
 
 Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
 the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
 roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
 (Chapter 16), **plans, quotas and Stripe** (Chapter 17), **rate limiting**
-(Chapter 18), **RAG** (Chapter 19) and **tracing** (Chapter 20). What's left:
+(Chapter 18), **RAG** (Chapter 19), **tracing** (Chapter 20) and the
+**workbench** (Chapter 21). What's left:
 
-- **The workbench UI** — chat sessions, the logs stream, billing and search
-  in the browser; most of what's been built is API-only so far.
+- **Close the runtime loop** — the logs stream already captures the generated
+  app's console errors from a real browser. Feeding those back into the
+  repair loop would catch bugs the structural build check can't see.
 - **`edit_file`** and **prompt caching**.
 
 <details>
 <summary><b>Counter-questions</b></summary>
 
 **Q: If you only had time for one of these, which?**
-The UI. Chat memory, the logs stream, plans and search all work and are all
-tested — but only through the API. A feature nobody can see is a feature
-nobody uses.
+Closing the runtime loop. The build gate checks that files parse and link up;
+it can't see that a button throws when clicked. The preview already reports
+exactly that kind of error. Handing it back to the agent turns "it builds"
+into "it runs".
 
 **Q: RAG is built now. Is it doing anything for today's projects?**
 Mostly not, and that's by design. Generated sites are usually under fifteen

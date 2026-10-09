@@ -687,6 +687,48 @@ for its string constants. Moved to a plain `UsageKind` class.
 
 122 tests.
 
+### Phase 8 — the workbench, and the bug only a browser could find
+
+Everything from Phase 1 on was API-only. The workbench is now chat-shaped:
+sessions and the conversation on the left, with each reply streaming in as a
+live list of what the agent is doing; preview, code, live logs and search on
+the right; sharing and a plan badge on top.
+
+To test it in a real browser without an API key, ForgeFlow gained a **demo
+model** (`FORGEFLOW_LLM_PROVIDER=demo`). It writes the same small page for any
+request, but through the real pipeline, so every screen works. A Playwright
+script (`scripts/ui-walk.py`) then drives the whole product: sign up, chat,
+reload, preview, click inside the generated app, see that click's console line
+in Logs, search, download, upgrade, share, quota, phone-sized screen.
+
+**The bug it found.** The first run failed at step two: the reply never
+appeared. The server log said the run had *succeeded* — and then
+`AccessDenied`. When a streamed response finishes, Tomcat sends the request
+back through every filter one more time (an "async dispatch"). The JWT filter
+only runs once per request, so on that last pass nobody was logged in, and
+Spring Security threw an error onto a response that was already half sent.
+The browser saw a broken stream.
+
+It had very likely been happening in production since streaming was added in
+Day 4. The old UI quietly ignored the broken ending; the new one couldn't.
+None of the 122 tests caught it, because MockMvc never performs that final
+dispatch. The fix is one line (let async dispatches through — they're the
+tail end of a request that was already authorised). The regression test runs
+a **real Tomcat** and reads the stream over a socket; it fails with "EOF
+reached while reading" without the fix.
+
+**Smaller things the walk-through caught:** code shown double-spaced, line
+numbers almost invisible, log timestamps wrapping, an empty plan badge before
+it loaded. And one I caused myself: a broad `git add` committed the local
+Redis server's snapshot file. Removed and ignored; I check `git status` before
+staging now.
+
+Also: a README at last, a `.env.example` that actually works (the old one had
+the shell command that created it pasted inside it), and Redis in
+`docker-compose.yml`.
+
+123 tests + the browser walk.
+
 **Tests:** 58, every one against a real Postgres. Before trusting a new suite I
 break the behaviour on purpose and check it goes red — dropping `updated_by`
 and breaking live log delivery each failed it, as they should.
@@ -710,7 +752,8 @@ and breaking live log delivery each failed it, as they should.
   the candidate list (pgvector 0.8's iterative scans fix this).
 - Embedding calls aren't counted against the token quota.
 - The live Gemini path hasn't been re-verified on Render since the redesign
-  started; the tests use a scripted model.
+  started; the tests use a scripted model and the browser walk uses the demo
+  model. (Couldn't reach Render from the build machine.)
 - Real Stripe is built and tested against a local stub, but never run against
   Stripe itself — that needs Aman's test-mode keys (notes.md §14).
 - Two project creates racing can both pass the quota check and land one over.
@@ -718,9 +761,9 @@ and breaking live log delivery each failed it, as they should.
 
 ## Still to build (redesign, in order)
 
-1. A chat-shaped workbench UI (with the billing page)
+1. Verify the redesign live on Render (Gemini path, MCP, the new UI)
 2. `edit_file` + prompt caching
-3. README
+3. Feed the preview's runtime console errors back into the repair loop
 
 ## Done since the original plan
 
@@ -735,3 +778,4 @@ and breaking live log delivery each failed it, as they should.
 - Rate limiting — token buckets in Redis, in-memory fallback (Day 10)
 - RAG — hybrid pgvector + full-text search, `search_code` tool, `code.generated` event (Day 10)
 - Tracing (traceparent, Zipkin), OpenAPI with a contract test, module-boundary test (Day 10)
+- Chat-shaped workbench, demo model, browser walk-through, README (Day 10)
