@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -66,7 +67,8 @@ public class AgentTools {
                                List.of("path", "old_text", "new_text"))),
 
                 new ToolSpec("write_file",
-                        "Create a file, or completely replace one that exists. Provide the entire file content.",
+                        "Create a new file, or replace one where most of the content changes. Provide the "
+                                + "entire file content. To change part of an existing file, use edit_file instead.",
                         schema(new LinkedHashMap<>(Map.of(
                                         "path", prop("string", "Relative path, e.g. index.html or css/style.css"),
                                         "content", prop("string", "The complete file content"))),
@@ -211,9 +213,45 @@ public class AgentTools {
             throw new ToolException("file too large: " + bytes + " bytes, limit is " + MAX_FILE_BYTES);
         }
 
+        String before = files.read(projectId, path).orElse(null);
         files.write(projectId, path, content, userId);
 
-        return ToolResult.ok("write_file", "Wrote " + path + " (" + bytes + " bytes)");
+        String result = "Wrote " + path + " (" + bytes + " bytes)";
+        if (before != null && mostlyUnchanged(before, content)) {
+            // The write still happens - it isn't wrong, just wasteful. The
+            // note is for the rest of this run: the model reads tool results,
+            // so this is where a nudge actually lands. Seen live: asked to
+            // "make the button green", Gemini resent all of styles.css.
+            result += ". Note: most of this file was unchanged. For a small change to an existing "
+                    + "file, use edit_file - it sends only the part that changes.";
+        }
+        return ToolResult.ok("write_file", result);
+    }
+
+    /** Small files are cheap to rewrite whatever; below this, no note. */
+    static final int REWRITE_NOTE_MIN_LINES = 10;
+
+    /**
+     * True when a rewrite kept at least 80% of the old file's non-blank lines
+     * word for word - i.e. edit_file would have done. A multiset count, so a
+     * line that appears twice must survive twice.
+     */
+    static boolean mostlyUnchanged(String before, String after) {
+        List<String> old = before.lines().map(String::strip).filter(l -> !l.isEmpty()).toList();
+        if (old.size() < REWRITE_NOTE_MIN_LINES) {
+            return false;
+        }
+        Map<String, Integer> available = new HashMap<>();
+        after.lines().map(String::strip).filter(l -> !l.isEmpty()).forEach(l -> available.merge(l, 1, Integer::sum));
+        int kept = 0;
+        for (String line : old) {
+            Integer n = available.get(line);
+            if (n != null && n > 0) {
+                available.put(line, n - 1);
+                kept++;
+            }
+        }
+        return kept * 5 >= old.size() * 4;
     }
 
     /**

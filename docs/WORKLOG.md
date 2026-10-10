@@ -806,6 +806,30 @@ time (`auth_time`) rides along in every renewed token and renewal stops 30
 days after it, so a stolen token can't be kept alive forever just by using it.
 143 tests.
 
+**Second live check (10 Oct, 08:25).** Aman signed in with a fresh account
+(no password reset exists yet — see Still to build) and rebuilt the tip
+calculator. On Render:
+
+- Logs said **live** straight away. *Run build* put two build lines in it
+  as they happened; *Start preview* added the preview line and three
+  `GET … 200`s. The deploy-restart bug is fixed in production.
+- Asked "Make the Calculate button green and rounded": only `styles.css`
+  changed, the build passed, the preview showed a green rounded button,
+  5,022 tokens.
+
+But the stored run showed `write_file`, not `edit_file`: Gemini resent the
+whole stylesheet to change one rule. The reason was in our own prompt — one
+paragraph said "code reaches the user only by calling write_file", and a
+later one said to prefer edit_file. The model obeyed the first. Fixed three
+ways: the prompt now names both tools and gives "make the button green" as
+an edit_file example; write_file's own description says to use edit_file
+for partial changes; and when write_file rewrites a file of 10+ lines while
+keeping at least 80% of them word for word, its result now carries a note
+pointing at edit_file. The write still happens (it's not wrong, only
+wasteful) — the note is for the rest of that run, since tool results are
+what the model actually reads mid-task. Two tests, sabotage-checked.
+145 tests.
+
 ---
 
 ## Open items
@@ -836,6 +860,9 @@ days after it, so a stolen token can't be kept alive forever just by using it.
    loop in place, and compare with Day 9's 20/20
 2. A headless browser in the build gate, so runtime errors are caught without
    anyone opening the preview (needs a host that can run Chromium)
+3. "Forgot password?" — needs an email sender (a reset link mailed to the
+   user); until then a lost password means a new account
+4. Re-run the evals and count how often edit runs now use `edit_file`
 
 ## Done since the original plan
 

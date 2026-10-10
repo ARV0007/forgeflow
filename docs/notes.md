@@ -819,4 +819,20 @@ Multi-round runs should show a healthy cached share; single-round runs ~0.
   after the real sign-in, carried in the `auth_time` claim. Free-tier Render
   also sleeps after ~15 idle minutes; the first request after that takes a
   minute or two while it wakes — that's not a crash.
+- **The model follows the first rule it reads.** The prompt said "code
+  reaches the user only by calling write_file" and, later, "prefer edit_file".
+  Gemini rewrote whole files. When a prompt, a tool description and a tool
+  result disagree, fix all three — and the tool *result* is the strongest
+  lever mid-run, because the model reads it right before its next move.
+- **Which tool did a run actually use?** The assistant message stores it:
+  `GET /api/v1/projects/{id}/chat/sessions/{sid}/messages` → `toolCalls`.
+  In SQL:
+
+  ```sql
+  SELECT id, tool_calls, tokens_used FROM chat_messages
+  WHERE role = 'assistant' ORDER BY id DESC LIMIT 10;
+  ```
+- **Lost password?** There's no reset flow yet (no email sender). Sign up
+  again — Gmail ignores everything after a `+`, so `you+ff@gmail.com` is a
+  new ForgeFlow account that still reaches your inbox.
 

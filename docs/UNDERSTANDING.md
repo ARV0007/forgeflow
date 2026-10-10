@@ -1599,6 +1599,30 @@ are old news, and feeding them back would send the agent chasing ghosts.
 - **`/mcp`** can require a key, so a public deployment isn't open to anyone
   who finds the URL.
 
+### What the live test showed: mixed instructions
+
+On the real site, "make the Calculate button green and rounded" worked — but
+the agent rewrote all of `styles.css` to change one rule. Why? Our own
+instructions contradicted each other. Near the top the prompt said *code
+reaches the user only by calling write_file*; further down it said *prefer
+edit_file*. Like a new employee with two conflicting memos, the model went
+with the first one.
+
+The fix talks to the model in all three places it listens:
+
+1. **The prompt** (read once, at the start) now names both tools and gives
+   "make the button green" as an example of an edit_file job.
+2. **The tool description** (read when picking a tool) for write_file now
+   says "to change part of an existing file, use edit_file instead".
+3. **The tool result** (read right before the next move). If write_file
+   rewrites a file of 10+ lines and keeps at least 80% of them unchanged,
+   the write still goes through, but the reply says, in effect, "that was
+   a small change — next time use edit_file".
+
+Why not refuse the wasteful write outright? Because a refusal costs a round
+and could leave a multi-file change half-done. The write isn't *wrong*, just
+expensive — so it gets a note, not a "no".
+
 <details>
 <summary><b>Counter-questions</b></summary>
 
@@ -1618,6 +1642,19 @@ browser inside the build gate, which needs a host that can run Chromium.
 Render's free tier can't. Until then, the errors are caught whenever a person
 actually uses the app — which is when they matter.
 
+**Q: How did you find out the agent was using write_file for small edits?**
+Not from the reply — that looked fine. Each saved assistant message records
+which tools it called (`toolCalls`). Looking at that for one real run showed
+`write_file`. Checking *how* a result was produced, not just *that* it came
+out right, is what caught it.
+
+**Q: Why count unchanged lines instead of comparing file sizes?**
+A file can stay the same size and be completely different, or grow by one
+line and be 99% the same. "How many of the old lines are still there, word
+for word" measures what we care about: could a small edit have done this?
+Each old line has to be matched once — ten copies of `}` can't all be
+"kept" by a single `}` in the new file.
+
 **Q: How do you know prompt caching is doing anything?**
 Each run now records `cached_tokens` next to `prompt_tokens`. A multi-round run
 should show a large cached share, because every round re-sends the same
@@ -1633,13 +1670,15 @@ Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
 the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
 roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
 (Chapter 16), **plans, quotas and Stripe** (Chapter 17), **rate limiting**
-(Chapter 18), **RAG** (Chapter 19), **tracing** (Chapter 20) and the
-**workbench** (Chapter 21). What's left:
+(Chapter 18), **RAG** (Chapter 19), **tracing** (Chapter 20), the
+**workbench** (Chapter 21), and `edit_file`, the runtime loop and prompt
+caching (Chapter 22). What's left:
 
-- **Close the runtime loop** — the logs stream already captures the generated
-  app's console errors from a real browser. Feeding those back into the
-  repair loop would catch bugs the structural build check can't see.
-- **`edit_file`** and **prompt caching**.
+- **Measure it** — re-run the evals against real Gemini and count how often
+  edit requests now use `edit_file`.
+- **A headless browser in the build gate**, so runtime errors are caught
+  without anyone opening the preview.
+- **"Forgot password?"** — needs an email sender to mail a reset link.
 
 <details>
 <summary><b>Counter-questions</b></summary>

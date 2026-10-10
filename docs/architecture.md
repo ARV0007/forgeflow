@@ -832,3 +832,12 @@ it is now. The workbench mirrors the same rule to show its "fix it" bar.
 occur once; zero or several matches are refusals with instructions, never
 guesses.
 
+**Steering toward `edit_file`.** Three layers, because the model weighs them
+differently: the system prompt (read once), each tool's description (read
+when choosing), and the tool result (read right before the next move). When
+`write_file` replaces a file of 10+ non-blank lines and at least 80% of the
+old lines survive word for word (`AgentTools.mostlyUnchanged`, a multiset
+count), the write succeeds and its result adds a note pointing at
+`edit_file`. A nudge, not a refusal: a refused write would cost a round and
+could leave the user's change half-made.
+

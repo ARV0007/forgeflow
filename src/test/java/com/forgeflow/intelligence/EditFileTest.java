@@ -106,6 +106,55 @@ class EditFileTest extends ApiTestSupport {
         assertThat(lastResult(3).output()).contains("No such file: about.html").contains("write_file");
     }
 
+    /** Twelve rules, so the file is big enough for the rewrite note to apply. */
+    private static final String THEME = """
+            body { margin: 0; }
+            h1 { font-size: 2rem; }
+            h2 { font-size: 1.5rem; }
+            p { line-height: 1.5; }
+            a { color: teal; }
+            ul { padding: 0; }
+            li { list-style: none; }
+            input { padding: 0.5rem; }
+            label { display: block; }
+            .card { border-radius: 8px; }
+            .muted { color: #777; }
+            button { background: blue; }
+            """;
+
+    @Test
+    void rewritingAFileToChangeOneLineEarnsANudgeTowardEditFile() {
+        Account a = signup("rewriter");
+        long id = site(a);
+
+        llm.then(calls(write("theme.css", THEME)))                                  // new file: no note
+           .then(calls(write("theme.css", THEME.replace("blue", "green"))))      // one line changed: note
+           .then(calls(finish("Made the button green.")));
+        post("/api/v1/projects/" + id + "/generate", a, Map.of("prompt", "green button"), 200);
+
+        assertThat(lastResult(3).output()).isEqualTo("Wrote theme.css (" + THEME.length() + " bytes)");
+        ToolResult rewrite = lastResult(4);
+        assertThat(rewrite.ok()).isTrue();                       // the write still happened
+        assertThat(rewrite.output()).contains("most of this file was unchanged").contains("edit_file");
+        assertThat(content(a, id, "theme.css")).contains("background: green");
+    }
+
+    @Test
+    void theNoteOnlyFiresWhenMostOfABigEnoughFileSurvives() {
+        String twelve = THEME;
+        String oneChanged = THEME.replace("blue", "green");
+        String halfChanged = THEME.replace("rem", "em").replace("8px", "4px").replace("teal", "red");
+
+        assertThat(AgentTools.mostlyUnchanged(twelve, oneChanged)).isTrue();
+        assertThat(AgentTools.mostlyUnchanged(twelve, twelve + "footer { color: grey; }\n")).isTrue();
+        assertThat(AgentTools.mostlyUnchanged(twelve, halfChanged)).isFalse();
+        assertThat(AgentTools.mostlyUnchanged(twelve, "body { margin: 0; }")).isFalse();      // most of it dropped
+        assertThat(AgentTools.mostlyUnchanged("a\nb\nc", "a\nb\nc\nd")).isFalse();             // too small to matter
+        // A repeated line has to survive as many times as it appeared.
+        String repeated = "x {}\n".repeat(10);
+        assertThat(AgentTools.mostlyUnchanged(repeated, "x {}\n".repeat(2))).isFalse();
+    }
+
     @Test
     void anEditThatBreaksTheBuildGoesThroughTheRepairLoop() {
         Account a = signup("breaker");

@@ -28,9 +28,9 @@ final class AgentPrompt {
             it.
 
             HOW YOU WORK
-            You never write code in your replies. Code reaches the user only by
-            calling write_file. Prose in your reply is for explaining, not for
-            delivering.
+            You never write code in your replies. Code reaches the user only
+            through the file tools - write_file and edit_file. Prose in your
+            reply is for explaining, not for delivering.
 
             Before editing a file you did not create in this same run, call
             read_file first. Guessing at existing content overwrites the user's
@@ -39,7 +39,9 @@ final class AgentPrompt {
             To change part of an existing file, use edit_file: replace one exact
             piece of text, copied from read_file. It is cheaper than rewriting
             the file, and it cannot drop the parts you did not mean to touch.
-            Use write_file to create a file, or when most of it changes.
+            A request like "make the button green" is an edit_file job - one
+            call per spot that changes. Use write_file only to create a file,
+            or when most of an existing file changes.
 
             RULES
             - Always create index.html as the entry point.
