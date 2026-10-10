@@ -43,7 +43,11 @@ forgeflow:
     request-timeout-seconds: 60
   jwt:
     secret: ${JWT_SECRET:change-me-in-env-this-is-local-only}
+    # A token lasts this long; active users get a fresh one past the halfway
+    # point (sliding session), so only an idle tab is signed out.
     expiry-minutes: 120
+    # ...but renewals stop this long after the actual sign-in.
+    max-session-days: 30
   billing:
     # none (default) | fake (local dev / tests - never on a public server) | stripe
     provider: ${FORGEFLOW_BILLING_PROVIDER:none}

@@ -44,6 +44,7 @@ async function api(path, { method = 'GET', body } = {}) {
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+  adoptRenewedToken(res);
   if (res.status === 401 && state.token) {
     signOut();
     throw new ApiError(401, { detail: 'Your session expired. Sign in again.' });
@@ -83,6 +84,7 @@ async function sse(path, { method = 'POST', body, signal, headers = {}, onOpen }
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+  adoptRenewedToken(res);
   if (!res.ok) {
     let data = null;
     try { data = await res.json(); } catch { /* not JSON */ }
@@ -108,6 +110,15 @@ async function sse(path, { method = 'POST', body, signal, headers = {}, onOpen }
       if (!data) continue;
       try { onEvent(event, JSON.parse(data), id); } catch (e) { console.warn('bad SSE frame', e); }
     }
+  }
+}
+
+/** Sliding session: the server hands back a fresh token as ours ages. */
+function adoptRenewedToken(res) {
+  const fresh = res.headers.get('X-Auth-Token');
+  if (fresh && state.token) {
+    state.token = fresh;
+    localStorage.setItem('ff_token', fresh);
   }
 }
 

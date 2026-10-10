@@ -813,4 +813,10 @@ Multi-round runs should show a healthy cached share; single-round runs ~0.
   future as "send everything".
 - Proxies drop idle connections. A long-lived SSE stream needs a periodic
   comment line (`: keep-alive`) even when there's nothing to say.
+- **Sliding sessions.** Tokens last `forgeflow.jwt.expiry-minutes` (120).
+  Past halfway, any authenticated response carries `X-Auth-Token` with a
+  replacement; `app.js` stores it. Renewal stops `max-session-days` (30)
+  after the real sign-in, carried in the `auth_time` claim. Free-tier Render
+  also sleeps after ~15 idle minutes; the first request after that takes a
+  minute or two while it wakes — that's not a crash.
 

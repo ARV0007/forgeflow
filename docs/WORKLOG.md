@@ -797,6 +797,15 @@ resume id "from the future" as "send everything"; the page says "live" as soon
 as the stream connects; and a 25-second keep-alive stops proxies closing a
 quiet stream. Two regression tests, each sabotage-checked.
 
+**Signed out mid-use.** Coming back the next morning, the live site had
+signed Aman out — a token lasted two hours, full stop, active or not.
+Sessions now slide: once a token is past half its life, the next request it
+authenticates returns a fresh one in an `X-Auth-Token` header, and the page
+swaps it in. An idle tab still expires after two hours. The original sign-in
+time (`auth_time`) rides along in every renewed token and renewal stops 30
+days after it, so a stolen token can't be kept alive forever just by using it.
+143 tests.
+
 ---
 
 ## Open items

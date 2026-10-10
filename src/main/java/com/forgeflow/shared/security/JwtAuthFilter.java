@@ -23,6 +23,9 @@ import java.util.List;
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
 
+    /** Carries a renewed token back to the client. */
+    public static final String RENEWED_TOKEN_HEADER = "X-Auth-Token";
+
     private final JwtService jwtService;
 
     public JwtAuthFilter(JwtService jwtService) {
@@ -42,6 +45,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 Long userId = jwtService.extractUserId(token);
                 var auth = new UsernamePasswordAuthenticationToken(userId, null, List.of());
                 SecurityContextHolder.getContext().setAuthentication(auth);
+                // Sliding session: an active user's token is quietly replaced
+                // before it runs out. The page picks it up from this header.
+                jwtService.renewIfAged(token).ifPresent(fresh -> response.setHeader(RENEWED_TOKEN_HEADER, fresh));
             } catch (Exception ignored) {
                 SecurityContextHolder.clearContext();
             }
