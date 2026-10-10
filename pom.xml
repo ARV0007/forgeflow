@@ -95,6 +95,16 @@
 			<scope>test</scope>
 		</dependency>
         <dependency>
+            <!-- Kafka: the plain client, not spring-kafka. One producer and a
+                 poll loop per subscription (shared/events/KafkaEventBus) -
+                 small enough to own, and it keeps the delivery semantics
+                 (manual commits, retries, dead-letter topic) visible.
+                 Pinned to the 3.8 line: what the build has been verified on. -->
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-clients</artifactId>
+            <version>3.8.1</version>
+        </dependency>
+        <dependency>
             <groupId>io.jsonwebtoken</groupId>
             <artifactId>jjwt-api</artifactId>
             <version>0.13.0</version>

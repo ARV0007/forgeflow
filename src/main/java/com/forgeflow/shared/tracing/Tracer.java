@@ -95,6 +95,21 @@ public class Tracer {
         return new Span(incoming != null ? incoming : TraceContext.root(), CURRENT.get(), name, "SERVER");
     }
 
+    /** A message being sent: a child of the current span, marked PRODUCER (Zipkin draws the hop). */
+    public Span startProducer(String name) {
+        TraceContext parent = CURRENT.get();
+        return new Span(parent == null ? TraceContext.root() : parent.child(), parent, name, "PRODUCER");
+    }
+
+    /**
+     * A message being handled: continues the producer's trace from the
+     * message's traceparent header, so one trace runs from the HTTP request
+     * that caused an event to the worker that consumed it.
+     */
+    public Span startConsumer(String name, TraceContext incoming) {
+        return new Span(incoming != null ? incoming.child() : TraceContext.root(), CURRENT.get(), name, "CONSUMER");
+    }
+
     /** A child of the current span - or a new trace if there is none (a scheduled job, say). */
     public Span start(String name) {
         TraceContext parent = CURRENT.get();

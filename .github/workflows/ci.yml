@@ -43,6 +43,19 @@ jobs:
           --health-timeout 3s
           --health-retries 10
 
+      # The full-topology pieces. Their integration tests skip when the env
+      # var naming them is unset (a laptop without Docker); here they run
+      # against the real thing.
+      kafka:
+        image: apache/kafka:3.8.0        # single-node KRaft, PLAINTEXT on 9092, advertised as localhost
+        ports:
+          - 9092:9092
+        options: >-
+          --health-cmd "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 12
+
     env:
       DB_URL: jdbc:postgresql://localhost:5432/forgeflow
       # No Docker daemon inside the job's sandbox path, same as Render: use the
@@ -50,6 +63,7 @@ jobs:
       # CI possible too.
       FORGEFLOW_SANDBOX_PROVIDER: in-process
       REDIS_TEST_URL: redis://localhost:6379
+      KAFKA_BOOTSTRAP_SERVERS: localhost:9092
 
     steps:
       - uses: actions/checkout@v4

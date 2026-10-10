@@ -80,6 +80,19 @@ forgeflow:
     max-repair-rounds: 3
     max-input-tokens: 120000
     timeout-seconds: 240
+  # Domain events (code.generated). in-process: all-in-one (Render, tests).
+  # kafka: the full topology - see docker-compose.full.yml and deploy/k8s.
+  events:
+    transport: ${FORGEFLOW_EVENTS:in-process}
+    kafka:
+      bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+      client-id: ${FORGEFLOW_INSTANCE:forgeflow}
+      partitions: 3
+      max-attempts: 3
+      backoff-ms: 500
+  # false on an API instance whose indexing runs in a separate worker.
+  indexer:
+    enabled: ${FORGEFLOW_INDEXER_ENABLED:true}
   retrieval:
     # Up to this many files, the agent just reads the project; past it, each
     # request carries the top-k most relevant chunks (RAG).
@@ -94,7 +107,7 @@ forgeflow:
     embedder: ${FORGEFLOW_EMBEDDER:gemini}
     embedding-model: gemini-embedding-001
     # async | sync | off - re-index after each run that changed files
-    index-on-generate: async
+    index-on-generate: ${FORGEFLOW_INDEX_ON_GENERATE:async}
   sandbox:
     provider: docker
     cpu-limit: 0.5

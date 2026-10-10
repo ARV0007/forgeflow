@@ -7,7 +7,9 @@ import com.forgeflow.billing.UsageMeter;
 import com.forgeflow.execution.BuildResult;
 import com.forgeflow.execution.ExecutionService;
 import com.forgeflow.intelligence.retrieval.CodeIndex;
-import org.springframework.context.ApplicationEventPublisher;
+import com.forgeflow.shared.events.CodeGenerated;
+import com.forgeflow.shared.events.EventBus;
+import com.forgeflow.shared.events.Topics;
 import com.forgeflow.shared.tracing.Tracer;
 import com.forgeflow.intelligence.dto.GenerateResponse;
 import com.forgeflow.shared.llm.LlmClient;
@@ -54,7 +56,7 @@ public class AgentService {
     private final Entitlements entitlements;
     private final UsageMeter usage;
     private final CodeIndex index;
-    private final ApplicationEventPublisher events;
+    private final EventBus events;
     private final Tracer tracer;
 
     private final int maxToolCalls;
@@ -69,7 +71,7 @@ public class AgentService {
                         Entitlements entitlements,
                         UsageMeter usage,
                         CodeIndex index,
-                        ApplicationEventPublisher events,
+                        EventBus events,
                         Tracer tracer,
                         @Value("${forgeflow.agent.max-tool-calls}") int maxToolCalls,
                         @Value("${forgeflow.agent.timeout-seconds}") long timeoutSeconds,
@@ -343,8 +345,13 @@ public class AgentService {
         usage.record(userId, projectId, UsageKind.AI_TOKENS, totalTokens, "run:" + run.getId());
 
         if (!written.isEmpty()) {
-            events.publishEvent(new CodeGenerated(projectId, run.getId(), userId, status,
-                    List.copyOf(written), java.time.Instant.now()));
+            // Keyed by project: on Kafka, one project's events land on one
+            // partition and stay in order. Published on the request thread,
+            // not via an outbox - acceptable because every consumer is
+            // idempotent and search re-checks the index itself; a lost event
+            // costs latency on the next search, never a wrong answer.
+            events.publish(Topics.CODE_GENERATED, String.valueOf(projectId), new CodeGenerated(projectId,
+                    run.getId(), userId, status, List.copyOf(written), java.time.Instant.now()));
         }
 
         log.info("run {} {} ({}) - {} tool calls, {} repair round(s), build {}, {} tokens, {} ms",
