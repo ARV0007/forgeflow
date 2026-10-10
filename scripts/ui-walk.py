@@ -272,6 +272,27 @@ with sync_playwright() as p:
     page.click(".tab[data-tab=preview]")
     shot(page, "10c-react")
 
+    #     the visual check photographs the RENDERED React app, even on a slow link
+    #     (regression: on Render the camera fired before the runner had fetched the
+    #     sources, and Gemini scored a blank page 1/10)
+    cdp = page.context.new_cdp_session(page)
+    cdp.send("Network.enable")
+    cdp.send("Network.emulateNetworkConditions", {"offline": False, "latency": 500,
+                                                 "downloadThroughput": -1, "uploadThroughput": -1})
+    page.check("#vcheck-toggle")
+    page.fill("#prompt", "Make the habits look nicer")
+    page.click("#btn-send")
+    expect(page.locator(".vcheck-shot").first).to_be_visible(timeout=60000)
+    inked = page.evaluate("""() => { const i = document.querySelector('.vcheck-shot');
+        const c = document.createElement('canvas'); c.width = i.naturalWidth; c.height = i.naturalHeight;
+        const g = c.getContext('2d'); g.drawImage(i, 0, 0); const d = g.getImageData(0, 0, c.width, c.height).data;
+        let n = 0; for (let k = 0; k < d.length; k += 4) if (d[k] + d[k + 1] + d[k + 2] < 600) n++; return n; }""")
+    assert inked > 500, f"the visual check photographed a blank page ({inked} dark pixels)"
+    expect(page.locator(".vcheck-ok")).to_have_count(1, timeout=60000)      # the one automatic fix round, then done
+    page.uncheck("#vcheck-toggle")
+    cdp.send("Network.emulateNetworkConditions", {"offline": False, "latency": 0,
+                                                 "downloadThroughput": -1, "uploadThroughput": -1})
+
     #     a compile error in a component lands in the runtime bar (and so in the agent's next turn)
     page.evaluate("""async () => { await fetch('/api/v1/projects/' + document.getElementById('project-select').value + '/files/content', {
         method: 'PUT', headers: {'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('ff_token')},

@@ -1242,6 +1242,33 @@ the URL is unchanged. Not yet run on a real cluster. 207 tests.
 Also fixed: the test suite ran Postgres out of connections (one pool of 10
 per cached Spring context); the test profile now caps pools at 4.
 
+### Found live: the visual check photographed React apps blank
+
+Aman's first live test: a React habit tracker rendered perfectly in the
+preview, and the visual check scored it **1/10 - "the page is completely
+blank"** - then sent the agent off to "fix" it, twice. The camera fired
+0.9 s after the page's load event, but a React preview isn't drawn at load:
+the runner then fetches the sources and compiles them, and it fetched them
+**one at a time** - seven round trips to Render in a row. Locally that's
+instant, so every local test passed.
+
+Reproduced with 400 ms of simulated latency (Chrome DevTools protocol): the
+screenshot had 0 dark pixels. Three fixes, each enough on its own in the
+common case:
+
+- the runner fetches every source **in parallel**, then compiles;
+- the bridge's camera **waits for the page to settle**: the runner reports
+  done, then no DOM changes for 400 ms (at most 8 s);
+- the workbench **checks the photo**: if every pixel is the same colour it
+  waits 1.5 s and takes it again (twice at most) before asking the model.
+
+After: 8,310 dark pixels at 400 ms and 800 ms latency. The browser walk now
+runs the React visual check on a throttled link and fails if the photo is
+blank.
+
+Lesson worth saying in an interview: the test that mattered was the one
+with a slow network. Everything passed on localhost.
+
 
 ---
 

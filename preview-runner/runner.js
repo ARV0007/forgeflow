@@ -102,6 +102,14 @@ import { transform } from 'sucrase';
     // require() is synchronous, so every module has to be ready when asked for.
     const compiled = new Map(); // path -> { code } | { css } | { json } | { url }
     const bare = new Set();
+    // Fetch every source file at once, not one per import as the graph is
+    // walked: over a real network that turned 7 files into 7 round trips in
+    // a row - seconds before anything rendered.
+    const sources = new Map();
+    await Promise.all(paths.filter((p) => CODE.test(p) || /\.(css|json)$/.test(p)).map(async (p) => {
+      const res = await fetch(base + p);
+      sources.set(p, res.ok ? await res.text() : null);
+    }));
     const queue = [...entries];
     while (queue.length) {
       const path = queue.shift();
@@ -110,9 +118,8 @@ import { transform } from 'sucrase';
         compiled.set(path, { url: base + path });
         continue;
       }
-      const res = await fetch(base + path);
-      if (!res.ok) throw new BuildError(path + ' could not be loaded (' + res.status + ')');
-      const text = await res.text();
+      const text = sources.get(path);
+      if (text == null) throw new BuildError(path + ' could not be loaded');
       if (path.endsWith('.css')) { compiled.set(path, { css: text }); continue; }
       if (path.endsWith('.json')) { compiled.set(path, { json: text }); continue; }
 
@@ -221,5 +228,9 @@ import { transform } from 'sucrase';
     for (const entry of entries) load(entry);
   }
 
-  run().catch(fail);
+  // The console bridge's camera waits on this, so the visual check photographs
+  // the app - not the empty page it was a moment before.
+  const status = (window.__ffRunner = { done: false, doneAt: 0 });
+  const finished = () => { status.done = true; status.doneAt = Date.now(); };
+  run().then(finished, (e) => { fail(e); finished(); });
 })();

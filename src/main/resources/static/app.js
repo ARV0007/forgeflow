@@ -884,6 +884,26 @@ function snapshotPreview(timeoutMs = 20000) {
   });
 }
 
+/** True when every sampled pixel is the same colour: nothing on the page yet (or a page that is truly empty). */
+function looksBlank(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = 48; c.height = 48;
+      const g = c.getContext('2d');
+      g.drawImage(img, 0, 0, 48, 48);
+      const d = g.getImageData(0, 0, 48, 48).data;
+      for (let k = 4; k < d.length; k += 4) {
+        if (Math.abs(d[k] - d[0]) + Math.abs(d[k + 1] - d[1]) + Math.abs(d[k + 2] - d[2]) > 24) { resolve(false); return; }
+      }
+      resolve(true);
+    };
+    img.onerror = () => resolve(false);
+    img.src = dataUrl;
+  });
+}
+
 function fixPrompt(review) {
   const lines = review.issues.map((i) => `- ${i.severity === 'major' ? '' : '(minor, if quick) '}${i.text}`);
   return `${FIX_PREFIX}${review.score}/10) found problems in the preview. Fix these:\n${lines.join('\n')}`;
@@ -950,7 +970,13 @@ async function visualCheck(reply, { isFix = false } = {}) {
     if (!$('tab-preview').classList.contains('is-on')) switchTab('preview');
     await (state.previewReload || Promise.resolve());
     await sleep(900);                                   // fonts, transitions, first paint of scripts
-    const shot = await snapshotPreview();
+    // A page that is still starting photographs as a blank sheet - and a
+    // blank sheet gets a 1/10 and a pointless "fix". Look again before asking.
+    let shot = await snapshotPreview();
+    for (let tries = 0; tries < 2 && await looksBlank(shot); tries++) {
+      await sleep(1500);
+      shot = await snapshotPreview();
+    }
     const review = await api(`/api/v1/projects/${state.projectId}/chat/sessions/${reply.sessionId}/messages/${reply.id}/visual-review`,
       { method: 'POST', body: { screenshot: { mimeType: 'image/jpeg', data: shot.slice(shot.indexOf(',') + 1) } } });
     state.shots[reply.id] = shot;                       // so a re-render of the thread keeps the picture

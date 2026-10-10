@@ -69,6 +69,9 @@ public class PreviewContentController {
      *    (and only from it - e.source must be the parent window) with a JPEG
      *    of the page, which is how the visual review gets its screenshot.
      *    html-to-image is loaded only when asked, from /p/{token}/__snapshot.js.
+     *    Before photographing it waits for the page to settle: the React
+     *    runner (if any) finished, and no DOM changes for 400 ms - at most 8 s.
+     *    Without that, a React preview on a slow link was photographed blank.
      *    (Not html2canvas: it clones the page into a child iframe, and in a
      *    sandboxed opaque origin that child is a different origin it may not
      *    touch. html-to-image clones in place and renders through an SVG
@@ -98,8 +101,13 @@ public class PreviewContentController {
             htmlToImage.toJpeg(document.documentElement,{quality:0.82,backgroundColor:"#fff",skipFonts:true,\
             width:innerWidth,height:h,pixelRatio:Math.min(1,1024/innerWidth)}).then(function(u){done({data:u})})\
             ["catch"](function(x){done({error:String(x&&x.message||x)})})}\
-            try{if(window.htmlToImage)go();else{var t=document.createElement("script");t.src="__SNAP__";t.onload=go;\
-            t.onerror=function(){done({error:"snapshot library did not load"})};document.head.appendChild(t)}}\
+            function settle(cb){var t0=Date.now(),last=Date.now(),mo=new MutationObserver(function(){last=Date.now()});\
+            mo.observe(document.documentElement,{subtree:true,childList:true,attributes:true,characterData:true});\
+            (function tick(){var r=window.__ffRunner,now=Date.now();\
+            if(now-t0>8000||((!r||(r.done&&now-r.doneAt>300))&&now-last>400)){mo.disconnect();cb()}\
+            else setTimeout(tick,100)})()}\
+            try{settle(function(){if(window.htmlToImage)go();else{var t=document.createElement("script");t.src="__SNAP__";t.onload=go;\
+            t.onerror=function(){done({error:"snapshot library did not load"})};document.head.appendChild(t)}})}\
             catch(x){done({error:String(x)})}})})();</script>""";
 
     private final PreviewRepository previews;
