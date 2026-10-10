@@ -1269,13 +1269,38 @@ blank.
 Lesson worth saying in an interview: the test that mattered was the one
 with a slow network. Everything passed on localhost.
 
+### What a run costs, and garbage collection for the bucket
+
+Two long-standing open items.
+
+**Cost per run.** `cost_usd` had been 0 since Day 1. `LlmPricing` now turns
+the token counts Gemini reports into dollars at list price (Gemini 3.1
+Flash-Lite: $0.25 / 1M input, $0.025 cached, $1.50 output - from Google's
+pricing page, overridable by env). Three meters, because they're billed
+differently: uncached prompt, cached prompt, and output - where output is
+`total - prompt`, so the thinking tokens are counted (they're billed as
+output, and `total` is not `prompt + completion`). A model with no known
+price costs 0 rather than a guess. Each run stores its cost, each chat
+reply shows it ("2,336 tokens · $0.0011", V13), and the eval report prints
+**cost per app** - a number for the resume once the evals run.
+
+**Blob sweep.** File contents in S3 are content-addressed and never deleted
+on write (another file or a checkpoint may share them), so overwritten
+versions piled up forever. `BlobSweeper` is a nightly **mark and sweep**:
+mark every key a row still points at (current files + checkpoint blobs),
+list the bucket (ListObjectsV2, paged, SigV4-signed query), delete what's
+unmarked and older than a 24 h grace period (a write puts the object a
+moment before its row). It lists *before* marking, so nothing written
+mid-sweep can be lost. One replica sweeps at a time - a Postgres
+`pg_try_advisory_xact_lock`; the others skip. Tested against moto: garbage
+gone, history and current files kept, a fresh object inside the grace
+period untouched. 210 tests.
+
 
 ---
 
 ## Open items
 
-- `cost_usd` is always 0 (cached tokens are now recorded; a price table per
-  model is still missing).
 - The agent timeout counts time spent waiting out rate limits.
 - `/mcp` runs as one service account for every caller; set
   `FORGEFLOW_MCP_API_KEY` on Render before advertising it.
@@ -1291,7 +1316,6 @@ with a slow network. Everything passed on localhost.
   at this size; with many projects, a busy one could crowd a small one out of
   the candidate list (pgvector 0.8's iterative scans fix this).
 - Embedding calls aren't counted against the token quota (rerank calls are).
-- Unreferenced blobs in object storage are never deleted (no sweep yet).
 - Kubernetes previews are tested against a fake API server, not a real
   cluster yet (kind or minikube would do it).
 - Kubernetes previews don't get the console bridge or the visual check (nginx

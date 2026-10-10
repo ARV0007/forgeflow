@@ -1060,3 +1060,16 @@ kubectl -n ffp-<token> logs preview -f        # React: npm install, then Vite
 - **Projects over ~900 KB** can't use Kubernetes previews (ConfigMap limit).
   The next step would be an init container pulling from S3.
 
+## 25. Costs and the blob sweep (10 Oct)
+
+- **See a run's cost:** under each AI reply, after the token count. Hover
+  says it's list price. The eval report prints `cost per app`.
+- **Prices changed?** Set `FORGEFLOW_PRICE_INPUT`, `FORGEFLOW_PRICE_CACHED_INPUT`
+  and `FORGEFLOW_PRICE_OUTPUT` (USD per 1M tokens) for the configured model.
+- **The sweep** runs at 03:30 daily, only in S3 mode. Change it with
+  `FORGEFLOW_SWEEP_CRON`; turn all background jobs off with
+  `FORGEFLOW_SCHEDULING=false`. It logs `blob sweep: Report[listed=…, deleted=…]`.
+- **Never shorten the grace period to 0 in production** - a file write puts
+  the object first and the row a moment later; a zero grace could delete it
+  in between.
+

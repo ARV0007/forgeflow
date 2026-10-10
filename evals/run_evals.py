@@ -206,7 +206,7 @@ def run_followup(args, case, pid, token):
     usage = run.get("toolUsage")
     return {"prompt": case["followup"], "buildPassed": run.get("buildPassed") is True,
             "style": edit_style(usage), "toolUsage": usage,
-            "totalTokens": run.get("totalTokens"), "durationMs": run.get("durationMs")}
+            "totalTokens": run.get("totalTokens"), "costUsd": run.get("costUsd"), "durationMs": run.get("durationMs")}
 
 
 def run_cases(args, cases, results, save):
@@ -246,6 +246,7 @@ def run_cases(args, cases, results, save):
                 "files": len(files), "emptyFiles": empty,
                 "repairRounds": run.get("repairRounds"),
                 "totalTokens": run.get("totalTokens"),
+                "costUsd": run.get("costUsd"),
                 "durationMs": run.get("durationMs"),
                 "toolUsage": run.get("toolUsage"),
             })
@@ -287,6 +288,9 @@ def report(results, started):
     print("\n" + "=" * 62)
     print(f"  pass rate        {len(ok)}/{len(results)}  ({rate:.0f}%)")
     print(f"  mean tokens      {avg('totalTokens'):.0f}")
+    spent = sum(float(r.get("costUsd") or 0) for r in done)
+    if spent:
+        print(f"  cost per app     ${spent/len(done):.4f} mean  (${spent:.4f} for {len(done)}, at list price)")
     print(f"  mean duration    {avg('durationMs')/1000:.1f}s")
     print(f"  mean repairs     {avg('repairRounds'):.2f}")
     print(f"  wall clock       {(time.time()-started)/60:.1f} min")

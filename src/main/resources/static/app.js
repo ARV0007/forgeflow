@@ -373,7 +373,8 @@ function appendMessage(m) {
       (m.toolCalls?.length
         ? `<div class="bot-files">${m.toolCalls.map((t) =>
             `<button class="file-chip" data-path="${esc(t.path)}">${esc(t.path)}</button>`).join('')}</div>` : '') +
-      `<div class="bot-meta">${failed ? '<b>failed</b> · ' : ''}${esc(m.tokensUsed || 0)} tokens</div>`;
+      `<div class="bot-meta">${failed ? '<b>failed</b> · ' : ''}${esc((m.tokensUsed || 0).toLocaleString())} tokens${
+        m.costUsd > 0 ? ` · <span title="At the model's list price">$${esc(Number(m.costUsd).toFixed(4))}</span>` : ''}</div>`;
     el.querySelector('.bot-text').textContent = m.content;
     el.querySelectorAll('.file-chip').forEach((b) => b.addEventListener('click', () => showCode(b.dataset.path)));
     if (m.id) el.dataset.messageId = m.id;

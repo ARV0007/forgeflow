@@ -17,6 +17,7 @@ import com.forgeflow.intelligence.dto.GenerateResponse;
 import com.forgeflow.shared.llm.ImagePart;
 import com.forgeflow.shared.llm.LlmClient;
 import com.forgeflow.shared.llm.LlmMessage;
+import com.forgeflow.shared.llm.LlmPricing;
 import com.forgeflow.shared.llm.LlmResponse;
 import com.forgeflow.shared.llm.ToolCall;
 import com.forgeflow.shared.llm.ToolResult;
@@ -63,6 +64,7 @@ public class AgentService {
     private final CheckpointService checkpoints;
     private final Tracer tracer;
     private final ProjectService projects;
+    private final LlmPricing pricing;
 
     private final int maxToolCalls;
     private final long timeoutSeconds;
@@ -80,6 +82,7 @@ public class AgentService {
                         CheckpointService checkpoints,
                         Tracer tracer,
                         ProjectService projects,
+                        LlmPricing pricing,
                         @Value("${forgeflow.agent.max-tool-calls}") int maxToolCalls,
                         @Value("${forgeflow.agent.timeout-seconds}") long timeoutSeconds,
                         @Value("${forgeflow.agent.max-input-tokens}") int maxInputTokens,
@@ -95,6 +98,7 @@ public class AgentService {
         this.checkpoints = checkpoints;
         this.tracer = tracer;
         this.projects = projects;
+        this.pricing = pricing;
         this.maxToolCalls = maxToolCalls;
         this.timeoutSeconds = timeoutSeconds;
         this.maxInputTokens = maxInputTokens;
@@ -365,6 +369,7 @@ public class AgentService {
         run.setPromptTokens(promptTokens);
         run.setCachedTokens(cachedTokens);
         run.setCompletionTokens(completionTokens);
+        run.setCostUsd(pricing.cost(llm.modelName(), promptTokens, cachedTokens, totalTokens));
         run.setToolCallCount(toolCallCount);
         run.setFilesWritten(written.size());
         run.setRepairRounds(repairRounds);
@@ -404,7 +409,7 @@ public class AgentService {
 
         GenerateResponse result = new GenerateResponse(run.getId(), status, stopReason, summary,
                 List.copyOf(written), toolCallCount, repairRounds, buildPassed, totalTokens, durationMs,
-                run.getErrorMessage(), java.util.Collections.unmodifiableMap(toolUsage));
+                run.getErrorMessage(), java.util.Collections.unmodifiableMap(toolUsage), run.getCostUsd());
 
         emit(listener, AgentEvent.done(result));
         return result;

@@ -12,6 +12,7 @@ import java.util.Map;
  * @param errorMessage why the run broke, when stopReason is ERROR; otherwise null.
  * @param toolUsage   calls per tool name, e.g. {edit_file=1, finish=1, read_file=1}.
  *                    Lets an eval tell a targeted edit from a whole-file rewrite.
+ * @param costUsd     what the run's model calls cost at list price (0 for a model with no known price)
  */
 public record GenerateResponse(
         Long runId,
@@ -25,5 +26,6 @@ public record GenerateResponse(
         int totalTokens,
         long durationMs,
         String errorMessage,
-        Map<String, Integer> toolUsage) {
+        Map<String, Integer> toolUsage,
+        java.math.BigDecimal costUsd) {
 }

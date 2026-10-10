@@ -100,7 +100,63 @@ public class S3ObjectStore implements ObjectStore {
         return "/" + bucket + "/" + key;
     }
 
+    /**
+     * ListObjectsV2, following continuation tokens: S3 returns at most 1,000
+     * keys a page. The query string is part of what gets signed, so it is
+     * built in SigV4's canonical form - names sorted, every value encoded.
+     */
+    @Override
+    public java.util.List<Stored> list(String prefix) {
+        java.util.List<Stored> out = new java.util.ArrayList<>();
+        String token = null;
+        do {
+            java.util.TreeMap<String, String> q = new java.util.TreeMap<>();
+            q.put("list-type", "2");
+            q.put("prefix", prefix);
+            if (token != null) {
+                q.put("continuation-token", token);
+            }
+            String query = q.entrySet().stream().map(e -> queryEncode(e.getKey()) + "=" + queryEncode(e.getValue()))
+                    .collect(java.util.stream.Collectors.joining("&"));
+            HttpResponse<byte[]> r = send("GET", "/" + bucket, query, null, null);
+            if (r.statusCode() / 100 != 2) {
+                throw new StorageException("LIST " + prefix, r);
+            }
+            String xml = new String(r.body(), java.nio.charset.StandardCharsets.UTF_8);
+            java.util.regex.Matcher m = CONTENTS.matcher(xml);
+            while (m.find()) {
+                String block = m.group(1);
+                out.add(new Stored(unescape(tag(block, "Key")), java.time.Instant.parse(tag(block, "LastModified"))));
+            }
+            token = "true".equals(tag(xml, "IsTruncated")) ? unescape(tag(xml, "NextContinuationToken")) : null;
+        } while (token != null);
+        return out;
+    }
+
+    private static final java.util.regex.Pattern CONTENTS =
+            java.util.regex.Pattern.compile("<Contents>(.*?)</Contents>", java.util.regex.Pattern.DOTALL);
+
+    private static String tag(String xml, String name) {
+        int a = xml.indexOf("<" + name + ">");
+        int b = a < 0 ? -1 : xml.indexOf("</" + name + ">", a);
+        return a < 0 || b < 0 ? null : xml.substring(a + name.length() + 2, b);
+    }
+
+    private static String unescape(String s) {
+        return s == null ? null : s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
+                .replace("&apos;", "'").replace("&amp;", "&");
+    }
+
+    /** SigV4 query encoding: everything but unreserved characters, "/" included. */
+    static String queryEncode(String s) {
+        return SigV4.encodePath(s).replace("/", "%2F");
+    }
+
     private HttpResponse<byte[]> send(String method, String rawPath, byte[] body, String contentType) {
+        return send(method, rawPath, "", body, contentType);
+    }
+
+    private HttpResponse<byte[]> send(String method, String rawPath, String query, byte[] body, String contentType) {
         String path = SigV4.encodePath(rawPath);
         String payloadHash = body == null ? SigV4.EMPTY_SHA256 : SigV4.sha256Hex(body);
         String amzDate = ZonedDateTime.now(ZoneOffset.UTC).format(AMZ_DATE);
@@ -110,10 +166,10 @@ public class S3ObjectStore implements ObjectStore {
         signed.put("host", host);
         signed.put("x-amz-content-sha256", payloadHash);
         signed.put("x-amz-date", amzDate);
-        String auth = SigV4.authorization(method, path, "", signed, payloadHash,
+        String auth = SigV4.authorization(method, path, query, signed, payloadHash,
                 accessKey, secretKey, region, "s3", amzDate);
 
-        HttpRequest.Builder req = HttpRequest.newBuilder(URI.create(endpoint + path))
+        HttpRequest.Builder req = HttpRequest.newBuilder(URI.create(endpoint + path + (query.isEmpty() ? "" : "?" + query)))
                 .timeout(Duration.ofSeconds(30))
                 .header("x-amz-content-sha256", payloadHash)
                 .header("x-amz-date", amzDate)

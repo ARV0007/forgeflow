@@ -236,6 +236,7 @@ public class ChatService {
             reply.setContent(replyText(run));
             reply.setToolCalls(toolCallsJson(run.filesWritten()));
             reply.setTokensUsed(run.totalTokens());
+            reply.setCostUsd(run.costUsd());
             reply.setStatus(run.status());
             reply.setRunId(run.runId());
             reply = messages.save(reply);
@@ -364,7 +365,7 @@ public class ChatService {
     private ChatMessageResponse toResponse(ChatMessage m, List<AttachmentInfo> images, VisualReviewResponse review) {
         return new ChatMessageResponse(m.getId(), m.getSessionId(), m.getRole(), m.getContent(), m.getAuthorId(),
                 parseToolCalls(m.getToolCalls()), m.getTokensUsed(), m.getStatus(), m.getRunId(), m.getCreatedAt(),
-                images, review);
+                images, review, m.getCostUsd());
     }
 
     /** One stored image's bytes - a read: anyone who can see the project. */

@@ -1147,3 +1147,11 @@ code.generated ─► CodeChangeNotifier (group "execution") ─► ExecutionSer
 | permissions | ClusterRole for namespaces + the objects inside; ValidatingAdmissionPolicy limits the API's SA to `ffp-*` |
 | client library | none: ~150 lines over java.net.http, like Redis/Stripe/S3 |
 
+## 25. Cost and storage housekeeping
+
+| | How |
+|---|---|
+| run cost | `LlmPricing.cost(model, prompt, cached, total)` = uncached × input + cached × cached-input + (total − prompt) × output, per 1M, list price; stored on the run and the chat reply (V13); unknown model → 0 |
+| blob GC | `BlobSweeper`, nightly cron (`forgeflow.storage.sweep.cron`): list `projects/` → mark `project_files.object_key ∪ file_blobs.object_key` → delete unmarked objects older than the grace (24 h); one replica at a time via `pg_try_advisory_xact_lock` |
+| S3 listing | `S3ObjectStore.list`: ListObjectsV2 with continuation tokens; the query string is SigV4-canonical (sorted, every value encoded, `/` as `%2F`) because it is part of the signature |
+

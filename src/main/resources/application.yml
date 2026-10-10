@@ -33,6 +33,8 @@ management:
         enabled: true
 
 forgeflow:
+  scheduling:
+    enabled: ${FORGEFLOW_SCHEDULING:true}     # background jobs: the nightly blob sweep
   mcp:
     # The identity MCP callers act as. Created on first use, never loginable.
     service-account-email: ${FORGEFLOW_MCP_SERVICE_EMAIL:mcp-service@forgeflow.internal}
@@ -44,6 +46,11 @@ forgeflow:
     api-key: ${GOOGLE_API_KEY:}
     model: ${FORGEFLOW_MODEL:gemini-3.1-flash-lite}
     temperature: 0.2
+    # USD per 1M tokens for the model above; blank = the built-in list price (LlmPricing)
+    price:
+      input: ${FORGEFLOW_PRICE_INPUT:}
+      cached-input: ${FORGEFLOW_PRICE_CACHED_INPUT:}
+      output: ${FORGEFLOW_PRICE_OUTPUT:}
     connect-timeout-seconds: 10
     request-timeout-seconds: 60
   jwt:
@@ -104,6 +111,10 @@ forgeflow:
   # File contents: postgres (default) | s3 (MinIO, R2, S3 - any SigV4 endpoint).
   storage:
     files: ${FORGEFLOW_FILE_STORAGE:postgres}
+    # S3 mode: nightly mark-and-sweep of objects no row points at (BlobSweeper)
+    sweep:
+      cron: ${FORGEFLOW_SWEEP_CRON:0 30 3 * * *}
+      grace-hours: 24
     s3:
       endpoint: ${S3_ENDPOINT:http://localhost:9000}
       region: ${S3_REGION:us-east-1}

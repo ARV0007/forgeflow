@@ -54,6 +54,9 @@ public class ChatMessage {
     @Column(name = "tokens_used", nullable = false)
     private int tokensUsed;
 
+    @Column(name = "cost_usd")
+    private java.math.BigDecimal costUsd;
+
     /** For assistant messages: SUCCEEDED | FAILED | CAPPED, copied from the run. */
     private String status;
 
@@ -99,6 +102,9 @@ public class ChatMessage {
 
     public int getTokensUsed() { return tokensUsed; }
     public void setTokensUsed(int tokensUsed) { this.tokensUsed = tokensUsed; }
+
+    public java.math.BigDecimal getCostUsd() { return costUsd; }
+    public void setCostUsd(java.math.BigDecimal costUsd) { this.costUsd = costUsd; }
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }

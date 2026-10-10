@@ -766,6 +766,7 @@ components:
           type: object
           description: Calls per tool name, e.g. {"edit_file":1,"finish":1,"read_file":1}
           additionalProperties: { type: integer }
+        costUsd: { type: number, description: "the run's model calls at list price, USD (0 for a model with no known price)" }
     Checkpoint:
       type: object
       properties:
@@ -816,6 +817,7 @@ components:
           type: array
           description: images sent with a user message; bytes at .../messages/{id}/attachments/{imageId}
           items: { type: object, properties: { id: { type: integer, format: int64 }, mimeType: { type: string }, sizeBytes: { type: integer } } }
+        costUsd: { type: number, nullable: true, description: "assistant replies: the run's model calls at list price, USD" }
         review:
           nullable: true
           description: on assistant replies - the latest visual review of the result
