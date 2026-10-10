@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpMethod;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
+import tools.jackson.databind.JsonNode;
 
 import java.util.List;
 import java.util.Map;
@@ -68,6 +69,13 @@ class ObjectStorageModeTest extends ApiTestSupport {
                 .path("status").asText()).isEqualTo("SUCCEEDED");                // and the build gate read it from the bucket too
         assertThat(files.read(id, "app.js")).hasValue(js.replace("0.9", "0.8"));
         assertThat(files.read(id, "copy.js")).hasValue(js);              // the old object is untouched
+        // Version history over the bucket: the baseline points at the original object; restoring reads it back.
+        JsonNode history = get("/api/v1/projects/" + id + "/checkpoints", a, 200);
+        assertThat(history).hasSize(2);
+        post("/api/v1/projects/" + id + "/checkpoints/" + history.get(1).path("id").asLong() + "/restore", a, null, 200);
+        assertThat(files.read(id, "app.js")).hasValue(js);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM file_blobs WHERE project_id = ? AND content IS NOT NULL",
+                Integer.class, id)).isZero();                              // history added no copies to Postgres
         // The zip
         byte[] zip = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                         .get("/api/v1/projects/" + id + "/files/download").header("Authorization", "Bearer " + a.token()))

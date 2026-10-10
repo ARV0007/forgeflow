@@ -11,7 +11,8 @@ account is needed and every step is deterministic:
     python3 scripts/ui-walk.py            # screenshots land in ./ui-walk-shots/
 
 Signs up, chats, opens the code, starts a preview, clicks inside the generated
-app and checks its console line arrives in Logs, searches, downloads the zip,
+app and checks its console line arrives in Logs, searches, opens the version
+history and restores a version, downloads the zip,
 upgrades through the test checkout, shares with a viewer and checks the
 viewer is read-only, hits the project quota, and checks a phone-sized screen.
 """
@@ -116,6 +117,23 @@ with sync_playwright() as p:
     expect(page.locator("#code-name")).to_have_text("app.js")
     expect(page.locator("#code-body .ln.hl").first).to_be_visible()
     shot(page, "06-search")
+
+    # 6b. history: every AI run is a version; its diff renders; restore needs two clicks
+    page.click(".tab[data-tab=history]")
+    expect(page.locator(".cp").first).to_be_visible(timeout=10000)
+    versions = page.locator(".cp").count()
+    page.locator(".cp").last.click()                       # the oldest: the first build
+    expect(page.locator(".df").first).to_be_visible(timeout=10000)
+    expect(page.locator(".df-status").first).to_have_text("ADDED")
+    expect(page.locator(".df-body .d-add").first).to_be_visible()
+    page.click("#btn-restore")
+    expect(page.locator("#btn-restore")).to_have_text("Click again to restore")
+    page.click("#btn-restore")
+    expect(page.locator(".toast").last).to_contain_text("Restored", timeout=10000)
+    expect(page.locator(".cp")).to_have_count(versions + (1 if versions > 1 else 0), timeout=10000)
+    if versions > 1:
+        expect(page.locator("#cp-title")).to_contain_text("Restored to #")     # the detail follows the new version
+    shot(page, "06b-history")
 
     # 7. download the zip
     with page.expect_download() as dl:

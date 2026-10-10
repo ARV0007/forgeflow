@@ -1882,7 +1882,67 @@ front of the app in S3 + Qdrant mode.
 
 ---
 
-## Chapter 24 — What's next
+## Chapter 24 — Time travel (version history)
+
+**Plain English.** Every time the AI changes your app, ForgeFlow now takes a
+photo of the whole project and pins it to a wall, labelled with what you
+asked for. You can look at any two photos side by side (what changed), or
+say "make it look like that photo again" (restore). Restoring takes a new
+photo too - so if you restore by mistake, the photo of how it was is right
+there.
+
+### Photos that don't waste film
+
+Taking a full copy of every file on every change would fill the wall fast.
+Instead, each file's content gets a **fingerprint** (SHA-256 - change one
+character and the fingerprint is completely different). A photo is just a
+list: "index.html → fingerprint A, app.js → fingerprint B". The actual text
+is stored once per fingerprint. Ten versions where only `app.js` changed
+cost ten small lists plus ten versions of `app.js` - not ten copies of
+everything.
+
+It also makes "nothing changed" easy to spot: fingerprint the whole list
+(the **tree hash**). Same tree hash as the last photo → don't take another.
+Git works exactly this way.
+
+### What changed: the diff
+
+To show what changed in a file, ForgeFlow finds the **longest common
+subsequence** - the longest list of lines both versions share, in order.
+Everything not in it was removed (red, `-`) or added (green, `+`). The output
+is the same "unified diff" format `git diff` prints: `@@ -2,7 +2,7 @@`
+means "7 lines starting at line 2 in the old file became 7 lines starting at
+line 2 in the new one", with 3 unchanged lines of context around each change.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why store a fingerprint per file instead of a copy of the project?**
+Most changes touch one or two files. Fingerprints let every version share the
+contents that didn't change - the same reason Git is small.
+
+**Q: Why is restore a new version instead of "going back"?**
+Because going back would throw away what you're leaving. Making restore a
+forward step keeps the whole timeline, so "undo the restore" is just another
+restore.
+
+**Q: What about edits I made by hand since the last AI run?**
+Before a restore overwrites anything, the current state is checkpointed if it
+isn't already a version ("Before restoring to #N"). Nothing is lost.
+
+**Q: In S3 mode, where do old versions live?**
+In the same objects the file writes created - their keys are already the
+content fingerprint. History adds rows in Postgres, not bytes in the bucket.
+
+**Q: Isn't comparing every line with every other line slow?**
+It's O(lines × lines), which is instant for the few hundred lines an agent
+writes. Past 4 million comparisons the file is shown as replaced instead.
+
+</details>
+
+---
+
+## Chapter 25 — What's next
 
 Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
 the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
@@ -1891,15 +1951,13 @@ roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
 (Chapter 18), **RAG** (Chapter 19), **tracing** (Chapter 20), the
 **workbench** (Chapter 21), `edit_file`, the runtime loop and prompt
 caching (Chapter 22), and the full topology - Kafka, MinIO, Qdrant, the
-gateway, Kubernetes (Chapter 23). What's left:
+gateway, Kubernetes (Chapter 23), and version history (Chapter 24). What's left:
 
 - **Measure it** — re-run the evals against real Gemini and count how often
   edit requests now use `edit_file`.
 - **A headless browser in the build gate**, so runtime errors are caught
   without anyone opening the preview.
 - **"Forgot password?"** — needs an email sender to mail a reset link.
-- **Version history** — every AI run a checkpoint, with a diff and one-click
-  restore (content-addressed blobs already keep old versions readable).
 - **Screenshot to app** and **the AI checking its own app** — Gemini reads
   images; the preview runs in a real browser that can take the picture.
 - **React apps running in the browser** (WebContainers) — the diagram's

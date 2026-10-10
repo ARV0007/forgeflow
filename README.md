@@ -31,11 +31,13 @@ live preview · file tree · every step streamed to the browser
 | **Projects** | create, list, rename, delete; share with **editors** and **viewers**; public projects |
 | **Auth** | sign up, log in (JWT), get / edit my profile |
 | **AI generation** | chat sessions with **memory** (last 10 messages); streaming replies; **retry if failed**; a self-healing build gate; targeted `edit_file` changes; errors from the running preview fed back to the agent |
-| **Files** | file tree, file content, **download as zip**, who created / last changed each file |
+| **Files** | file tree, file content, save by hand, **download as zip**, who created / last changed each file |
+| **History** | a **version per AI run**, coloured diffs between versions, **one-click restore** (itself undoable) |
 | **Preview** | live preview link, start / stop, **logs stream** — builds, requests, 404s and the generated app's own `console` output |
-| **Search (RAG)** | hybrid code search (pgvector + full-text, rank-fused); the agent has a `search_code` tool; big projects get relevant code attached to each request |
+| **Search (RAG)** | hybrid code search (pgvector or Qdrant + full-text, weighted rank fusion, optional LLM rerank); the agent has a `search_code` tool; big projects get relevant code attached to each request; **measured** by a 70-question retrieval benchmark |
 | **Plans** | FREE / PRO — projects, live previews, AI tokens per day; **Stripe** Checkout and a signed webhook |
 | **Platform** | Redis **rate limiting**, request **tracing** (W3C traceparent, optional Zipkin), an **MCP server** so other AI agents can drive it |
+| **Architecture** | runs as one app (Render) **or** the full diagram: API gateway, Kafka + indexing worker, MinIO/S3, Qdrant, Kubernetes manifests |
 
 ## Architecture in one picture
 

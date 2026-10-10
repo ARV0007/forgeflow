@@ -970,3 +970,31 @@ already guarantees nothing else crosses).
 | Qdrant index; app in Qdrant mode; Qdrant down → pgvector fallback | real Qdrant 1.12.4 locally and in CI |
 | Gateway routing, edge auth, header hygiene, SSE timing, 502 | gateway's own tests (SSE test sabotage-checked) |
 | Browser walk-through through the gateway, files in S3, vectors in Qdrant | locally: 213 requests over 3 service names, both SSE streams live |
+
+---
+
+## 19. Version history
+
+```
+AI run starts ── project has files, no history? ──► BASELINE "Before the first AI change"
+AI run ends, files changed ───────────────────────► RUN "<first line of the request>"
+restore #N ── current state not yet a version? ───► BASELINE "Before restoring to #N"
+           ── rewrite differing files, delete extra ──► RESTORE "Restored to #N: <label>"
+                                                      └─► code.generated (search re-indexes, preview notified)
+```
+
+| Table | Holds |
+|---|---|
+| `checkpoints` | id, kind, label, run_id, created_by, file_count, `tree_hash` (SHA-256 of sorted "path sha" lines) |
+| `checkpoint_files` | (checkpoint, path) → sha256, size |
+| `file_blobs` | (project, sha256) → content **or** object_key - each distinct content once |
+
+A checkpoint whose tree hash equals the latest is not recorded ("nothing
+changed" isn't a version). In s3 mode `file_blobs` rows only point at the
+content-addressed objects the file writes already created - history adds no
+bytes to the bucket. Diffs: `LineDiff`, LCS line diff in unified format with
+3 lines of context, capped at 4M cells (larger files show as replaced).
+
+API: `GET …/checkpoints`, `GET …/checkpoints/{id}/diff[?against=]`,
+`GET …/checkpoints/{id}/files/content?path=`, `POST …/checkpoints/{id}/restore`
+(WRITE). Never fatal to a run: checkpoint failures are logged.

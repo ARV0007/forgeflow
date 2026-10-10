@@ -88,6 +88,47 @@ public class ProjectFileService {
         return out;
     }
 
+    /**
+     * Where each file's bytes are and their fingerprint, without fetching
+     * object contents: in s3 mode the key already ends in the SHA-256. What
+     * version history snapshots.
+     */
+    public record FileRef(String path, String sha256, int sizeBytes, String content, String objectKey) {
+    }
+
+    @Transactional(readOnly = true)
+    public List<FileRef> refs(Long projectId) {
+        return files.findByProjectIdOrderByPath(projectId).stream().map(f -> {
+            if (f.getObjectKey() != null) {
+                String key = f.getObjectKey();
+                return new FileRef(f.getPath(), key.substring(key.lastIndexOf('/') + 1), f.getSizeBytes(), null, key);
+            }
+            return new FileRef(f.getPath(), SigV4.sha256Hex(f.getContent().getBytes(StandardCharsets.UTF_8)),
+                    f.getSizeBytes(), f.getContent(), null);
+        }).toList();
+    }
+
+    /** The text of a stored blob: inline, or fetched from object storage. */
+    String blobText(String content, String objectKey) {
+        if (content != null) {
+            return content;
+        }
+        if (blobs == null) {
+            throw new IllegalStateException("Blob " + objectKey + " is in object storage, but forgeflow.storage.files is not s3");
+        }
+        return blobs.get(objectKey).map(b -> new String(b, StandardCharsets.UTF_8))
+                .orElseThrow(() -> new IllegalStateException("Object " + objectKey + " is missing"));
+    }
+
+    /** Remove a file. Its blob stays (history may point at it). @return whether it existed */
+    @Transactional
+    public boolean delete(Long projectId, String path) {
+        return files.findByProjectIdAndPath(projectId, path).map(f -> {
+            files.delete(f);
+            return true;
+        }).orElse(false);
+    }
+
     /** Spec: "File Tree". Metadata only - no content. */
     @Transactional(readOnly = true)
     public List<FileEntry> list(Long projectId) {

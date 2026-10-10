@@ -100,6 +100,7 @@
         <button class="tab" data-tab="code" role="tab">Code</button>
         <button class="tab" data-tab="logs" role="tab">Logs <span id="log-dot" class="dot" hidden></span></button>
         <button class="tab" data-tab="search" role="tab">Search</button>
+        <button class="tab" data-tab="history" role="tab">History</button>
         <span class="spacer"></span>
         <button id="btn-build" class="btn btn-quiet btn-sm">Run build</button>
         <button id="btn-download" class="btn btn-quiet btn-sm" title="Download every file as a zip">Download</button>
@@ -146,6 +147,20 @@
           <button id="btn-search" class="btn btn-quiet btn-sm">Search</button>
         </div>
         <ol id="search-results" class="search-results"></ol>
+      </div>
+
+      <div id="tab-history" class="tabpanel">
+        <div class="history-split">
+          <ol id="cp-list" class="cp-list"></ol>
+          <div class="cp-detail">
+            <div class="cp-head">
+              <span id="cp-title" class="cp-title">Pick a version to see what changed</span>
+              <span class="spacer"></span>
+              <button id="btn-restore" class="btn btn-quiet btn-xs" hidden>Restore this version</button>
+            </div>
+            <div id="cp-diff" class="cp-diff"></div>
+          </div>
+        </div>
       </div>
     </section>
 

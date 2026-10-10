@@ -279,6 +279,37 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--e
 .src-console { color: var(--ember); }
 
 /* search */
+/* history: versions on the left, the diff on the right */
+.history-split { flex: 1; display: grid; grid-template-columns: 260px 1fr; min-height: 0; }
+.cp-list { list-style: none; margin: 0; padding: 6px 0; border-right: var(--rail); overflow-y: auto; }
+.cp { padding: 8px 14px; cursor: pointer; border-left: 2px solid transparent; }
+.cp:hover { background: var(--ink-2); }
+.cp.is-on { background: var(--ink-3); border-left-color: var(--ember); }
+.cp-label { font-size: 13px; color: var(--bone); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-meta { font-size: 11.5px; color: var(--ash); margin-top: 2px; font-family: var(--mono); }
+.cp-kind { text-transform: lowercase; color: var(--ember); }
+.cp-plus { color: var(--verdigris); }
+.cp-minus { color: var(--rust); }
+.cp-detail { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.cp-head { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: var(--rail); }
+.cp-title { font-size: 12.5px; color: var(--ash); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-diff { overflow: auto; flex: 1; padding: 8px 0 16px; }
+.df { margin: 0 12px 14px; border: var(--rail); border-radius: 6px; overflow: hidden; }
+.df-head { display: flex; gap: 10px; padding: 6px 10px; background: var(--ink-2); font-family: var(--mono); font-size: 12px; }
+.df-status { text-transform: lowercase; color: var(--ash); }
+.df-status.ADDED { color: var(--verdigris); }
+.df-status.REMOVED { color: var(--rust); }
+.df-body { margin: 0; font-family: var(--mono); font-size: 12px; line-height: 1.5; }
+.df-body span { display: block; padding: 0 10px; white-space: pre-wrap; word-break: break-word; }
+.df-body .d-add { background: rgba(111, 158, 122, .16); }
+.df-body .d-del { background: rgba(196, 85, 61, .16); }
+.df-body .d-hunk { color: var(--ash); background: var(--ink-2); }
+.btn-restore-armed { color: var(--ember); border-color: var(--ember); }
+@media (max-width: 760px) {
+  .history-split { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .cp-list { border-right: 0; border-bottom: var(--rail); max-height: 160px; }
+}
+
 .search-bar { display: flex; gap: 8px; padding: 10px 14px; border-bottom: var(--rail); }
 .search-bar input { flex: 1; }
 .search-results { list-style: none; margin: 0; padding: 6px 0; overflow-y: auto; flex: 1; }

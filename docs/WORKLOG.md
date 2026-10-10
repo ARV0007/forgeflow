@@ -1009,6 +1009,28 @@ free-tier deployment runs one process - because which boxes you pay for is a
 deployment decision, and the code shouldn't have to change when you make
 it."*
 
+### Version history
+
+Stage 3 of Aman's list. Every AI run that changes files is now a version,
+labelled with what was asked; any version can be diffed against the one
+before it and restored. A restore is itself a version, so it can be undone -
+and if the project had unsaved hand edits, they're checkpointed before a
+restore overwrites them ("Before restoring to #N").
+
+Storage is content-addressed, the same idea as the S3 keys: a checkpoint is
+a list of (path, SHA-256), contents live once per fingerprint in
+`file_blobs`, and identical trees aren't recorded twice. In s3 mode history
+costs no bucket space at all - the blobs are the objects file writes already
+made. The diff is a small LCS line diff in git's unified format.
+
+UI: a History tab - versions on the left (#, kind, age, +added ~changed
+−removed), the coloured diff on the right, and a two-click restore (no
+modal; the first click arms it for four seconds). The browser walk now opens
+History, checks the diff renders, and restores the first build.
+178 tests (4 in CheckpointTest: diffs, restore and undo, baseline for hand
+edits, access; plus restore over S3).
+
+
 ---
 
 ## Open items

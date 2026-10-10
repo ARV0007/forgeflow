@@ -15,6 +15,7 @@ const state = {
   busy: false,
   logs: null,           // AbortController for the live log stream
   lastLogSeq: 0,
+  checkpoint: null,     // the version open in the History tab
 };
 
 const $ = (id) => document.getElementById(id);
@@ -213,6 +214,7 @@ async function openProject(id, role) {
   $('code-name').textContent = 'Pick a file';
   $('code-body').textContent = '';
   $('search-results').innerHTML = '';
+  resetHistory();
   startLogs();
   await Promise.all([loadSessions(), loadFiles(), loadPreview()]);
 }
@@ -432,6 +434,7 @@ async function send({ retry = false } = {}) {
       updateRetry([turn.assistantMessage]);
     }
     await Promise.all([loadSessions(state.sessionId), loadFiles(), refreshPlanPill()]);
+    if ($('tab-history').classList.contains('is-on')) loadHistory();
     reloadPreviewFrame();
   } catch (err) {
     // A refusal before the stream opened (402, 409, 429): the server saved
@@ -515,6 +518,114 @@ $('btn-download').addEventListener('click', async () => {
   } catch (err) { toast(err.message); }
 });
 
+// ── history ─────────────────────────────────────────────
+// Every AI run that changed files is a version. Pick one to see its diff
+// against the version before it; restore puts the project back to it (and
+// is itself a version, so it can be undone).
+
+function resetHistory() {
+  state.checkpoint = null;
+  $('cp-list').innerHTML = '';
+  $('cp-title').textContent = 'Pick a version to see what changed';
+  $('cp-diff').innerHTML = '';
+  $('btn-restore').hidden = true;
+}
+
+function ago(iso) {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+async function loadHistory() {
+  if (!state.projectId) return;
+  let list;
+  try {
+    list = await api(`/api/v1/projects/${state.projectId}/checkpoints`);
+  } catch (err) { toast(err.message); return; }
+  const ol = $('cp-list');
+  ol.innerHTML = '';
+  if (list.length === 0) {
+    ol.innerHTML = '<li class="file-empty">No versions yet. Each AI change makes one.</li>';
+    return;
+  }
+  for (const cp of list) {
+    const li = document.createElement('li');
+    li.className = 'cp' + (state.checkpoint === cp.id ? ' is-on' : '');
+    li.dataset.id = cp.id;
+    const stats = [cp.added && `<span class="cp-plus">+${cp.added}</span>`,
+      cp.changed && `~${cp.changed}`, cp.removed && `<span class="cp-minus">−${cp.removed}</span>`]
+      .filter(Boolean).join(' ');
+    li.innerHTML = `<div class="cp-label"></div>
+      <div class="cp-meta">#${cp.id} · <span class="cp-kind">${esc(cp.kind)}</span> · ${ago(cp.createdAt)}${stats ? ' · ' + stats : ''}</div>`;
+    li.querySelector('.cp-label').textContent = cp.label;
+    li.title = cp.label;
+    li.addEventListener('click', () => showCheckpoint(cp));
+    ol.appendChild(li);
+  }
+}
+
+async function showCheckpoint(cp) {
+  state.checkpoint = cp.id;
+  document.querySelectorAll('.cp').forEach((li) => li.classList.toggle('is-on', Number(li.dataset.id) === cp.id));
+  $('cp-title').textContent = `#${cp.id} · ${cp.label}`;
+  disarmRestore();
+  $('btn-restore').hidden = !canWrite();
+  const box = $('cp-diff');
+  box.innerHTML = '';
+  let changes;
+  try {
+    changes = await api(`/api/v1/projects/${state.projectId}/checkpoints/${cp.id}/diff`);
+  } catch (err) { toast(err.message); return; }
+  if (changes.length === 0) {
+    box.innerHTML = '<p class="empty-sub" style="padding:12px 16px">No file changes in this version.</p>';
+    return;
+  }
+  for (const f of changes) {
+    const div = document.createElement('div');
+    div.className = 'df';
+    div.innerHTML = `<div class="df-head"><span class="df-status ${esc(f.status)}">${esc(f.status)}</span>
+      <span class="df-path"></span><span class="spacer"></span>
+      <span class="cp-plus">+${f.additions}</span><span class="cp-minus">−${f.deletions}</span></div>
+      <pre class="df-body"></pre>`;
+    div.querySelector('.df-path').textContent = f.path;
+    div.querySelector('.df-body').innerHTML = (f.diff || '').split('\n').filter((l, i, a) => i < a.length - 1 || l)
+      .map((l) => `<span class="${l.startsWith('@@') ? 'd-hunk' : l[0] === '+' ? 'd-add' : l[0] === '-' ? 'd-del' : ''}">${esc(l) || ' '}</span>`)
+      .join('') + (f.truncated ? '<span class="d-hunk">(file too large to diff line by line - shown as replaced)</span>' : '');
+    box.appendChild(div);
+  }
+}
+
+// Two clicks to restore: the first arms the button, the second does it. No
+// modal, and nothing happens by accident.
+let restoreTimer = null;
+function disarmRestore() {
+  clearTimeout(restoreTimer);
+  $('btn-restore').classList.remove('btn-restore-armed');
+  $('btn-restore').textContent = 'Restore this version';
+}
+$('btn-restore').addEventListener('click', async () => {
+  const btn = $('btn-restore');
+  if (!btn.classList.contains('btn-restore-armed')) {
+    btn.classList.add('btn-restore-armed');
+    btn.textContent = 'Click again to restore';
+    restoreTimer = setTimeout(disarmRestore, 4000);
+    return;
+  }
+  disarmRestore();
+  btn.disabled = true;
+  try {
+    const made = await api(`/api/v1/projects/${state.projectId}/checkpoints/${state.checkpoint}/restore`, { method: 'POST' });
+    toast(`Restored. That's version #${made.id} - restore an earlier one to undo.`);
+    await Promise.all([loadHistory(), loadFiles()]);
+    showCheckpoint(made);                                  // the new version, and what the restore changed
+    reloadPreviewFrame();
+  } catch (err) { toast(err.message); }
+  finally { btn.disabled = false; }
+});
+
 // ── tabs ────────────────────────────────────────────────
 
 document.querySelectorAll('.tab').forEach((tab) =>
@@ -525,6 +636,7 @@ function switchTab(name) {
   document.querySelectorAll('.tabpanel').forEach((p) => p.classList.toggle('is-on', p.id === 'tab-' + name));
   if (name === 'logs') $('log-dot').hidden = true;
   if (name === 'search') $('search-q').focus();
+  if (name === 'history') loadHistory();
 }
 
 // ── build and preview ───────────────────────────────────

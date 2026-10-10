@@ -7,6 +7,7 @@ import com.forgeflow.billing.UsageMeter;
 import com.forgeflow.execution.BuildResult;
 import com.forgeflow.execution.ExecutionService;
 import com.forgeflow.intelligence.retrieval.CodeIndex;
+import com.forgeflow.workspace.CheckpointService;
 import com.forgeflow.shared.events.CodeGenerated;
 import com.forgeflow.shared.events.EventBus;
 import com.forgeflow.shared.events.Topics;
@@ -57,6 +58,7 @@ public class AgentService {
     private final UsageMeter usage;
     private final CodeIndex index;
     private final EventBus events;
+    private final CheckpointService checkpoints;
     private final Tracer tracer;
 
     private final int maxToolCalls;
@@ -72,6 +74,7 @@ public class AgentService {
                         UsageMeter usage,
                         CodeIndex index,
                         EventBus events,
+                        CheckpointService checkpoints,
                         Tracer tracer,
                         @Value("${forgeflow.agent.max-tool-calls}") int maxToolCalls,
                         @Value("${forgeflow.agent.timeout-seconds}") long timeoutSeconds,
@@ -85,6 +88,7 @@ public class AgentService {
         this.usage = usage;
         this.index = index;
         this.events = events;
+        this.checkpoints = checkpoints;
         this.tracer = tracer;
         this.maxToolCalls = maxToolCalls;
         this.timeoutSeconds = timeoutSeconds;
@@ -137,6 +141,15 @@ public class AgentService {
         // daily allowance is allowed to finish, so the overshoot is bounded by
         // one run's own token budget (max-input-tokens) - never a half-built app.
         entitlements.requireRoomFor(userId, Quota.AI_TOKENS_PER_DAY);
+
+        // Version history: if this project already has files and no history,
+        // remember how it was before the AI touches it - so even the first
+        // run can be undone.
+        try {
+            checkpoints.ensureBaseline(projectId, userId);
+        } catch (RuntimeException e) {
+            log.warn("baseline checkpoint for project {} failed: {}", projectId, e.toString());
+        }
 
         long startedAt = System.currentTimeMillis();
         long deadline = startedAt + timeoutSeconds * 1000L;
@@ -345,6 +358,15 @@ public class AgentService {
         usage.record(userId, projectId, UsageKind.AI_TOKENS, totalTokens, "run:" + run.getId());
 
         if (!written.isEmpty()) {
+            // A version per run that changed something, labelled with what
+            // was asked. Never fatal: history failing must not fail the run.
+            try {
+                String label = (status.equals("SUCCEEDED") ? "" : "(" + status.toLowerCase() + ") ")
+                        + prompt.strip().lines().findFirst().orElse("");
+                checkpoints.record(projectId, "RUN", label, run.getId(), userId);
+            } catch (RuntimeException e) {
+                log.warn("checkpoint after run {} failed: {}", run.getId(), e.toString());
+            }
             // Keyed by project: on Kafka, one project's events land on one
             // partition and stay in order. Published on the request thread,
             // not via an outbox - acceptable because every consumer is
