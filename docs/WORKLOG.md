@@ -951,6 +951,57 @@ Offline dry run on v2 (hashing embedder, so not the real numbers): hybrid
 recall@1 70%, keyword 64%, vector 54%; paraphrase recall@1 drops to 19-38%
 - the decoys work. 157 tests.
 
+### The diagram, running: Kafka, MinIO, Qdrant, a gateway, Kubernetes
+
+Aman's ask: follow the spec's architecture as closely as possible, and make
+the project worth explaining in an interview. Decision (his pick of three):
+**both modes, same code** - every infrastructure box gets a real
+implementation behind the seam it already had, chosen by config. Render keeps
+the light mode; `docker-compose.full.yml` and `deploy/k8s` run the diagram.
+
+Constraint discovered first: Maven Central is unreachable from both the
+cloud workspace and the Mac's sandboxed shell, so no new libraries could be
+downloaded. kafka-clients 3.8.1 happened to be in the local cache - the only
+new dependency. MinIO and Qdrant clients are written by hand over HTTP (as
+Redis was on Day 10).
+
+- **Kafka** (`shared/events`): `EventBus` → `InProcessEventBus` |
+  `KafkaEventBus`. code.generated keyed by project, idempotent producer,
+  manual commits after the handler (at-least-once), retries then a dead-letter
+  topic, `traceparent` in headers so one trace crosses the hop. Two consumer
+  groups - "indexer" (can be its own worker process) and "execution" (a new
+  `CodeChangeNotifier`: "run N changed …" in an open preview's logs).
+  `CodeGenerated` moved to shared: it's a contract between modules.
+- **MinIO / S3** (`shared/storage`): a SigV4 signer - it matched the worked
+  example in AWS's docs on the first run - and a small S3 client. File
+  contents become content-addressed objects; rows keep metadata and the key
+  (V8).
+- **Qdrant** (`VectorIndex`): Postgres stays the record, Qdrant is the index;
+  payload-filtered HNSW per project; falls back to pgvector (and says so)
+  when Qdrant is down. Tested against a real Qdrant 1.12.4 binary from
+  GitHub releases.
+- **Gateway** (`gateway/`, its own deployable): route table, JWT checked at
+  the edge, proxy headers, and unbuffered SSE - the test that proves the
+  first event arrives before the stream ends fails if the flush is removed.
+- **Compose and Kubernetes**: gateway, api, worker (same image, other env),
+  Postgres, Kafka (KRaft), MinIO, Qdrant, Redis, Zipkin. k8s: Deployments,
+  StatefulSets, an HPA on the worker capped at the partition count, an
+  Ingress with nginx buffering off for SSE, probes on Boot's
+  liveness/readiness groups.
+
+Verification: the browser walk-through ran end to end **through the
+gateway** against an api in S3 + Qdrant mode - 213 requests over three
+service names, chat and logs streams live, blobs visible in the bucket,
+vectors in Qdrant. Kafka and MinIO integration tests run in CI against the
+real images (Kafka binaries can't be downloaded here); the CI summary now
+lists every integration test class with its counts, because the raw logs
+aren't reachable from this workspace either. 172 tests + 6 gateway tests.
+
+Interview line: *"Every box on the diagram exists and is tested, but the
+free-tier deployment runs one process - because which boxes you pay for is a
+deployment decision, and the code shouldn't have to change when you make
+it."*
+
 ---
 
 ## Open items
@@ -962,14 +1013,18 @@ recall@1 70%, keyword 64%, vector 54%; paraphrase recall@1 drops to 19-38%
   `FORGEFLOW_MCP_API_KEY` on Render before advertising it.
 - Runtime errors only reach the agent if someone had the preview open when
   they happened - nothing exercises the app on its own.
-- Session locks and preview logs live in memory — correct for one instance
-  (Render runs one), wrong the moment there are two. (Rate limits already
+- Session locks, preview tokens and preview logs live in memory — correct for
+  one instance (Render runs one, k8s runs one api replica on purpose), wrong
+  the moment there are two. Next: move them to Redis, then scale the api. (Rate limits already
   move to Redis when `REDIS_URL` is set.)
 - Render isn't given a `REDIS_URL` yet, so production rate-limits in memory.
-- The HNSW index filters by project *after* the nearest-neighbour scan. Fine
+- (pgvector mode) The HNSW index filters by project *after* the nearest-neighbour scan;
+  Qdrant mode filters inside the search. Fine
   at this size; with many projects, a busy one could crowd a small one out of
   the candidate list (pgvector 0.8's iterative scans fix this).
-- Embedding calls aren't counted against the token quota.
+- Embedding calls aren't counted against the token quota (rerank calls are).
+- Unreferenced blobs in object storage are never deleted (no sweep yet).
+- Kubernetes pods per preview (the spec's execution box) - not built; `SandboxProvider` is the seam.
 - Real Stripe is built and tested against a local stub, but never run against
   Stripe itself — that needs Aman's test-mode keys (notes.md §14).
 - Two project creates racing can both pass the quota check and land one over.

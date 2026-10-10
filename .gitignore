@@ -45,3 +45,4 @@ ui-walk-shots/
 dump.rdb
 __pycache__/
 *.pyc
+deploy/k8s/11-secret.yaml

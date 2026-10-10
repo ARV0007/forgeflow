@@ -658,15 +658,21 @@ is capped at 120 lines a minute per project.
 The SSE stream sends the buffer, then follows live, with the line's sequence
 number as the event id so a reconnect resumes rather than replays.
 
-### 17.6 Deliberately not built
+### 17.6 The infrastructure boxes: both modes, same code (updated 10 Oct)
 
-| Spec item | Instead | Why |
-|---|---|---|
-| Spring Cloud Gateway | one app, Spring Security in front | one deployable has nothing to route between |
-| Kubernetes pods per preview | Docker locally, in-process on Render | no cluster on a free tier; `SandboxProvider` is the seam |
-| MinIO | Postgres TEXT | small text files; `ProjectFileService` is the seam |
-| Kafka | in-process `CodeGenerated` event | one consumer, one process; the event record is the seam |
-| Qdrant | pgvector | already in the database; no second store to keep consistent |
+Originally each of these was "deliberately not built, a seam instead". Each
+seam now has its real implementation behind a config switch. Render keeps the
+light mode (free tier, one process); `docker-compose.full.yml` and
+`deploy/k8s` run the diagram. See §18.
+
+| Spec box | All-in-one (default) | Full topology | Switch |
+|---|---|---|---|
+| Spring Cloud Gateway | Spring Security in the app | `gateway/` - its own deployable | (separate service) |
+| Kafka | `InProcessEventBus` | `KafkaEventBus`, worker process | `FORGEFLOW_EVENTS=kafka` |
+| MinIO | Postgres TEXT | `S3ObjectStore` (SigV4) | `FORGEFLOW_FILE_STORAGE=s3` |
+| Qdrant | pgvector | `QdrantVectorIndex` | `FORGEFLOW_VECTOR_STORE=qdrant` |
+| Kubernetes | Render | `deploy/k8s` (gateway, api, worker + HPA, infra) | (manifests) |
+| Kubernetes pods per preview | Docker locally, in-process on Render | **still not built**: `SandboxProvider` is the seam | |
 
 ### 17.7 Billing
 
@@ -873,3 +879,94 @@ the run. The eval runner's follow-up cases (a small change on the app just
 built) classify each follow-up as `edit` (edit_file only), `rewrite`
 (write_file only) or `mixed`, reported apart from the pass rate.
 
+---
+
+## 18. Full topology
+
+```
+browser ──► gateway :8080 ──────────► api :8081 ─────────────► postgres  rows, chunks, keyword index, vectors (record)
+            edge JWT check,              │  every module          minio     file contents (content-addressed)
+            routing by path,             │                        qdrant    nearest-neighbour search (index)
+            unbuffered SSE,              │                        redis     rate-limit buckets
+            X-Forwarded-*, traceparent   │
+                                         └─► kafka: code.generated (key = project id, 3 partitions)
+                                               ├─ group "indexer"   ─► worker(s): chunk, embed, write rows + Qdrant
+                                               └─ group "execution" ─► api: "run N changed ..." into an open preview's logs
+            zipkin :9411 ◄── spans from api and worker, one trace per request across the Kafka hop
+```
+
+### 18.1 Events (`shared/events`)
+
+`EventBus` with two transports. Publishers don't know which.
+
+| | in-process | Kafka |
+|---|---|---|
+| delivery | method call, publisher's thread | idempotent producer, `acks=all`, async send, `max.block.ms=2000` |
+| ordering | publish order | per key (project id → one partition) |
+| consumers | every subscriber | per consumer group; partitions shared within a group |
+| failure | logged, publisher unaffected | `max-attempts` retries with backoff → `<topic>.DLT` (error, origin, group, attempts in headers) → partition moves on |
+| commit | n/a | manual, after the handler returns → at-least-once |
+| tracing | same thread, same trace | `traceparent` header; PRODUCER and CONSUMER spans |
+
+Handlers must be idempotent; both are (`ensureIndexed` compares hashes; a
+duplicate notice prints twice). There is no outbox: the event is published
+after the run, outside any transaction it could be rolled back with, and a
+lost event costs latency on the next search (which re-checks the index), never
+a wrong answer.
+
+### 18.2 Object storage (`shared/storage`)
+
+`ObjectStore` / `S3ObjectStore`: PUT, GET, DELETE, create-bucket, path-style,
+SigV4 (`SigV4`, verified against AWS's documented example). In s3 mode
+`project_files.content` is NULL and `object_key` = `projects/<id>/blobs/<sha256>`
+(V8; a CHECK constraint guarantees one of the two). Content addressing: writes
+are idempotent, identical files share an object, objects are never
+overwritten. Object first, row second - a failed commit leaves an orphan blob,
+never a row pointing at nothing. Garbage collection of unreferenced blobs: not
+built.
+
+### 18.3 Vector index (`intelligence/retrieval`)
+
+`VectorIndex` = `PgVectorIndex` | `QdrantVectorIndex`. Postgres remains the
+record (chunk rows keep their vectors); Qdrant is an index of it: one
+collection, point id = chunk id, payload `project_id`/`file_path`/`model` with
+payload indexes so the project filter runs inside HNSW. Upsert/delete with
+`wait=true`. If Qdrant rejects an upsert the file's chunks get a placeholder
+hash → re-indexed next pass. If Qdrant is down at query time, the vector half
+is answered from pgvector and the response says `X-Search-Degraded: true`.
+
+### 18.4 Gateway (`gateway/`)
+
+Separate Spring Boot app (MVC + `java.net.http`), not Spring Cloud Gateway.
+Routes: first-match prefix table with `*` segments, service name → URL
+(`/gateway/routes` lists it). Edge auth: protected paths need a valid JWT
+(same secret) or get 401 without reaching a service. Forwarding: hop-by-hop
+headers dropped, `X-User-Id` stripped, `X-Forwarded-For/Proto/Host`,
+`X-Request-Id`, `traceparent` started if absent. Responses: SSE detected by
+content type and copied through in 1 KB reads with a flush after each;
+unreachable upstream → 502, timeout → 504.
+
+Today every service name resolves to the same api deployment. What it would
+take to really split one: preview tokens and the logs buffer are in-memory
+per instance (move to Redis), and the execution module is called in-process
+by the agent's build gate (becomes an HTTP call - the module boundary test
+already guarantees nothing else crosses).
+
+### 18.5 Roles from one image
+
+| Env | api | worker |
+|---|---|---|
+| `FORGEFLOW_INDEXER_ENABLED` | false | true |
+| `FORGEFLOW_INDEX_ON_GENERATE` | (async) | sync - commit only after indexing |
+| `FORGEFLOW_PREVIEW_NOTICES` | true | false - serves no previews |
+| `SPRING_APPLICATION_NAME` | forgeflow-api | forgeflow-worker (Zipkin service name) |
+
+### 18.6 Verified how
+
+| Piece | Where it ran |
+|---|---|
+| Kafka bus, DLT, ordering, trace propagation; app indexing via Kafka | CI (apache/kafka 3.8, KRaft) |
+| S3 store (incl. wrong secret → 403) | CI (MinIO); locally against moto |
+| Qdrant index; app in Qdrant mode; Qdrant down → pgvector fallback | real Qdrant 1.12.4 locally and in CI |
+| Gateway routing, edge auth, header hygiene, SSE timing, 502 | gateway's own tests (SSE test sabotage-checked) |
+| Browser walk-through through the gateway, files in S3, vectors in Qdrant | locally: 213 requests over 3 service names, both SSE streams live |

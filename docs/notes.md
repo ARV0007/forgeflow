@@ -861,3 +861,59 @@ Multi-round runs should show a healthy cached share; single-round runs ~0.
   again — Gmail ignores everything after a `+`, so `you+ff@gmail.com` is a
   new ForgeFlow account that still reaches your inbox.
 
+## 20. The full topology (10 Oct)
+
+### Run it
+
+```bash
+export GOOGLE_API_KEY=...          # or FORGEFLOW_LLM_PROVIDER=demo
+export JWT_SECRET=$(openssl rand -hex 32)
+docker compose -f docker-compose.full.yml up --build
+```
+
+| URL | What |
+|---|---|
+| http://localhost:8080 | ForgeFlow, through the gateway (the only public door) |
+| http://localhost:8080/gateway/routes | the routing table |
+| http://localhost:9001 | MinIO console (forgeflow / forgeflow-minio-secret) - the file blobs |
+| http://localhost:6333/dashboard | Qdrant dashboard - the vectors |
+| http://localhost:9411 | Zipkin - search a trace, see api → kafka → worker |
+
+`docker compose -f docker-compose.full.yml logs -f worker` shows
+"indexed project N" after every AI run. `--scale worker=3` and watch Kafka
+rebalance the three partitions.
+
+### Switches (all default to the light mode)
+
+| Variable | Values |
+|---|---|
+| `FORGEFLOW_EVENTS` | `in-process` \| `kafka` (+ `KAFKA_BOOTSTRAP_SERVERS`) |
+| `FORGEFLOW_FILE_STORAGE` | `postgres` \| `s3` (+ `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`) |
+| `FORGEFLOW_VECTOR_STORE` | `pgvector` \| `qdrant` (+ `QDRANT_URL`, `QDRANT_API_KEY`) |
+| `FORGEFLOW_INDEXER_ENABLED` | `true` \| `false` (false on an API whose indexing runs in a worker) |
+| `FORGEFLOW_PREVIEW_NOTICES` | `true` \| `false` (false on the worker) |
+
+### Testing the infrastructure pieces locally
+
+```bash
+QDRANT_TEST_URL=http://localhost:6333 ./mvnw test        # with a Qdrant running
+S3_TEST_ENDPOINT=http://localhost:9000 ./mvnw test       # MinIO (add S3_TEST_STRICT=true) or moto_server
+KAFKA_BOOTSTRAP_SERVERS=localhost:9092 ./mvnw test       # a broker
+./mvnw -f gateway/pom.xml test                           # the gateway
+```
+
+Without the variables those tests skip. CI sets all of them, and its run
+summary lists each integration test class with its test/skip counts.
+
+### Gotchas
+
+- **A buffering proxy kills SSE.** Chat replies and logs are streams; the
+  gateway flushes per read, and the k8s Ingress turns nginx buffering off.
+  Any new hop on the path needs the same.
+- **`KAFKA_PORT` in Kubernetes.** A Service named `kafka` makes Kubernetes
+  inject `KAFKA_PORT=tcp://...` into pods, and the Kafka image reads every
+  `KAFKA_*` variable as config. `enableServiceLinks: false` on the broker.
+- **Content-addressed blobs are never deleted.** Correct, and it grows.
+  A sweep of objects no row references is the missing piece.
+- **The api runs one replica** until preview tokens and the logs buffer move
+  to Redis - see deploy/k8s/20-api.yaml.

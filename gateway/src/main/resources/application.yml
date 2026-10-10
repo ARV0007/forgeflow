@@ -1,0 +1,40 @@
+server:
+  port: ${PORT:8080}
+  # SSE streams (chat replies, logs) stay open for minutes; never time them out here.
+  tomcat:
+    connection-timeout: 30s
+
+spring:
+  application:
+    name: forgeflow-gateway
+  threads:
+    virtual:
+      enabled: true          # one thread per open stream is fine when threads are virtual
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+gateway:
+  # Must match the services' JWT_SECRET: the edge verifies tokens itself, so
+  # a forged or expired one never reaches a service.
+  jwt-secret: ${JWT_SECRET:change-me-in-env-this-is-local-only}
+  # Service name -> base URL. In docker-compose.full.yml and deploy/k8s every
+  # name points at the same ForgeFlow deployment; splitting one out is
+  # changing one URL here.
+  upstreams:
+    core: ${CORE_URL:http://localhost:8081}
+    intelligence: ${INTELLIGENCE_URL:${CORE_URL:http://localhost:8081}}
+    execution: ${EXECUTION_URL:${CORE_URL:http://localhost:8081}}
+  # First match wins; "*" matches one path segment.
+  routes:
+    - { prefix: "/api/v1/projects/*/chat/", service: intelligence }
+    - { prefix: "/api/v1/projects/*/generate", service: intelligence }
+    - { prefix: "/api/v1/projects/*/search", service: intelligence }
+    - { prefix: "/mcp", service: intelligence }
+    - { prefix: "/api/v1/projects/*/preview", service: execution }
+    - { prefix: "/api/v1/projects/*/build", service: execution }
+    - { prefix: "/p/", service: execution }
+    - { prefix: "/", service: core }

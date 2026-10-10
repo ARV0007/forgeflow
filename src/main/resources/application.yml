@@ -26,6 +26,11 @@ management:
     web:
       exposure:
         include: health,info,metrics
+  # /actuator/health/liveness and /readiness for Kubernetes probes (deploy/k8s).
+  endpoint:
+    health:
+      probes:
+        enabled: true
 
 forgeflow:
   mcp:
@@ -93,6 +98,9 @@ forgeflow:
   # false on an API instance whose indexing runs in a separate worker.
   indexer:
     enabled: ${FORGEFLOW_INDEXER_ENABLED:true}
+  # false on an instance that serves no previews (the indexing worker).
+  execution:
+    notify-on-code-change: ${FORGEFLOW_PREVIEW_NOTICES:true}
   # File contents: postgres (default) | s3 (MinIO, R2, S3 - any SigV4 endpoint).
   storage:
     files: ${FORGEFLOW_FILE_STORAGE:postgres}

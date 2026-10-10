@@ -3,6 +3,7 @@ package com.forgeflow.execution;
 import com.forgeflow.shared.events.CodeGenerated;
 import com.forgeflow.shared.events.EventBus;
 import com.forgeflow.shared.events.Topics;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -26,10 +27,19 @@ public class CodeChangeNotifier {
     private final ExecutionService execution;
     private final PreviewLogs logs;
 
-    public CodeChangeNotifier(EventBus events, ExecutionService execution, PreviewLogs logs) {
+    /**
+     * @param enabled false on an instance that serves no previews (the
+     *                indexing worker): with Kafka it would otherwise take a
+     *                share of the "execution" group's partitions and print
+     *                notices into logs nobody reads.
+     */
+    public CodeChangeNotifier(EventBus events, ExecutionService execution, PreviewLogs logs,
+                              @Value("${forgeflow.execution.notify-on-code-change:true}") boolean enabled) {
         this.execution = execution;
         this.logs = logs;
-        events.subscribe(Topics.CODE_GENERATED, GROUP, CodeGenerated.class, this::on);
+        if (enabled) {
+            events.subscribe(Topics.CODE_GENERATED, GROUP, CodeGenerated.class, this::on);
+        }
     }
 
     void on(CodeGenerated event) {

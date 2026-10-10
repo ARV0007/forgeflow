@@ -1,0 +1,20 @@
+# Non-secret settings shared by api and worker. The same switches as
+# docker-compose.full.yml: every architecture box is configuration.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: forgeflow-config
+  namespace: forgeflow
+data:
+  DB_URL: jdbc:postgresql://postgres:5432/forgeflow
+  DB_USERNAME: forgeflow
+  FORGEFLOW_SANDBOX_PROVIDER: in-process
+  REDIS_URL: redis://redis:6379
+  ZIPKIN_URL: http://zipkin:9411
+  FORGEFLOW_EVENTS: kafka
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  FORGEFLOW_FILE_STORAGE: s3
+  S3_ENDPOINT: http://minio:9000
+  S3_BUCKET: forgeflow-files
+  FORGEFLOW_VECTOR_STORE: qdrant
+  QDRANT_URL: http://qdrant:6333

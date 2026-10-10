@@ -1733,21 +1733,178 @@ system prompt, tools and history. One SQL query shows it.
 
 ---
 
-## Chapter 23 — What's next
+## Chapter 23 — The whole building site: Kafka, MinIO, Qdrant, the gateway
+
+**Plain English.** Until now ForgeFlow was a small workshop: one room, one
+team, everything within arm's reach. The architecture diagram draws a big
+building site. This chapter builds that site - but keeps the workshop too,
+and lets a switch decide which one you're running.
+
+| Diagram box | On the building site it is… | What it does in ForgeFlow |
+|---|---|---|
+| API Gateway | the security gate at the entrance | checks your badge (JWT), sends you to the right building, logs who came in |
+| Kafka | the site's post room | "run 12 finished, these files changed" is posted once; every department that cares picks up its own copy |
+| worker | a separate crew in its own hut | reads the post, files the new drawings into the archive (chunk + embed + store) |
+| MinIO | the warehouse | holds the actual file contents; the office (Postgres) keeps the index cards |
+| Qdrant | the specialist librarian | finds "drawings that mean something like this" fast, for one project at a time |
+| Kubernetes | the site manager | starts crews, restarts the ones that fall over, adds more when it's busy |
+
+### Kafka: post it once, everyone who cares gets it
+
+When the AI finishes a run, ForgeFlow *publishes* one event: `code.generated`,
+with the project and the files. It doesn't call the indexer, and it doesn't
+know who's listening. Two listeners are:
+
+- the **indexer** (consumer group "indexer") re-reads and re-embeds the
+  changed files, and
+- the **preview notifier** (group "execution") tells an open preview's logs
+  "new code - reload".
+
+A **consumer group** is a team: every team gets every event; inside a team the
+work is shared. Run three indexer workers and Kafka gives each a third of the
+**partitions** (lanes). Events for one project always use the same lane (the
+project id is the **key**), so they're handled in order.
+
+Two promises matter, and they're the classic Kafka interview questions:
+
+- **At-least-once.** The worker marks an event done (commits the offset)
+  only *after* handling it. Crash halfway, and the event comes again. So
+  handlers must be **idempotent** - doing it twice must be harmless. Ours
+  are: re-indexing compares file fingerprints and skips what's unchanged.
+- **A bad event can't block the lane.** Three tries, then it goes to a
+  **dead-letter topic** (`code.generated.DLT`) with the error attached, and
+  the lane moves on. Nothing is silently dropped.
+
+### MinIO: contents in a warehouse, index cards in the office
+
+In "s3 mode" a file's text goes to object storage, and the database row keeps
+only the metadata plus a key. The key is built from the content's
+fingerprint (SHA-256): `projects/7/blobs/9f2c…`. So the same text is stored
+once, writing it twice is harmless, and an object is never overwritten -
+which is exactly what version history needs later.
+
+Talking to S3 means signing every request (AWS Signature V4). We wrote the
+signer ourselves and checked it against the worked example in AWS's own
+documentation - it matched first time, and that test stays in the suite.
+
+### Qdrant: a specialist for "find things that mean this"
+
+Postgres can do vector search (pgvector), and still does by default. Qdrant
+is a database built only for it. In Qdrant mode Postgres keeps the record of
+every chunk, and Qdrant holds an index of the vectors - one it can rebuild.
+Each vector carries its project id, and the search filters on it *inside* the
+search, so a big project can't crowd a small one out of the results.
+
+If Qdrant goes down, search quietly answers from Postgres (which still has
+every vector) and the response says so in a header.
+
+### The gateway: one door
+
+Every request goes through one small app first. It:
+
+1. finds the route ("chat goes to the intelligence service"),
+2. rejects a missing or forged token **before** it reaches any service,
+3. adds the standard proxy headers and a trace id,
+4. streams the answer back.
+
+Step 4 is the tricky one. Chat replies and logs are **Server-Sent Events** -
+a response that stays open and trickles out. A proxy that waits for the
+response to finish before passing it on would hold every chat message until
+the chat ends, i.e. forever. So the gateway passes bytes through as they
+arrive and flushes after each read. There's a test that measures it - and it
+fails if you remove the flush.
+
+### Same code, two deployments
+
+Everything above is a **switch**, not a fork:
+
+```
+FORGEFLOW_EVENTS=kafka   FORGEFLOW_FILE_STORAGE=s3   FORGEFLOW_VECTOR_STORE=qdrant
+```
+
+Render (free, one process) runs with all three off. `docker compose -f
+docker-compose.full.yml up` runs with all three on, plus a separate worker,
+the gateway, and Zipkin to watch one request travel through all of it.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why not use Kafka for everything, all the time?**
+It's a whole system to run, and on a single free-tier server it would add
+failure modes without adding anything a method call doesn't do. Kafka earns
+its place when work moves to another process - the indexer worker - or when
+events must survive a restart. Which is why it's a switch.
+
+**Q: What does "at-least-once" mean, and how do you cope with duplicates?**
+Every event is handled one or more times, never zero. Duplicates are made
+harmless (idempotency): indexing the same unchanged files again does nothing.
+
+**Q: Why does the event have a key, and why the project id?**
+Kafka keeps order only within a partition, and the key picks the partition.
+Same project, same partition: a project's events are processed in the order
+they happened. Different projects spread across partitions and run in parallel.
+
+**Q: What's a dead-letter topic for?**
+For events that keep failing. Without one, a single bad event either blocks
+its partition forever (retry, retry…) or gets dropped. With one, it's parked
+with the error for a human to look at, and everything behind it flows.
+
+**Q: Why content-addressed keys in object storage?**
+The key is the content's fingerprint, so: identical files are stored once,
+uploading twice is harmless, and nothing is ever overwritten - an old
+version stays readable by its key. The cost: old blobs pile up until a
+cleanup job removes the ones no row points to (not built yet).
+
+**Q: If Qdrant is the vector database, why do the vectors stay in Postgres too?**
+Postgres is the source of truth; Qdrant is an index that can be rebuilt from
+it. That also gives a fallback when Qdrant is down. The price is storing each
+vector twice - fine at this size, and it's the standard "rebuildable index"
+trade-off.
+
+**Q: Why write your own gateway instead of Spring Cloud Gateway?**
+Two reasons: the library couldn't be downloaded in this environment, and the
+interesting part - streaming SSE through without buffering - is a few dozen
+lines you can explain line by line. A framework would hide it.
+
+**Q: Why does the API run only one replica on Kubernetes?**
+Running previews and their live log buffers are kept in memory. A second
+replica wouldn't know about a preview the first one started. Moving that
+state to Redis is the next step; everything else (rate limits, events, files,
+vectors) is already shared.
+
+**Q: How do you know the infrastructure code works if it can't run here?**
+Kafka and MinIO run in CI as real containers, and the CI summary lists each
+integration test with its counts. Qdrant ran locally from its official
+binary. And the full browser walk-through ran through the real gateway in
+front of the app in S3 + Qdrant mode.
+
+</details>
+
+---
+
+## Chapter 24 — What's next
 
 Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
 the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
 roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
 (Chapter 16), **plans, quotas and Stripe** (Chapter 17), **rate limiting**
 (Chapter 18), **RAG** (Chapter 19), **tracing** (Chapter 20), the
-**workbench** (Chapter 21), and `edit_file`, the runtime loop and prompt
-caching (Chapter 22). What's left:
+**workbench** (Chapter 21), `edit_file`, the runtime loop and prompt
+caching (Chapter 22), and the full topology - Kafka, MinIO, Qdrant, the
+gateway, Kubernetes (Chapter 23). What's left:
 
 - **Measure it** — re-run the evals against real Gemini and count how often
   edit requests now use `edit_file`.
 - **A headless browser in the build gate**, so runtime errors are caught
   without anyone opening the preview.
 - **"Forgot password?"** — needs an email sender to mail a reset link.
+- **Version history** — every AI run a checkpoint, with a diff and one-click
+  restore (content-addressed blobs already keep old versions readable).
+- **Screenshot to app** and **the AI checking its own app** — Gemini reads
+  images; the preview runs in a real browser that can take the picture.
+- **React apps running in the browser** (WebContainers) — the diagram's
+  "Code Execution Service: WebContainer" box.
+- **Preview state in Redis**, so the API can run more than one replica.
 
 <details>
 <summary><b>Counter-questions</b></summary>

@@ -99,6 +99,17 @@ jobs:
       - name: Build and test
         run: ./mvnw -B verify
 
+      # The gateway is its own deployable with its own tests.
+      - name: Build and test the gateway
+        run: ./mvnw -B -f gateway/pom.xml verify
+
+      # The deployment files parse, and every service the compose file
+      # depends on exists - cheap checks that catch the typos.
+      - name: Check deployment files
+        run: |
+          docker compose -f docker-compose.full.yml config --quiet
+          python3 -c "import yaml,glob; [list(yaml.safe_load_all(open(f))) for f in glob.glob('deploy/k8s/*.yaml')]; print('k8s yaml ok')"
+
       # Proof the infrastructure tests ran rather than skipped: one annotation
       # per integration-test class, readable from the run summary.
       - name: Report integration tests

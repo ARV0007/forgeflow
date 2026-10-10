@@ -1,0 +1,57 @@
+# The API: every module, serving HTTP. Publishes code.generated to Kafka and
+# leaves indexing to the worker.
+#
+# replicas: 1 on purpose. Preview tokens and the live logs buffer are held in
+# memory per instance, so a second replica would see a preview the first
+# started as "not running". The fix is known (logs and preview registry in
+# Redis; every other piece - rate limits, events, files, vectors - is already
+# shared) and is the next step before scaling this Deployment.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: forgeflow
+  labels: { app: api, app.kubernetes.io/part-of: forgeflow }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: api }
+  template:
+    metadata:
+      labels: { app: api }
+    spec:
+      containers:
+        - name: api
+          image: forgeflow:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8081
+          envFrom:
+            - configMapRef: { name: forgeflow-config }
+            - secretRef: { name: forgeflow-secrets }
+          env:
+            - { name: FORGEFLOW_INSTANCE, value: api }
+            - { name: SPRING_APPLICATION_NAME, value: forgeflow-api }
+            - { name: FORGEFLOW_INDEXER_ENABLED, value: "false" }
+            - { name: APP_BASE_URL, value: "https://forgeflow.example.com" }
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { memory: 1Gi }
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: 8081 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: 8081 }
+            initialDelaySeconds: 60
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: forgeflow
+spec:
+  selector: { app: api }
+  ports:
+    - { port: 8081, targetPort: 8081 }

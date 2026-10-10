@@ -60,6 +60,26 @@ the build if one reaches into another's tables.
 
 Details, decisions and trade-offs: [`docs/architecture.md`](docs/architecture.md).
 
+### Two deployments, one codebase
+
+The spec's diagram draws a gateway, Kafka, MinIO, Qdrant and Kubernetes. All
+of them are built - each behind a seam, switched on by configuration:
+
+```
+all-in-one (Render, free tier)          full topology (docker-compose.full.yml, deploy/k8s)
+
+  browser ─► app ─► postgres              browser ─► gateway ─► api ─┬─► postgres   rows, chunks
+                                                       edge JWT,    ├─► minio      file contents
+  events:  in-process                                  SSE proxy    ├─► qdrant     vector search
+  files:   postgres                                                 ├─► redis      rate limits
+  vectors: pgvector                                                 └─► kafka ─ code.generated ─┬─► worker (indexer)
+                                                                                                └─► api (preview notices)
+```
+
+```bash
+docker compose -f docker-compose.full.yml up --build     # then http://localhost:8080
+```
+
 ## Stack
 
 Java 21 · Spring Boot 4.1 · PostgreSQL 16 + pgvector · Flyway · Gemini

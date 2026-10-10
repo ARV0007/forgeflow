@@ -1,0 +1,59 @@
+# The indexer: the same image, consuming code.generated as group "indexer"
+# (chunk, embed, write to Postgres + Qdrant). Stateless, so it scales - up to
+# the topic's partition count (3); a fourth worker would sit idle, because
+# Kafka gives each partition to one member of a group.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: forgeflow
+  labels: { app: worker, app.kubernetes.io/part-of: forgeflow }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: worker }
+  template:
+    metadata:
+      labels: { app: worker }
+    spec:
+      containers:
+        - name: worker
+          image: forgeflow:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8082
+          envFrom:
+            - configMapRef: { name: forgeflow-config }
+            - secretRef: { name: forgeflow-secrets }
+          env:
+            - { name: PORT, value: "8082" }
+            - { name: FORGEFLOW_INSTANCE, value: worker }
+            - { name: SPRING_APPLICATION_NAME, value: forgeflow-worker }
+            - { name: FORGEFLOW_INDEXER_ENABLED, value: "true" }
+            - { name: FORGEFLOW_INDEX_ON_GENERATE, value: sync }
+            - { name: FORGEFLOW_PREVIEW_NOTICES, value: "false" }
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { memory: 1Gi }
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: 8082 }
+            initialDelaySeconds: 20
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: 8082 }
+            initialDelaySeconds: 60
+            periodSeconds: 20
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: worker
+  namespace: forgeflow
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: worker }
+  minReplicas: 1
+  maxReplicas: 3            # = partitions of code.generated
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
