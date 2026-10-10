@@ -997,6 +997,13 @@ real images (Kafka binaries can't be downloaded here); the CI summary now
 lists every integration test class with its counts, because the raw logs
 aren't reachable from this workspace either. 172 tests + 6 gateway tests.
 
+**CI, first full run:** every integration test ran, none skipped (Kafka
+bus 2, Kafka end-to-end 1, S3 store 2, S3 mode 1, Qdrant index 1, Qdrant
+modes 2). One surprise: MinIO's Docker images no longer pull - MinIO stopped
+publishing community images in 2025. The S3 server in CI, compose and k8s is
+now Zenko CloudServer, which verifies signatures too. The client speaks S3,
+so this cost a config line, not code - the point of not using a vendor SDK.
+
 Interview line: *"Every box on the diagram exists and is tested, but the
 free-tier deployment runs one process - because which boxes you pay for is a
 deployment decision, and the code shouldn't have to change when you make

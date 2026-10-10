@@ -73,6 +73,9 @@ kind: Service
 metadata: { name: kafka, namespace: forgeflow }
 spec: { selector: { app: kafka }, ports: [{ port: 9092 }] }
 ---
+# Object storage over the S3 API. MinIO no longer publishes community images,
+# so this is Zenko CloudServer (S3-compatible, verifies SigV4) - the service
+# keeps the name "minio" from the diagram; the app only knows S3_ENDPOINT.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata: { name: minio, namespace: forgeflow }
@@ -84,26 +87,27 @@ spec:
     metadata: { labels: { app: minio } }
     spec:
       containers:
-        - name: minio
-          image: minio/minio:RELEASE.2025-04-22T22-12-26Z
-          args: ["server", "/data", "--console-address", ":9001"]
+        - name: s3
+          image: zenko/cloudserver:latest
           env:
-            - name: MINIO_ROOT_USER
-              valueFrom: { secretKeyRef: { name: forgeflow-secrets, key: S3_ACCESS_KEY } }
-            - name: MINIO_ROOT_PASSWORD
-              valueFrom: { secretKeyRef: { name: forgeflow-secrets, key: S3_SECRET_KEY } }
-          ports: [{ containerPort: 9000 }, { containerPort: 9001 }]
+            - { name: REMOTE_MANAGEMENT_DISABLE, value: "1" }
+            - { name: S3BACKEND, value: file }
+          ports: [{ containerPort: 8000 }]
           readinessProbe:
-            httpGet: { path: /minio/health/ready, port: 9000 }
-          volumeMounts: [{ name: data, mountPath: /data }]
+            tcpSocket: { port: 8000 }
+          volumeMounts:
+            - { name: data, mountPath: /usr/src/app/localData }
+            - { name: meta, mountPath: /usr/src/app/localMetadata }
   volumeClaimTemplates:
     - metadata: { name: data }
       spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 5Gi } } }
+    - metadata: { name: meta }
+      spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 1Gi } } }
 ---
 apiVersion: v1
 kind: Service
 metadata: { name: minio, namespace: forgeflow }
-spec: { selector: { app: minio }, ports: [{ name: s3, port: 9000 }, { name: console, port: 9001 }] }
+spec: { selector: { app: minio }, ports: [{ name: s3, port: 8000 }] }
 ---
 apiVersion: apps/v1
 kind: StatefulSet

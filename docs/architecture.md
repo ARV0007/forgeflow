@@ -965,8 +965,8 @@ already guarantees nothing else crosses).
 
 | Piece | Where it ran |
 |---|---|
-| Kafka bus, DLT, ordering, trace propagation; app indexing via Kafka | CI (apache/kafka 3.8, KRaft) |
-| S3 store (incl. wrong secret → 403) | CI (MinIO); locally against moto |
+| Kafka bus, DLT, ordering, trace propagation; app indexing via Kafka | CI (apache/kafka 3.8, KRaft) - all ran, 0 skipped |
+| S3 store (incl. wrong secret → 403) | CI (Zenko CloudServer - MinIO's images no longer pull); locally against moto |
 | Qdrant index; app in Qdrant mode; Qdrant down → pgvector fallback | real Qdrant 1.12.4 locally and in CI |
 | Gateway routing, edge auth, header hygiene, SSE timing, 502 | gateway's own tests (SSE test sabotage-checked) |
 | Browser walk-through through the gateway, files in S3, vectors in Qdrant | locally: 213 requests over 3 service names, both SSE streams live |

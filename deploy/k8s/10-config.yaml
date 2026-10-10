@@ -14,7 +14,7 @@ data:
   FORGEFLOW_EVENTS: kafka
   KAFKA_BOOTSTRAP_SERVERS: kafka:9092
   FORGEFLOW_FILE_STORAGE: s3
-  S3_ENDPOINT: http://minio:9000
+  S3_ENDPOINT: http://minio:8000
   S3_BUCKET: forgeflow-files
   FORGEFLOW_VECTOR_STORE: qdrant
   QDRANT_URL: http://qdrant:6333

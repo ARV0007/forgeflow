@@ -875,7 +875,6 @@ docker compose -f docker-compose.full.yml up --build
 |---|---|
 | http://localhost:8080 | ForgeFlow, through the gateway (the only public door) |
 | http://localhost:8080/gateway/routes | the routing table |
-| http://localhost:9001 | MinIO console (forgeflow / forgeflow-minio-secret) - the file blobs |
 | http://localhost:6333/dashboard | Qdrant dashboard - the vectors |
 | http://localhost:9411 | Zipkin - search a trace, see api → kafka → worker |
 
@@ -913,6 +912,11 @@ summary lists each integration test class with its test/skip counts.
 - **`KAFKA_PORT` in Kubernetes.** A Service named `kafka` makes Kubernetes
   inject `KAFKA_PORT=tcp://...` into pods, and the Kafka image reads every
   `KAFKA_*` variable as config. `enableServiceLinks: false` on the broker.
+- **MinIO's images are gone.** MinIO stopped publishing community Docker
+  images in 2025; every pinned tag failed to pull in CI. The S3 server in
+  compose, k8s and CI is Zenko CloudServer (S3-compatible, checks SigV4,
+  dev account accessKey1 / verySecretKey1). The code speaks S3 - MinIO, R2 or
+  AWS S3 are an endpoint change. Good interview point: vendor-neutral.
 - **Content-addressed blobs are never deleted.** Correct, and it grows.
   A sweep of objects no row references is the missing piece.
 - **The api runs one replica** until preview tokens and the logs buffer move
