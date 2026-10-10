@@ -38,6 +38,7 @@ class GatewayTest {
 
     static final String SECRET = "a-test-secret-that-is-at-least-32-bytes-long";
     static final HttpServer core = fake("core");
+    static final HttpServer core2 = fake("core");                // a second instance of the same service
     static final HttpServer intelligence = fake("intelligence");
     static final List<Map<String, String>> received = new CopyOnWriteArrayList<>();
 
@@ -48,7 +49,10 @@ class GatewayTest {
     @DynamicPropertySource
     static void upstreams(DynamicPropertyRegistry r) {
         r.add("gateway.jwt-secret", () -> SECRET);
-        r.add("gateway.upstreams.core", () -> "http://127.0.0.1:" + core.getAddress().getPort());
+        // Three instances: a dead one, and two live ones. Requests must take turns
+        // between the live ones and never fail because of the dead one.
+        r.add("gateway.upstreams.core", () -> "http://127.0.0.1:1, http://127.0.0.1:" + core.getAddress().getPort()
+                + ", http://127.0.0.1:" + core2.getAddress().getPort());
         r.add("gateway.upstreams.intelligence", () -> "http://127.0.0.1:" + intelligence.getAddress().getPort());
         r.add("gateway.upstreams.execution", () -> "http://127.0.0.1:1");      // nothing listens: "down"
     }
@@ -77,6 +81,7 @@ class GatewayTest {
                 }
                 byte[] body = ("served by " + name).getBytes(StandardCharsets.UTF_8);
                 ex.getResponseHeaders().add("X-Auth-Token", "renewed");
+                ex.getResponseHeaders().add("X-Instance-Port", String.valueOf(s.getAddress().getPort()));
                 ex.sendResponseHeaders(200, body.length);
                 ex.getResponseBody().write(body);
                 ex.close();
@@ -91,6 +96,7 @@ class GatewayTest {
     @AfterAll
     static void stop() {
         core.stop(0);
+        core2.stop(0);
         intelligence.stop(0);
     }
 
@@ -169,6 +175,19 @@ class GatewayTest {
         HttpResponse<String> r = get("/p/sometoken/index.html", Map.of());
         assertThat(r.statusCode()).isEqualTo(502);
         assertThat(r.body()).contains("execution");
+    }
+
+    @Test
+    void requestsTakeTurnsBetweenInstancesAndSkipADeadOne() throws Exception {
+        java.util.Set<String> instances = new java.util.HashSet<>();
+        for (int i = 0; i < 6; i++) {
+            HttpResponse<String> r = get("/api/v1/me", Map.of("Authorization", valid()));
+            assertThat(r.statusCode()).isEqualTo(200);              // the dead instance never shows
+            assertThat(r.body()).isEqualTo("served by core");
+            instances.add(r.headers().firstValue("X-Instance-Port").orElseThrow());
+        }
+        assertThat(instances).containsExactlyInAnyOrder(
+                String.valueOf(core.getAddress().getPort()), String.valueOf(core2.getAddress().getPort()));
     }
 
     @Test

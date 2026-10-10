@@ -3,10 +3,10 @@
 #   docker compose -f docker-compose.full.yml up --build
 #   open http://localhost:8080           (the gateway: the only public door)
 #
-#   browser ──► gateway :8080 ──► api :8081 ──► postgres (rows, keyword index)
+#   browser ──► gateway :8080 ──► api, api-2 ──► postgres (rows, keyword index)
 #                 edge JWT check      │   ├──► minio      (file contents; S3 API, CloudServer)
-#                 routing, SSE        │   ├──► qdrant     (vector search)
-#                                     │   ├──► redis      (rate limits)
+#                 routing, SSE,       │   ├──► qdrant     (vector search)
+#                 round robin         │   ├──► redis      (rate limits, chat locks, preview logs)
 #                                     │   └──► kafka ── code.generated ──┐
 #                                     │                                  ├─► worker  (group "indexer": chunk, embed, ingest)
 #                                     │◄─────────────────────────────────┘   api     (group "execution": preview notices)
@@ -46,9 +46,14 @@ services:
       - "8080:8080"
     environment:
       JWT_SECRET: ${JWT_SECRET:-change-me-in-env-this-is-local-only-0123456789}
-      CORE_URL: http://api:8081
+      # Two API instances, taking turns; a refused connection moves on to the
+      # other. Possible because the API keeps no state of its own: chat locks,
+      # the preview Logs Stream and rate limits are in Redis.
+      CORE_URL: http://api:8081,http://api-2:8081
     depends_on:
       api:
+        condition: service_healthy
+      api-2:
         condition: service_healthy
 
   api:
@@ -69,6 +74,22 @@ services:
       kafka: { condition: service_healthy }
       minio: { condition: service_healthy }
       qdrant: { condition: service_started }
+
+  # A second copy of the API. A chat reply can start on one and its logs be
+  # watched on the other; stop either and the gateway uses the one left.
+  api-2:
+    build: .
+    environment:
+      <<: *forgeflow-env
+      FORGEFLOW_INSTANCE: api-2
+      SPRING_APPLICATION_NAME: forgeflow-api
+      FORGEFLOW_INDEXER_ENABLED: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8081 && printf 'GET /actuator/health HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    depends_on: *infra
 
   # Same image, different job: consumes code.generated as group "indexer".
   # Scale it (--scale worker=3) and Kafka spreads the partitions across them.

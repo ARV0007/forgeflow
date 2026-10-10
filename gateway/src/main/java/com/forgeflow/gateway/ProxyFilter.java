@@ -90,8 +90,7 @@ public class ProxyFilter extends OncePerRequestFilter {
         }
 
         String query = req.getQueryString();
-        URI target = URI.create(route.upstream() + path + (query == null ? "" : "?" + query));
-        HttpRequest.Builder out = HttpRequest.newBuilder(target).timeout(Duration.ofMinutes(30));
+        HttpRequest.Builder out = HttpRequest.newBuilder().timeout(Duration.ofMinutes(30));
         for (String name : Collections.list(req.getHeaderNames())) {
             if (!NOT_FORWARDED.contains(name.toLowerCase(Locale.ROOT))) {
                 for (String value : Collections.list(req.getHeaders(name))) {
@@ -112,13 +111,26 @@ public class ProxyFilter extends OncePerRequestFilter {
         out.method(req.getMethod(), body.length == 0 ? HttpRequest.BodyPublishers.noBody()
                 : HttpRequest.BodyPublishers.ofByteArray(body));
 
-        HttpResponse<InputStream> upstream;
+        // Take turns between the service's instances; one that refuses the
+        // connection never saw the request, so the next one may safely get it
+        // (the body is already in memory). A timeout is different - that
+        // instance may be working on it - so that is not retried.
+        HttpResponse<InputStream> upstream = null;
         try {
-            upstream = http.send(out.build(), HttpResponse.BodyHandlers.ofInputStream());
-        } catch (ConnectException e) {
-            problem(res, 502, "Service " + route.service() + " is unreachable");
-            access(req, route, 502, started, requestId);
-            return;
+            for (URI base : routes.attemptOrder(route)) {
+                try {
+                    upstream = http.send(out.uri(URI.create(base + path + (query == null ? "" : "?" + query))).build(),
+                            HttpResponse.BodyHandlers.ofInputStream());
+                    break;
+                } catch (ConnectException e) {
+                    // next instance
+                }
+            }
+            if (upstream == null) {
+                problem(res, 502, "Service " + route.service() + " is unreachable");
+                access(req, route, 502, started, requestId);
+                return;
+            }
         } catch (HttpTimeoutException e) {
             problem(res, 504, "Service " + route.service() + " did not answer in time");
             access(req, route, 504, started, requestId);

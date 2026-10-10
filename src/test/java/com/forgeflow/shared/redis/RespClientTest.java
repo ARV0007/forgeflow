@@ -1,4 +1,6 @@
-package com.forgeflow.shared.ratelimit;
+package com.forgeflow.shared.redis;
+
+import com.forgeflow.support.RedisTestSupport;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

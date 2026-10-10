@@ -1,4 +1,4 @@
-package com.forgeflow.shared.ratelimit;
+package com.forgeflow.shared.redis;
 
 import javax.net.ssl.SSLSocketFactory;
 import java.io.BufferedInputStream;
@@ -16,6 +16,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * A minimal Redis client: RESP2 over a socket, with a small connection pool.
@@ -31,6 +38,8 @@ import java.util.concurrent.BlockingQueue;
  * and database - the shapes Render, Upstash and Redis Cloud hand out.
  */
 public class RespClient implements Closeable {
+
+    private static final Logger log = LoggerFactory.getLogger(RespClient.class);
 
     /** A "-ERR ..." reply. The connection is still healthy after one. */
     public static class RedisError extends RuntimeException {
@@ -93,6 +102,92 @@ public class RespClient implements Closeable {
             }
             throw e;
         }
+    }
+
+    /** A live pattern subscription. Close it to stop listening. */
+    public interface Subscription extends Closeable {
+        /** Wait until Redis has confirmed the subscription - messages published before that are not seen. */
+        boolean awaitReady(long timeout, TimeUnit unit) throws InterruptedException;
+
+        @Override
+        void close();
+    }
+
+    /**
+     * PSUBSCRIBE on a connection of its own, read by one virtual thread.
+     *
+     * A subscribed connection can do nothing else - Redis only sends it
+     * messages from then on - so it never goes near the pool. If the
+     * connection drops, it reconnects with backoff and subscribes again;
+     * anything published in the gap is missed, which is why callers that
+     * must not lose data keep it somewhere else too (PreviewLogs keeps a
+     * Redis list and uses pub/sub only to say "there's a new line").
+     *
+     * @param onMessage (channel, payload), on the subscriber thread - keep it quick
+     */
+    public Subscription psubscribe(String pattern, BiConsumer<String, String> onMessage) {
+        AtomicBoolean running = new AtomicBoolean(true);
+        AtomicReference<Connection> current = new AtomicReference<>();
+        CountDownLatch ready = new CountDownLatch(1);
+        Thread.ofVirtual().name("redis-psubscribe-" + pattern).start(() -> {
+            long backoff = 500;
+            while (running.get()) {
+                Connection c = null;
+                try {
+                    c = open();
+                    c.socket.setSoTimeout(0);        // a subscriber waits as long as it takes
+                    current.set(c);
+                    c.out.write(encode("PSUBSCRIBE", pattern));
+                    c.out.flush();
+                    while (running.get()) {
+                        if (!(read(c.in) instanceof List<?> m) || m.isEmpty()) {
+                            continue;
+                        }
+                        if ("psubscribe".equals(m.get(0))) {
+                            backoff = 500;
+                            ready.countDown();
+                        } else if ("pmessage".equals(m.get(0)) && m.size() == 4) {
+                            try {
+                                onMessage.accept(String.valueOf(m.get(2)), String.valueOf(m.get(3)));
+                            } catch (RuntimeException e) {
+                                log.warn("redis subscriber for {} threw: {}", pattern, e.toString());
+                            }
+                        }
+                    }
+                } catch (IOException e) {
+                    if (!running.get()) {
+                        break;
+                    }
+                    log.warn("redis subscription {} lost ({}); retrying in {} ms", pattern, e.getMessage(), backoff);
+                    try {
+                        Thread.sleep(backoff);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                    backoff = Math.min(backoff * 2, 10_000);
+                } finally {
+                    if (c != null) {
+                        c.close();
+                    }
+                }
+            }
+        });
+        return new Subscription() {
+            @Override
+            public boolean awaitReady(long timeout, TimeUnit unit) throws InterruptedException {
+                return ready.await(timeout, unit);
+            }
+
+            @Override
+            public void close() {
+                running.set(false);
+                Connection c = current.get();
+                if (c != null) {
+                    c.close();               // unblocks the reader
+                }
+            }
+        };
     }
 
     @Override
@@ -163,7 +258,7 @@ public class RespClient implements Closeable {
         }
     }
 
-    static byte[] encode(String... args) {
+    public static byte[] encode(String... args) {
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         writeAscii(buf, "*" + args.length + "\r\n");
         for (String a : args) {
@@ -177,7 +272,7 @@ public class RespClient implements Closeable {
     }
 
     /** Reads one reply: String, Long, null, List of replies, or a RedisError value. */
-    static Object read(InputStream in) throws IOException {
+    public static Object read(InputStream in) throws IOException {
         int type = in.read();
         if (type < 0) {
             throw new IOException("Redis closed the connection");

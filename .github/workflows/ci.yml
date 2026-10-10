@@ -130,7 +130,7 @@ jobs:
       - name: Report integration tests
         if: always()
         run: |
-          for f in target/surefire-reports/TEST-*IntegrationTest.xml target/surefire-reports/TEST-*ModeTest*.xml target/surefire-reports/TEST-*EndToEndTest.xml; do
+          for f in target/surefire-reports/TEST-*IntegrationTest.xml target/surefire-reports/TEST-*Shared*Test.xml target/surefire-reports/TEST-*ModeTest*.xml target/surefire-reports/TEST-*EndToEndTest.xml; do
             [ -f "$f" ] || continue
             name=$(basename "$f" .xml | sed 's/^TEST-com.forgeflow.//')
             line=$(grep -o '<testsuite [^>]*>' "$f" | head -1)

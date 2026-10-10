@@ -1,11 +1,11 @@
 # The API: every module, serving HTTP. Publishes code.generated to Kafka and
 # leaves indexing to the worker.
 #
-# replicas: 1 on purpose. Preview tokens and the live logs buffer are held in
-# memory per instance, so a second replica would see a preview the first
-# started as "not running". The fix is known (logs and preview registry in
-# Redis; every other piece - rate limits, events, files, vectors - is already
-# shared) and is the next step before scaling this Deployment.
+# Two replicas, scaled to six on CPU. The API keeps no state of its own:
+# chat locks, the preview Logs Stream and rate limits are in Redis; files in
+# S3; vectors in Qdrant; previews and everything else in Postgres; events in
+# Kafka. So the Service can send any request to any pod, and a pod can die
+# mid-stream without taking a session lock with it (the lock expires).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,7 +13,7 @@ metadata:
   namespace: forgeflow
   labels: { app: api, app.kubernetes.io/part-of: forgeflow }
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels: { app: api }
   template:
@@ -55,3 +55,29 @@ spec:
   selector: { app: api }
   ports:
     - { port: 8081, targetPort: 8081 }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api
+  namespace: forgeflow
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: api }
+  minReplicas: 2            # one can be replaced while the other serves
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+---
+# Never take both API pods down at once during node maintenance.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api
+  namespace: forgeflow
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: api }

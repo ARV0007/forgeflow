@@ -1089,3 +1089,35 @@ Run with Node── /run.html#project=ID (COOP same-origin + COEP require-corp, 
 | docker sandbox | React projects get ModuleProjectCheck there too (the container's check can't read JSX, and has no network for npm) |
 | reproducibility | `preview-runner/` (runner source, package.json pinned, build.sh) regenerates every vendored file |
 
+## 23. A stateless API (scale-out)
+
+```
+                         ┌──► api   ──┐
+browser ──► gateway ─────┤            ├──► redis   ff:lock:chat:{session}   SET NX PX / Lua release
+  round robin, skip a    └──► api-2 ──┘             ff:logs:seq             INCR (one global order)
+  refused connection                                ff:logs:{project}       RPUSH + LTRIM 500 + EXPIRE 1d
+                                                    ff:logs:ch:{project}    PUBLISH ─► PSUBSCRIBE ff:logs:ch:* (each api)
+                                                    ff:rl:*                 token buckets (§ rate limiting)
+                                                    ff:fakecheckout:{id}    SET EX / Lua GET+DEL
+```
+
+Where every piece of state lives, so any pod can answer any request:
+
+| State | Home |
+|---|---|
+| users, projects, members, chats, runs, previews, checkpoints, reviews | Postgres |
+| file contents | Postgres or S3 (§18) |
+| vectors | pgvector or Qdrant |
+| events | in-process or Kafka |
+| chat locks, preview logs, rate limits | **Redis** (memory without REDIS_URL) |
+| SSE connections | the pod the browser is connected to - fed from Redis pub/sub |
+
+| Concern | Decision |
+|---|---|
+| a pod dies holding a lock | the lock has a 6-minute expiry; the next send works after that |
+| a slow reply outlives its lock | release deletes only if the key still holds *our* random token |
+| a log line published while a pod's subscriber was reconnecting | the browser's Last-Event-ID reconnect replays it from the Redis list |
+| one sequence for every pod | `INCR`, seeded with `SET NX` above the in-memory clock-based start |
+| retrying POSTs at the gateway | only on connect-refused (the request never left); never on timeout |
+| Kubernetes | 2 replicas, HPA 2-6 on CPU, PodDisruptionBudget minAvailable 1; the Service balances, the gateway's list has one URL |
+

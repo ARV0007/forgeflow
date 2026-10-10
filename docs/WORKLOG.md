@@ -1160,6 +1160,36 @@ stackblitz.com, which the build workspace can't reach - offline it fails
 with a reason after 45 s, as designed; the online check is on Render.
 195 tests.
 
+### A stateless API: two copies behind the gateway
+
+Stage 7. Until now the API kept three things in its own memory - the chat
+"one reply at a time" lock, the preview Logs Stream, and the fake checkout's
+pending sessions - which is why Kubernetes ran exactly one replica. All
+three now live in Redis when `REDIS_URL` is set (and in memory without it):
+
+| State | In Redis | Why it's safe |
+|---|---|---|
+| chat session lock | `SET ff:lock:chat:{id} {token} NX PX 360000`; release = Lua "delete only if it's still my token" | expires if the instance dies; a late release can't free someone else's lock |
+| preview logs | `INCR` one sequence; `RPUSH`+`LTRIM`+`EXPIRE`+`PUBLISH` in one Lua call; one `PSUBSCRIBE ff:logs:ch:*` per instance | the list is the record (replay by sequence), pub/sub just says "new line"; Redis down → delivered locally |
+| fake checkout | `SET … EX 3600`, taken with GET+DEL in Lua (one use) | test tooling, but now it survives the redirect landing on the other instance |
+
+The gateway learned **round robin with failover**: a service's URL can be a
+list; requests take turns, and an instance that refuses the connection is
+skipped (safe - it never saw the request, and the body is already
+buffered). A timeout is *not* retried: that instance may be working on it.
+
+The RESP client moved to `shared/redis` and gained `psubscribe` (a
+dedicated connection read by one virtual thread, reconnecting with backoff).
+docker-compose.full runs `api` and `api-2`; Kubernetes runs 2 API replicas
+with an HPA (2-6) and a PodDisruptionBudget.
+
+Proof, beyond the unit tests (two `SessionLocks` and two `PreviewLogs` on one
+Redis): the whole browser walk-through, run through the gateway against two
+API instances on one Redis. Requests split evenly (three agent runs on each),
+and everything that crosses instances - a log line from a build on one
+reaching a viewer on the other, a chat lock, the checkout redirect - worked.
+199 tests.
+
 
 ---
 
@@ -1174,11 +1204,9 @@ with a reason after 45 s, as designed; the online check is on Render.
   open - nothing exercises the app on its own (a server-side browser would).
 - Visual check isn't measured against real Gemini yet: how often does it
   flag something real, and how often does the fix round raise the score?
-- Session locks, preview tokens and preview logs live in memory — correct for
-  one instance (Render runs one, k8s runs one api replica on purpose), wrong
-  the moment there are two. Next: move them to Redis, then scale the api. (Rate limits already
-  move to Redis when `REDIS_URL` is set.)
-- Render isn't given a `REDIS_URL` yet, so production rate-limits in memory.
+- Render isn't given a `REDIS_URL` yet, so production keeps locks, logs and
+  rate limits in memory - right for its single instance.
+- The console-line rate cap (120/min per project) is per instance.
 - (pgvector mode) The HNSW index filters by project *after* the nearest-neighbour scan;
   Qdrant mode filters inside the search. Fine
   at this size; with many projects, a busy one could crowd a small one out of

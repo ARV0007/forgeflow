@@ -1,8 +1,18 @@
 package com.forgeflow.execution;
 
+import com.forgeflow.shared.redis.RespClient;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
+
+import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -26,10 +36,25 @@ import java.util.function.Consumer;
  *   console  console.log / warn / error and uncaught exceptions from the
  *            generated app itself, running in the visitor's browser
  *
- * A bounded ring buffer per project, plus live subscribers (the SSE streams).
- * In memory, which is right for one instance - Render runs one. With several
- * instances this becomes a Redis stream or a Kafka topic keyed by project, so
- * a viewer connected to instance A sees a build that ran on instance B.
+ * A bounded buffer per project, plus live subscribers (the SSE streams).
+ *
+ * Two modes, same API:
+ *
+ *   memory  (no REDIS_URL) a ring buffer per project in this JVM. Right for one
+ *           instance - which is what the free Render deploy runs.
+ *   redis   every instance shares one log, so a viewer connected to instance A
+ *           sees a build that ran on instance B, and a console line that a
+ *           browser reported to B:
+ *             seq      INCR ff:logs:seq - one global, rising sequence
+ *             buffer   RPUSH + LTRIM ff:logs:{project} (newest 500, a day's expiry)
+ *             fan-out  PUBLISH ff:logs:ch:{project}; each instance holds one
+ *                      PSUBSCRIBE ff:logs:ch:* and hands lines to its own SSE
+ *                      subscribers. An instance's own lines come back the same
+ *                      way, so nobody gets a line twice.
+ *           The buffer is the record; pub/sub only says "there's a new line".
+ *           A subscriber that missed one (a dropped connection) gets it on the
+ *           browser's reconnect, which replays from the buffer by sequence.
+ *           If Redis is unreachable a line is still delivered locally.
  */
 @Component
 public class PreviewLogs {
@@ -69,6 +94,56 @@ public class PreviewLogs {
 
     private final Map<Long, Set<Consumer<Line>>> subscribers = new ConcurrentHashMap<>();
     private final Map<Long, long[]> consoleWindow = new ConcurrentHashMap<>();
+
+    /** Redis mode - one push, trim, expire and publish, as a single step. */
+    static final String PUSH = "redis.call('RPUSH', KEYS[1], ARGV[1]) "
+            + "redis.call('LTRIM', KEYS[1], -tonumber(ARGV[2]), -1) "
+            + "redis.call('EXPIRE', KEYS[1], 86400) "
+            + "return redis.call('PUBLISH', ARGV[3], ARGV[1])";
+
+    private final RespClient redis;
+    private final String prefix;
+    private final ObjectMapper json = new ObjectMapper();
+    private RespClient.Subscription subscription;
+
+    /** Memory mode. */
+    public PreviewLogs() {
+        this(null, "ff:logs:");
+    }
+
+    @Autowired
+    public PreviewLogs(ObjectProvider<RespClient> redis) {
+        this(redis.getIfAvailable(), "ff:logs:");
+    }
+
+    PreviewLogs(RespClient redis, String prefix) {
+        this.redis = redis;
+        this.prefix = prefix;
+        if (redis == null) {
+            return;
+        }
+        try {
+            // Seed the shared counter above anything handed out in memory mode,
+            // for the same reason the local one starts at the clock (see seq).
+            redis.call("SET", prefix + "seq", Long.toString(seq.get()), "NX");
+        } catch (IOException | RuntimeException e) {
+            log.warn("could not seed the shared log sequence: {}", e.toString());
+        }
+        subscription = redis.psubscribe(prefix + "ch:*", this::received);
+    }
+
+    /** Redis mode: wait until this instance is hearing other instances' lines. */
+    boolean awaitShared(long timeout, TimeUnit unit) throws InterruptedException {
+        return subscription == null || subscription.awaitReady(timeout, unit);
+    }
+
+    /** Stop listening to Redis (on shutdown, and in tests). */
+    @PreDestroy
+    public void close() {
+        if (subscription != null) {
+            subscription.close();
+        }
+    }
 
     public void info(Long projectId, String source, String message) {
         append(projectId, source, "info", message);
@@ -112,8 +187,17 @@ public class PreviewLogs {
         if (text.length() > MAX_MESSAGE) {
             text = text.substring(0, MAX_MESSAGE) + " ...(truncated)";
         }
+        if (redis != null && appendShared(projectId, source, level, text)) {
+            return;                  // it comes back through the subscription, to everyone
+        }
         Line line = new Line(seq.incrementAndGet(), Instant.now(), source, level, text);
+        if (redis == null) {
+            remember(projectId, line);
+        }
+        deliver(projectId, line);
+    }
 
+    private void remember(Long projectId, Line line) {
         synchronized (buffers) {
             Deque<Line> buffer = buffers.computeIfAbsent(projectId, k -> new ArrayDeque<>());
             buffer.addLast(line);
@@ -121,8 +205,37 @@ public class PreviewLogs {
                 buffer.removeFirst();
             }
         }
+    }
 
-        // Outside the lock: a slow subscriber must not stall everyone else's logging.
+    /** @return false if Redis failed, so the caller delivers the line locally instead. */
+    private boolean appendShared(Long projectId, String source, String level, String text) {
+        try {
+            long n = (Long) redis.call("INCR", prefix + "seq");
+            ObjectNode node = json.createObjectNode();
+            node.put("p", projectId).put("seq", n).put("at", System.currentTimeMillis())
+                .put("source", source).put("level", level).put("message", text);
+            redis.call("EVAL", PUSH, "1", prefix + projectId, json.writeValueAsString(node),
+                    Integer.toString(KEEP_PER_PROJECT), prefix + "ch:" + projectId);
+            return true;
+        } catch (IOException | RuntimeException e) {
+            log.warn("preview log to Redis failed ({}); delivering on this instance only", e.toString());
+            return false;
+        }
+    }
+
+    /** A line published by any instance (this one included). */
+    private void received(String channel, String payload) {
+        JsonNode n = json.readTree(payload);
+        deliver(n.path("p").asLong(), lineOf(n));
+    }
+
+    private static Line lineOf(JsonNode n) {
+        return new Line(n.path("seq").asLong(), Instant.ofEpochMilli(n.path("at").asLong()),
+                n.path("source").asText(), n.path("level").asText(), n.path("message").asText());
+    }
+
+    private void deliver(Long projectId, Line line) {
+        // Outside any lock: a slow subscriber must not stall everyone else's logging.
         Set<Consumer<Line>> listeners = subscribers.get(projectId);
         if (listeners != null) {
             for (Consumer<Line> listener : listeners) {
@@ -138,6 +251,24 @@ public class PreviewLogs {
 
     /** Buffered lines newer than {@code afterSeq} (0 for everything kept). */
     public List<Line> since(Long projectId, long afterSeq) {
+        if (redis != null) {
+            try {
+                Object raw = redis.call("LRANGE", prefix + projectId, "0", "-1");
+                List<Line> out = new ArrayList<>();
+                if (raw instanceof List<?> items) {
+                    for (Object item : items) {
+                        Line l = lineOf(json.readTree(String.valueOf(item)));
+                        if (l.seq() > afterSeq) {
+                            out.add(l);
+                        }
+                    }
+                }
+                return out;
+            } catch (IOException | RuntimeException e) {
+                log.warn("reading preview logs from Redis failed: {}", e.toString());
+                return List.of();
+            }
+        }
         synchronized (buffers) {
             Deque<Line> buffer = buffers.get(projectId);
             if (buffer == null) {
@@ -165,8 +296,18 @@ public class PreviewLogs {
         return () -> set.remove(listener);
     }
 
-    /** The newest sequence number handed out (by this instance). */
+    /** The newest sequence number handed out (across instances, in Redis mode). */
     public long lastSeq() {
+        if (redis != null) {
+            try {
+                Object v = redis.call("GET", prefix + "seq");
+                if (v != null) {
+                    return Long.parseLong(String.valueOf(v));
+                }
+            } catch (IOException | RuntimeException e) {
+                log.warn("reading the shared log sequence failed: {}", e.toString());
+            }
+        }
         return seq.get();
     }
 

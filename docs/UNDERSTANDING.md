@@ -2121,7 +2121,64 @@ errors.
 
 ---
 
-## Chapter 28 — What's next
+## Chapter 28 — Two kitchens, one order book (a stateless API)
+
+**Plain English.** Picture the restaurant opening a second kitchen to handle
+the rush. It only works if both kitchens read from the same order book. If
+each kept its own notes - "table 4's order is being cooked", "the oven
+log" - a waiter who walks into kitchen B would see nothing of what A is
+doing. ForgeFlow kept three notes like that in memory. They now live in
+Redis, the shared order book, so two (or six) copies of the API behave like
+one.
+
+### The three notes
+
+- **"Someone is already replying in this chat."** A lock in Redis: `SET` the
+  key *only if nobody has it* (`NX`), with an *expiry* (`PX`), so a copy that
+  crashes mid-reply can't block the chat forever. Releasing checks it's still
+  *our* lock before deleting - otherwise a very slow reply could unlock
+  someone else's.
+- **The Logs Stream.** Every line goes into a Redis list (the last 500, kept
+  for a day) and is *announced* on a channel. Each copy of the API listens to
+  that channel and passes lines to the browsers connected to it. The list is
+  the record; the announcement is just a doorbell.
+- **The test checkout page.** Its pending payments too, so the redirect can
+  land on either copy.
+
+### The doorman learns to share the work
+
+The gateway now takes a *list* of addresses for a service and sends requests
+to each in turn. If one copy refuses the connection - it's down - the
+request goes to the next. It only retries when the first copy *definitely*
+never got the request; if a copy was slow, retrying could do the work twice.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why not keep the logs only in pub/sub?**
+Pub/sub forgets: a copy that was reconnecting at that moment misses the
+line. The list doesn't. A browser that reconnects asks "everything after
+line N", and the list answers.
+
+**Q: What if Redis goes down?**
+Each copy falls back to its own memory: locks and logs keep working inside
+one copy, just not across copies. A degraded mode, not an outage.
+
+**Q: Why a Lua script for the release instead of GET then DEL?**
+Between the GET and the DEL the lock can expire and be taken by someone
+else - then the DEL deletes *their* lock. Redis runs a Lua script as one
+step, so nothing can happen in between.
+
+**Q: Kubernetes already balances between pods. Why teach the gateway?**
+In Kubernetes it doesn't need to - the Service does it and the list is one
+address. In docker compose there's no Service, and writing the round robin
+yourself is how you learn what the Service is doing for you.
+
+</details>
+
+---
+
+## Chapter 29 — What's next
 
 Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
 the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
@@ -2130,7 +2187,7 @@ roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
 (Chapter 18), **RAG** (Chapter 19), **tracing** (Chapter 20), the
 **workbench** (Chapter 21), `edit_file`, the runtime loop and prompt
 caching (Chapter 22), and the full topology - Kafka, MinIO, Qdrant, the
-gateway, Kubernetes (Chapter 23), version history (Chapter 24), screenshot to app (Chapter 25), the AI checking its own app (Chapter 26), and React apps running in the browser (Chapter 27). What's left:
+gateway, Kubernetes (Chapter 23), version history (Chapter 24), screenshot to app (Chapter 25), the AI checking its own app (Chapter 26), React apps running in the browser (Chapter 27), and a stateless API that scales out (Chapter 28). What's left:
 
 - **Measure it** — re-run the evals against real Gemini and count how often
   edit requests now use `edit_file`.
@@ -2141,7 +2198,6 @@ gateway, Kubernetes (Chapter 23), version history (Chapter 24), screenshot to ap
   often the fix round raises the score.
 - **Watch Run with Node boot on Render** — the WebContainer needs
   stackblitz.com, which the build workspace can't reach.
-- **Preview state in Redis**, so the API can run more than one replica.
 
 <details>
 <summary><b>Counter-questions</b></summary>

@@ -993,3 +993,37 @@ Change `runner.js` here, never the minified output.
 - **Editing `app.js`, `run.js` or `run.html` locally** → `./mvnw process-resources`
   or restart; the server serves `target/classes/static`.
 
+## 23. Two API instances (10 Oct)
+
+### See it on your laptop
+
+```bash
+docker compose -f docker-compose.full.yml up --build      # runs api AND api-2
+docker compose -f docker-compose.full.yml stop api        # kill one...
+# ...and keep using http://localhost:8080 - the gateway skips the dead one
+```
+
+Without Docker: start the jar twice with the same `REDIS_URL` and
+`JWT_SECRET` on ports 8081 and 8082, then the gateway with
+`CORE_URL=http://localhost:8081,http://localhost:8082`, and point the browser
+(or `FORGEFLOW_URL=http://localhost:8080 python3 scripts/ui-walk.py`) at 8080.
+
+### Look inside Redis while it runs
+
+```bash
+redis-cli KEYS 'ff:*'                    # what's shared
+redis-cli LRANGE ff:logs:<projectId> -3 -1
+redis-cli PSUBSCRIBE 'ff:logs:ch:*'      # watch log lines fly past
+redis-cli TTL ff:lock:chat:<sessionId>   # while a reply is being written
+```
+
+### Gotchas
+
+- **Every instance needs the same `JWT_SECRET`** - a token signed by one is
+  checked by the other (and by the gateway).
+- **No `REDIS_URL` = each instance alone.** It still works, but a viewer on
+  one won't see logs from the other, and two sends to one chat on two
+  instances aren't serialised.
+- **Gateway retries only refused connections.** If an instance hangs instead
+  of dying, its requests time out (504) until it's removed from the list.
+

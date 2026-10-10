@@ -1,7 +1,9 @@
 package com.forgeflow.shared.ratelimit;
 
+import com.forgeflow.shared.redis.RespClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -16,14 +18,15 @@ public class RateLimitConfig {
     private static final Logger log = LoggerFactory.getLogger(RateLimitConfig.class);
 
     @Bean(destroyMethod = "")
-    RateLimiter rateLimiter(@Value("${forgeflow.ratelimit.redis-url:}") String redisUrl) {
+    RateLimiter rateLimiter(ObjectProvider<RespClient> redis) {
         InMemoryRateLimiter local = new InMemoryRateLimiter();
-        if (redisUrl.isBlank()) {
+        RespClient client = redis.getIfAvailable();
+        if (client == null) {
             log.info("Rate limiting in memory (no REDIS_URL) - correct for a single instance");
             return local;
         }
         log.info("Rate limiting in Redis, falling back to in-memory if it is unreachable");
-        return new RedisRateLimiter(new RespClient(redisUrl, 8, 2000), local, "ff:rl:");
+        return new RedisRateLimiter(client, local, "ff:rl:");
     }
 
     @Bean
