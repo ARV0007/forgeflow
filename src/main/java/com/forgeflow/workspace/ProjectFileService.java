@@ -1,5 +1,7 @@
 package com.forgeflow.workspace;
 
+import com.forgeflow.shared.storage.ObjectStore;
+import com.forgeflow.shared.storage.SigV4;
 import com.forgeflow.workspace.dto.FileEntry;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,14 +28,54 @@ import java.util.zip.ZipOutputStream;
  *
  * No access checks here. Callers check first (ProjectService.getById /
  * requireWrite); this class trusts the project id it is handed.
+ *
+ * Where the bytes live is configuration (forgeflow.storage.files):
+ *
+ *   postgres  the content column (default; Render, tests)
+ *   s3        an object in a bucket - MinIO in the full topology - under a
+ *             content-addressed key, projects/<id>/blobs/<sha256>. The row
+ *             keeps the metadata (path, size, version, authors) and the key.
+ *
+ * Content-addressed keys make writes idempotent (the same bytes, the same
+ * key), store identical files once, and never overwrite an object - so a key
+ * recorded anywhere stays readable. The cost is garbage: replaced blobs stay
+ * in the bucket until a sweep removes unreferenced ones (not built).
+ *
+ * The object is written before the row commits. If the commit then fails,
+ * the bucket holds an orphan blob - harmless. The other order could leave a
+ * row pointing at nothing.
  */
 @Service
 public class ProjectFileService {
 
     private final ProjectFileRepository files;
+    private final ObjectStore blobs;          // null: contents live in Postgres
 
-    public ProjectFileService(ProjectFileRepository files) {
+    public ProjectFileService(ProjectFileRepository files, Optional<ObjectStore> blobs) {
         this.files = files;
+        this.blobs = blobs.orElse(null);
+    }
+
+    /** "postgres" or the object store's description - for logs and the health page. */
+    public String storageDescription() {
+        return blobs == null ? "postgres" : blobs.describe();
+    }
+
+    private String contentOf(ProjectFile f) {
+        if (f.getContent() != null) {
+            return f.getContent();
+        }
+        if (blobs == null) {
+            throw new IllegalStateException("File " + f.getPath() + " of project " + f.getProjectId()
+                    + " is in object storage, but forgeflow.storage.files is not s3");
+        }
+        return blobs.get(f.getObjectKey())
+                .map(b -> new String(b, StandardCharsets.UTF_8))
+                .orElseThrow(() -> new IllegalStateException("Object " + f.getObjectKey() + " is missing"));
+    }
+
+    static String blobKey(Long projectId, byte[] content) {
+        return "projects/" + projectId + "/blobs/" + SigV4.sha256Hex(content);
     }
 
     /** Every file in the project, path -> content, in path order. */
@@ -41,7 +83,7 @@ public class ProjectFileService {
     public Map<String, String> snapshot(Long projectId) {
         Map<String, String> out = new LinkedHashMap<>();
         for (ProjectFile f : files.findByProjectIdOrderByPath(projectId)) {
-            out.put(f.getPath(), f.getContent());
+            out.put(f.getPath(), contentOf(f));
         }
         return out;
     }
@@ -58,7 +100,7 @@ public class ProjectFileService {
     /** Spec: "File Content". */
     @Transactional(readOnly = true)
     public Optional<String> read(Long projectId, String path) {
-        return files.findByProjectIdAndPath(projectId, path).map(ProjectFile::getContent);
+        return files.findByProjectIdAndPath(projectId, path).map(this::contentOf);
     }
 
     /**
@@ -83,8 +125,17 @@ public class ProjectFileService {
             f.setCreatedBy(authorId);
             return f;
         });
-        file.setContent(content);
-        file.setSizeBytes(content.getBytes(StandardCharsets.UTF_8).length);
+        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+        if (blobs == null) {
+            file.setContent(content);
+            file.setObjectKey(null);
+        } else {
+            String key = blobKey(projectId, bytes);
+            blobs.put(key, bytes, "text/plain; charset=utf-8");
+            file.setObjectKey(key);
+            file.setContent(null);
+        }
+        file.setSizeBytes(bytes.length);
         file.setVersion(file.getVersion() + 1);
         file.setUpdatedBy(authorId);
         return files.save(file).getVersion();
@@ -107,7 +158,7 @@ public class ProjectFileService {
                     entry.setLastModifiedTime(FileTime.from(f.getUpdatedAt()));
                 }
                 zip.putNextEntry(entry);
-                zip.write(f.getContent().getBytes(StandardCharsets.UTF_8));
+                zip.write(contentOf(f).getBytes(StandardCharsets.UTF_8));
                 zip.closeEntry();
             }
         }

@@ -93,6 +93,15 @@ forgeflow:
   # false on an API instance whose indexing runs in a separate worker.
   indexer:
     enabled: ${FORGEFLOW_INDEXER_ENABLED:true}
+  # File contents: postgres (default) | s3 (MinIO, R2, S3 - any SigV4 endpoint).
+  storage:
+    files: ${FORGEFLOW_FILE_STORAGE:postgres}
+    s3:
+      endpoint: ${S3_ENDPOINT:http://localhost:9000}
+      region: ${S3_REGION:us-east-1}
+      bucket: ${S3_BUCKET:forgeflow-files}
+      access-key: ${S3_ACCESS_KEY:}
+      secret-key: ${S3_SECRET_KEY:}
   retrieval:
     # Up to this many files, the agent just reads the project; past it, each
     # request carries the top-k most relevant chunks (RAG).
@@ -101,6 +110,13 @@ forgeflow:
     # Reciprocal Rank Fusion weights for the two halves of hybrid search.
     # 1 and 1 is plain RRF. Set from the retrieval eval's numbers
     # (evals/run_retrieval_eval.py), not by feel.
+    # Where nearest-neighbour search runs: pgvector (default) | qdrant.
+    # Chunk rows (text, keyword index) stay in Postgres either way.
+    vector-store: ${FORGEFLOW_VECTOR_STORE:pgvector}
+    qdrant:
+      url: ${QDRANT_URL:http://localhost:6333}
+      collection: forgeflow_chunks
+      api-key: ${QDRANT_API_KEY:}
     vector-weight: ${FORGEFLOW_RAG_VECTOR_WEIGHT:1.0}
     keyword-weight: ${FORGEFLOW_RAG_KEYWORD_WEIGHT:1.0}
     # gemini (needs GOOGLE_API_KEY) | hashing (offline, keyword-level)

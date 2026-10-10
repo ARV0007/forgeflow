@@ -15,6 +15,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HexFormat;
@@ -51,6 +52,8 @@ public class CodeIndex {
     /** RRF's k. 60 is the value from the original paper and the usual default; it damps the very top ranks. */
     private static final int RRF_K = 60;
     private static final int CANDIDATES = 30;
+    /** file_hash of chunks whose vectors the vector index hasn't accepted yet - never a real SHA-256. */
+    static final String PENDING_VECTOR_INDEX = "pending-vector-index";
 
     public record SearchHit(String path, int startLine, int endLine, double score, String content) {
     }
@@ -78,19 +81,22 @@ public class CodeIndex {
     private final Tracer tracer;
     private final Fusion fusion;
 
-    /** Plain RRF; for tests and anything built by hand. */
+    private final VectorIndex vectors;
+
+    /** pgvector and plain RRF; for tests and anything built by hand. */
     public CodeIndex(ProjectFileService files, Embedder embedder, JdbcTemplate jdbc, TransactionTemplate tx,
                      Tracer tracer, int wholeProjectThreshold, int topK) {
-        this(files, embedder, jdbc, tx, tracer, wholeProjectThreshold, topK, 1.0, 1.0);
+        this(files, embedder, jdbc, tx, tracer, new PgVectorIndex(jdbc), wholeProjectThreshold, topK, 1.0, 1.0);
     }
 
     @Autowired
     public CodeIndex(ProjectFileService files, Embedder embedder, JdbcTemplate jdbc, TransactionTemplate tx,
-                     Tracer tracer,
+                     Tracer tracer, VectorIndex vectors,
                      @Value("${forgeflow.retrieval.whole-project-threshold:15}") int wholeProjectThreshold,
                      @Value("${forgeflow.retrieval.top-k:8}") int topK,
                      @Value("${forgeflow.retrieval.vector-weight:1.0}") double vectorWeight,
                      @Value("${forgeflow.retrieval.keyword-weight:1.0}") double keywordWeight) {
+        this.vectors = vectors;
         this.fusion = new Fusion(vectorWeight, keywordWeight);
         this.tracer = tracer;
         this.files = files;
@@ -143,6 +149,12 @@ public class CodeIndex {
         for (String gone : existing.keySet()) {
             if (!snapshot.containsKey(gone)) {
                 jdbc.update("DELETE FROM file_chunks WHERE project_id = ? AND file_path = ?", projectId, gone);
+                try {
+                    vectors.removeFile(projectId, gone);
+                } catch (RuntimeException e) {
+                    // Stale points are harmless: their ids no longer join to a row.
+                    log.warn("removing {} from {} failed: {}", gone, vectors.name(), e.toString());
+                }
                 removed++;
             }
         }
@@ -188,24 +200,39 @@ public class CodeIndex {
         }
         List<float[]> vs = vectors;
         String m = model;
+        List<Long> ids = new ArrayList<>();
         try {
             tx.executeWithoutResult(status -> {
                 jdbc.update("DELETE FROM file_chunks WHERE project_id = ? AND file_path = ?", projectId, path);
                 for (int i = 0; i < chunks.size(); i++) {
                     CodeChunker.Chunk c = chunks.get(i);
-                    jdbc.update("""
+                    ids.add(jdbc.queryForObject("""
                             INSERT INTO file_chunks
                               (project_id, file_path, chunk_index, content, start_line, end_line,
                                file_hash, embedding_model, embedding)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS vector))
-                            """, projectId, path, c.index(), c.text(), c.startLine(), c.endLine(),
-                            hash, m, vs == null ? null : literal(vs.get(i)));
+                            RETURNING id
+                            """, Long.class, projectId, path, c.index(), c.text(), c.startLine(), c.endLine(),
+                            hash, m, vs == null ? null : literal(vs.get(i))));
                 }
             });
         } catch (DuplicateKeyException e) {
             // Another indexer (another instance) wrote this file at the same
-            // moment. Its chunks are as good as ours.
+            // moment. Its chunks are as good as ours - and it updates the
+            // vector index for them.
             log.debug("project {} file {} indexed concurrently elsewhere", projectId, path);
+            return chunks.size();
+        }
+        try {
+            this.vectors.replaceFile(projectId, path, m, ids, vs == null ? List.of() : vs);
+        } catch (RuntimeException e) {
+            // The rows (vectors included) are fine; the vector index didn't
+            // take them. A placeholder hash marks the file stale, so the next
+            // pass re-indexes it and tries the vector index again. The model
+            // stays, so a pgvector fallback still finds these chunks.
+            log.warn("{} rejected {} of project {}, will retry: {}", this.vectors.name(), path, projectId, e.toString());
+            jdbc.update("UPDATE file_chunks SET file_hash = ? WHERE project_id = ? AND file_path = ?",
+                    PENDING_VECTOR_INDEX, projectId, path);
         }
         return chunks.size();
     }
@@ -247,7 +274,7 @@ public class CodeIndex {
         int k = Math.max(1, Math.min(limit, 20));
 
         String keywords = mode == Mode.VECTOR ? null : keywordQuery(query);
-        String vector = null;
+        float[] vector = null;
         if (mode != Mode.KEYWORD) {
             try {
                 vector = queryVector(query);
@@ -257,13 +284,22 @@ public class CodeIndex {
         }
         boolean degraded = mode != Mode.KEYWORD && vector == null;
         int missingVectors = jdbc.queryForObject(
-                "SELECT count(*) FROM file_chunks WHERE project_id = ? AND embedding IS NULL", Integer.class, projectId);
+                "SELECT count(*) FROM file_chunks WHERE project_id = ? AND (embedding IS NULL OR file_hash = ?)",
+                Integer.class, projectId, PENDING_VECTOR_INDEX);
 
-        List<Long> byMeaning = vector == null ? List.of() : jdbc.queryForList("""
-                SELECT id FROM file_chunks
-                WHERE project_id = ? AND embedding IS NOT NULL AND embedding_model = ?
-                ORDER BY embedding <=> CAST(? AS vector), id
-                LIMIT ?""", Long.class, projectId, embedder.modelName(), vector, CANDIDATES);
+        List<Long> byMeaning = List.of();
+        if (vector != null) {
+            try {
+                byMeaning = vectors.nearest(projectId, embedder.modelName(), vector, CANDIDATES);
+            } catch (RuntimeException e) {
+                // A separate vector store is down: Postgres still has every
+                // vector, so answer from it - and say the answer didn't come
+                // from where it was configured to.
+                log.warn("{} search failed, answering from pgvector: {}", vectors.name(), e.toString());
+                byMeaning = new PgVectorIndex(jdbc).nearest(projectId, embedder.modelName(), vector, CANDIDATES);
+                degraded = true;
+            }
+        }
         List<Long> byWords = keywords == null ? List.of() : jdbc.queryForList("""
                 SELECT id FROM file_chunks, to_tsquery('english', ?) q
                 WHERE project_id = ? AND tsv @@ q
@@ -304,15 +340,15 @@ public class CodeIndex {
      * quota. A small LRU keyed by model and text makes repeats free. Query
      * vectors only: documents change, and are hashed and cached per file.
      */
-    private String queryVector(String query) {
+    private float[] queryVector(String query) {
         String key = embedder.modelName() + "\u0000" + query;
         synchronized (queryVectors) {
-            String hit = queryVectors.get(key);
+            float[] hit = queryVectors.get(key);
             if (hit != null) {
                 return hit;
             }
         }
-        String v = literal(embedder.embed(List.of(query), Embedder.Kind.QUERY).get(0));
+        float[] v = embedder.embed(List.of(query), Embedder.Kind.QUERY).get(0);
         synchronized (queryVectors) {
             queryVectors.put(key, v);
         }
@@ -320,9 +356,9 @@ public class CodeIndex {
     }
 
     static final int QUERY_CACHE_SIZE = 512;
-    private final Map<String, String> queryVectors = new LinkedHashMap<>(64, 0.75f, true) {
+    private final Map<String, float[]> queryVectors = new LinkedHashMap<>(64, 0.75f, true) {
         @Override
-        protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
+        protected boolean removeEldestEntry(Map.Entry<String, float[]> eldest) {
             return size() > QUERY_CACHE_SIZE;
         }
     };

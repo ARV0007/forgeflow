@@ -25,8 +25,13 @@ public class ProjectFile {
     @Column(nullable = false)
     private String path;
 
-    @Column(nullable = false, columnDefinition = "text")
+    /** The bytes, when stored in Postgres. Null when they live in object storage. */
+    @Column(columnDefinition = "text")
     private String content;
+
+    /** Where the bytes live in object storage (projects/<id>/blobs/<sha256>), or null. */
+    @Column(name = "object_key", length = 600)
+    private String objectKey;
 
     @Column(name = "size_bytes", nullable = false)
     private Integer sizeBytes = 0;
@@ -72,6 +77,9 @@ public class ProjectFile {
 
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }
+
+    public String getObjectKey() { return objectKey; }
+    public void setObjectKey(String objectKey) { this.objectKey = objectKey; }
 
     public Integer getSizeBytes() { return sizeBytes; }
     public void setSizeBytes(Integer sizeBytes) { this.sizeBytes = sizeBytes; }
