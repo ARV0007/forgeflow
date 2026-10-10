@@ -5,6 +5,7 @@ import com.forgeflow.shared.tracing.Tracer;
 import com.forgeflow.workspace.ProjectFileService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -14,9 +15,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -74,11 +76,22 @@ public class CodeIndex {
     private final int topK;
     private final Map<Long, ReentrantLock> locks = new ConcurrentHashMap<>();
     private final Tracer tracer;
+    private final Fusion fusion;
 
+    /** Plain RRF; for tests and anything built by hand. */
+    public CodeIndex(ProjectFileService files, Embedder embedder, JdbcTemplate jdbc, TransactionTemplate tx,
+                     Tracer tracer, int wholeProjectThreshold, int topK) {
+        this(files, embedder, jdbc, tx, tracer, wholeProjectThreshold, topK, 1.0, 1.0);
+    }
+
+    @Autowired
     public CodeIndex(ProjectFileService files, Embedder embedder, JdbcTemplate jdbc, TransactionTemplate tx,
                      Tracer tracer,
                      @Value("${forgeflow.retrieval.whole-project-threshold:15}") int wholeProjectThreshold,
-                     @Value("${forgeflow.retrieval.top-k:8}") int topK) {
+                     @Value("${forgeflow.retrieval.top-k:8}") int topK,
+                     @Value("${forgeflow.retrieval.vector-weight:1.0}") double vectorWeight,
+                     @Value("${forgeflow.retrieval.keyword-weight:1.0}") double keywordWeight) {
+        this.fusion = new Fusion(vectorWeight, keywordWeight);
         this.tracer = tracer;
         this.files = files;
         this.embedder = embedder;
@@ -216,6 +229,17 @@ public class CodeIndex {
     }
 
     public SearchResult searchDetailed(Long projectId, String query, int limit, Mode mode) {
+        return searchDetailed(projectId, query, limit, mode, fusion);
+    }
+
+    /**
+     * Hybrid search, fused in Java rather than in one SQL statement: each half
+     * produces a ranked list of chunk ids, and Reciprocal Rank Fusion merges
+     * them - score = w_v/(60 + vector rank) + w_k/(60 + keyword rank). The
+     * weights are the knob the retrieval eval turns; keeping fusion out of SQL
+     * also means the vector half can come from somewhere other than Postgres.
+     */
+    public SearchResult searchDetailed(Long projectId, String query, int limit, Mode mode, Fusion weights) {
         if (query == null || query.isBlank()) {
             return new SearchResult(List.of(), false, 0);
         }
@@ -226,7 +250,7 @@ public class CodeIndex {
         String vector = null;
         if (mode != Mode.KEYWORD) {
             try {
-                vector = literal(embedder.embed(List.of(query), Embedder.Kind.QUERY).get(0));
+                vector = queryVector(query);
             } catch (RuntimeException e) {
                 log.warn("query embedding failed, searching by keyword only: {}", e.getMessage());
             }
@@ -234,55 +258,93 @@ public class CodeIndex {
         boolean degraded = mode != Mode.KEYWORD && vector == null;
         int missingVectors = jdbc.queryForObject(
                 "SELECT count(*) FROM file_chunks WHERE project_id = ? AND embedding IS NULL", Integer.class, projectId);
-        if (vector == null && keywords == null) {
+
+        List<Long> byMeaning = vector == null ? List.of() : jdbc.queryForList("""
+                SELECT id FROM file_chunks
+                WHERE project_id = ? AND embedding IS NOT NULL AND embedding_model = ?
+                ORDER BY embedding <=> CAST(? AS vector), id
+                LIMIT ?""", Long.class, projectId, embedder.modelName(), vector, CANDIDATES);
+        List<Long> byWords = keywords == null ? List.of() : jdbc.queryForList("""
+                SELECT id FROM file_chunks, to_tsquery('english', ?) q
+                WHERE project_id = ? AND tsv @@ q
+                ORDER BY ts_rank_cd(tsv, q) DESC, id
+                LIMIT ?""", Long.class, keywords, projectId, CANDIDATES);
+
+        Map<Long, Double> scores = fuse(byMeaning, byWords, weights);
+        if (scores.isEmpty()) {
             return new SearchResult(List.of(), degraded, missingVectors);
         }
 
-        // Each half produces a ranked candidate list; RRF scores a chunk by
-        // 1/(60 + rank) in each list it appears in, and sums. A chunk ranked
-        // well by BOTH beats one ranked first by only one. A half with no
-        // input (embedding failed, or no usable words) is simply empty.
-        List<Object> args = new ArrayList<>();
-        String vectorCte;
-        if (vector != null) {
-            vectorCte = """
-                    SELECT id, row_number() OVER (ORDER BY embedding <=> CAST(? AS vector)) AS r
-                    FROM file_chunks
-                    WHERE project_id = ? AND embedding IS NOT NULL AND embedding_model = ?
-                    ORDER BY embedding <=> CAST(? AS vector)
-                    LIMIT ?""";
-            args.addAll(List.of(vector, projectId, embedder.modelName(), vector, CANDIDATES));
-        } else {
-            vectorCte = "SELECT NULL::bigint AS id, NULL::bigint AS r WHERE false";
+        record Row(long id, SearchHit hit, int chunkIndex) {
         }
-        String keywordCte;
-        if (keywords != null) {
-            keywordCte = """
-                    SELECT id, row_number() OVER (ORDER BY ts_rank_cd(tsv, q) DESC) AS r
-                    FROM file_chunks, to_tsquery('english', ?) q
-                    WHERE project_id = ? AND tsv @@ q
-                    ORDER BY ts_rank_cd(tsv, q) DESC
-                    LIMIT ?""";
-            args.addAll(List.of(keywords, projectId, CANDIDATES));
-        } else {
-            keywordCte = "SELECT NULL::bigint AS id, NULL::bigint AS r WHERE false";
-        }
-        args.addAll(List.of(RRF_K, RRF_K, projectId, k));
+        List<Row> rows = jdbc.query("""
+                SELECT id, file_path, start_line, end_line, content, chunk_index
+                FROM file_chunks WHERE project_id = ? AND id = ANY(?)""",
+                (rs, i) -> {
+                    long id = rs.getLong("id");
+                    return new Row(id, new SearchHit(rs.getString("file_path"), rs.getInt("start_line"),
+                            rs.getInt("end_line"), scores.get(id), rs.getString("content")), rs.getInt("chunk_index"));
+                },
+                projectId, scores.keySet().toArray(Long[]::new));
 
-        String sql = "WITH v AS (" + vectorCte + "), kw AS (" + keywordCte + ")\n" + """
-                SELECT c.file_path, c.start_line, c.end_line, c.content,
-                       coalesce(1.0 / (? + v.r), 0) + coalesce(1.0 / (? + kw.r), 0) AS score
-                FROM file_chunks c
-                LEFT JOIN v ON v.id = c.id
-                LEFT JOIN kw ON kw.id = c.id
-                WHERE c.project_id = ? AND (v.id IS NOT NULL OR kw.id IS NOT NULL)
-                ORDER BY score DESC, c.file_path, c.chunk_index
-                LIMIT ?""";
-        List<SearchHit> hits = jdbc.query(sql, (rs, i) -> new SearchHit(
-                        rs.getString("file_path"), rs.getInt("start_line"), rs.getInt("end_line"),
-                        rs.getDouble("score"), rs.getString("content")),
-                args.toArray());
+        List<SearchHit> hits = rows.stream()
+                .sorted(Comparator.comparingDouble((Row r) -> -r.hit().score())
+                        .thenComparing(r -> r.hit().path())
+                        .thenComparingInt(Row::chunkIndex))
+                .limit(k)
+                .map(Row::hit)
+                .toList();
         return new SearchResult(hits, degraded, missingVectors);
+    }
+
+    /**
+     * The same question is often asked more than once - the agent's context
+     * lookup and its own search_code, a person retrying, the eval trying six
+     * configurations - and each embedding is a network call with a per-minute
+     * quota. A small LRU keyed by model and text makes repeats free. Query
+     * vectors only: documents change, and are hashed and cached per file.
+     */
+    private String queryVector(String query) {
+        String key = embedder.modelName() + "\u0000" + query;
+        synchronized (queryVectors) {
+            String hit = queryVectors.get(key);
+            if (hit != null) {
+                return hit;
+            }
+        }
+        String v = literal(embedder.embed(List.of(query), Embedder.Kind.QUERY).get(0));
+        synchronized (queryVectors) {
+            queryVectors.put(key, v);
+        }
+        return v;
+    }
+
+    static final int QUERY_CACHE_SIZE = 512;
+    private final Map<String, String> queryVectors = new LinkedHashMap<>(64, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
+            return size() > QUERY_CACHE_SIZE;
+        }
+    };
+
+    /**
+     * Weights for the two halves of hybrid search. {@code (1, 1)} is plain
+     * RRF. The retrieval eval decides the shipped default.
+     */
+    public record Fusion(double vectorWeight, double keywordWeight) {
+        public static final Fusion EQUAL = new Fusion(1.0, 1.0);
+    }
+
+    /** Reciprocal Rank Fusion over two ranked id lists (best first). Ranks start at 1. */
+    static Map<Long, Double> fuse(List<Long> byMeaning, List<Long> byWords, Fusion w) {
+        Map<Long, Double> scores = new HashMap<>();
+        for (int i = 0; i < byMeaning.size(); i++) {
+            scores.merge(byMeaning.get(i), w.vectorWeight() / (RRF_K + i + 1), Double::sum);
+        }
+        for (int i = 0; i < byWords.size(); i++) {
+            scores.merge(byWords.get(i), w.keywordWeight() / (RRF_K + i + 1), Double::sum);
+        }
+        return scores;
     }
 
     /**

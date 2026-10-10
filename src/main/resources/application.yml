@@ -85,6 +85,11 @@ forgeflow:
     # request carries the top-k most relevant chunks (RAG).
     whole-project-threshold: 15
     top-k: 8
+    # Reciprocal Rank Fusion weights for the two halves of hybrid search.
+    # 1 and 1 is plain RRF. Set from the retrieval eval's numbers
+    # (evals/run_retrieval_eval.py), not by feel.
+    vector-weight: ${FORGEFLOW_RAG_VECTOR_WEIGHT:1.0}
+    keyword-weight: ${FORGEFLOW_RAG_KEYWORD_WEIGHT:1.0}
     # gemini (needs GOOGLE_API_KEY) | hashing (offline, keyword-level)
     embedder: ${FORGEFLOW_EMBEDDER:gemini}
     embedding-model: gemini-embedding-001

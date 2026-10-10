@@ -775,6 +775,19 @@ CI with the hashing embedder.
 **Visible:** `AgentEvent.retrieved(excerpts, files)` → the chat step
 "used N code excerpts from …".
 
+**Fusion and rerank (tuning).** Each half returns a ranked list of chunk ids
+(top 30); `CodeIndex.fuse` applies weighted RRF in Java
+(`w_v/(60+r_v) + w_k/(60+r_k)`, defaults 1/1, per-search override via
+`vectorWeight` / `keywordWeight`). `?rerank=true` sends the top 15 to the chat
+model (`LlmReranker`) and returns its order - metered against the caller's
+AI-token quota, `X-Rerank-Failed` on failure. Query embeddings are cached
+(LRU 512, model + text).
+
+```
+query ─┬─ embed (cached) ─► top 30 ids by cosine ─┐
+       └─ tsquery         ─► top 30 ids by rank  ─┴─► weighted RRF (Java) ─► top k ─[rerank?]─► LLM orders top 15
+```
+
 ### 17.10 Tracing
 
 ```

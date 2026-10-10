@@ -25,12 +25,17 @@ public class SearchController {
     /** Set to the number of chunks vector search can't see yet (embedding failed at index time). */
     public static final String MISSING_VECTORS_HEADER = "X-Index-Missing-Vectors";
 
+    /** Set when rerank was asked for but the model call failed; the fused order was returned. */
+    public static final String RERANK_FAILED_HEADER = "X-Rerank-Failed";
+
     private final CodeIndex index;
     private final ProjectService projects;
+    private final LlmReranker reranker;
 
-    public SearchController(CodeIndex index, ProjectService projects) {
+    public SearchController(CodeIndex index, ProjectService projects, LlmReranker reranker) {
         this.index = index;
         this.projects = projects;
+        this.reranker = reranker;
     }
 
     @GetMapping("/api/v1/projects/{projectId}/search")
@@ -38,6 +43,9 @@ public class SearchController {
                                             @RequestParam("q") String query,
                                             @RequestParam(defaultValue = "8") int k,
                                             @RequestParam(defaultValue = "hybrid") String mode,
+                                            @RequestParam(required = false) Double vectorWeight,
+                                            @RequestParam(required = false) Double keywordWeight,
+                                            @RequestParam(defaultValue = "false") boolean rerank,
                                             Authentication auth) {
         projects.getById(projectId, (Long) auth.getPrincipal());
         CodeIndex.Mode m;
@@ -46,8 +54,31 @@ public class SearchController {
         } catch (IllegalArgumentException e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "mode must be hybrid, vector or keyword");
         }
-        CodeIndex.SearchResult r = index.searchDetailed(projectId, query, k, m);
+        // Weights override the configured fusion for this one search - how the
+        // eval sweeps them without a restart. Out of range is a client error.
+        CodeIndex.Fusion fusion = null;
+        if (vectorWeight != null || keywordWeight != null) {
+            double vw = vectorWeight == null ? 1.0 : vectorWeight;
+            double kw = keywordWeight == null ? 1.0 : keywordWeight;
+            if (vw < 0 || kw < 0 || vw > 10 || kw > 10) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "weights must be between 0 and 10");
+            }
+            fusion = new CodeIndex.Fusion(vw, kw);
+        }
+        int fetch = rerank ? Math.max(k, LlmReranker.CANDIDATES) : k;
+        CodeIndex.SearchResult r = fusion == null
+                ? index.searchDetailed(projectId, query, fetch, m)
+                : index.searchDetailed(projectId, query, fetch, m, fusion);
+        List<CodeIndex.SearchHit> hits = r.hits();
         ResponseEntity.BodyBuilder ok = ResponseEntity.ok();
+        if (rerank) {
+            LlmReranker.Reranked rr = reranker.rerank((Long) auth.getPrincipal(), projectId, query, hits);
+            hits = rr.hits();
+            if (rr.failed()) {
+                ok.header(RERANK_FAILED_HEADER, "true");
+            }
+        }
+        hits = hits.subList(0, Math.min(k, hits.size()));
         // Headers, not body fields, so the response stays a plain list for
         // every existing caller. Absent means "fine".
         if (r.degraded()) {
@@ -56,6 +87,6 @@ public class SearchController {
         if (r.chunksMissingVectors() > 0) {
             ok.header(MISSING_VECTORS_HEADER, String.valueOf(r.chunksMissingVectors()));
         }
-        return ok.body(r.hits());
+        return ok.body(hits);
     }
 }

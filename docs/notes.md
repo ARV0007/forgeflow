@@ -851,6 +851,12 @@ Multi-round runs should show a healthy cached share; single-round runs ~0.
   It needs real embeddings: against a server with `FORGEFLOW_EMBEDDER=hashing`
   the "vector" numbers are word matching. `--keep` leaves the project so you
   can open it in the UI and try the Search tab yourself.
+- **Retrieval eval v2 and tuning.** Default set is now `v2` (70 questions,
+  40 files with decoys). `--set v1` for the original 42. `--rerank` adds a
+  hybrid+rerank column: one chat-model call per question, counted against
+  the eval account's daily AI tokens (~2-3k each), and slow on the free tier
+  - use `--pause 12`. To ship different weights: set
+  `FORGEFLOW_RAG_KEYWORD_WEIGHT` (and/or `..._VECTOR_WEIGHT`) on Render.
 - **Lost password?** There's no reset flow yet (no email sender). Sign up
   again — Gmail ignores everything after a `+`, so `you+ff@gmail.com` is a
   new ForgeFlow account that still reaches your inbox.

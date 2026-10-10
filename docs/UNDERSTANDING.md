@@ -1415,6 +1415,26 @@ to slots in a 768-long list. It only knows about shared words, not meaning —
 which is enough to check the pipeline end to end, and honest about what it
 isn't.
 
+**Q: The real run said vector-only beat hybrid. Isn't hybrid supposed to be better?**
+Usually, not always. Hybrid helps when the two lists are *both* good and get
+different things right. When one list has nothing relevant (exact-word
+search on a question that shares no words with the code), its guesses still
+get votes. So the fix isn't "drop keywords" - they're the best thing for
+exact names - but *weight* them: count a keyword rank as half a vector rank,
+and measure again. That's what the weighted RRF and the v2 set are for.
+
+**Q: What's a reranker, and why not just use it for everything?**
+Search ranks fast but shallow: an embedding compares two summaries; keywords
+count words. A reranker reads the question and each candidate *together*
+and judges which actually answers it - slower and more accurate. So you use
+both: cheap search narrows thousands of chunks to 15, the expensive judge
+orders those 15. It's a model call per search, so it's opt-in and metered.
+
+**Q: Why did you make the questions harder instead of celebrating 100%?**
+Because a test everyone passes can't tell two methods apart. The v2 decoy
+files share vocabulary with the right answers (gift cards next to promo
+codes), which is what real codebases look like.
+
 **Q: Why is the score per file, not per chunk?**
 Because the real question is "which file do I open?". A file counts at the
 rank of its first chunk.

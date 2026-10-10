@@ -1,0 +1,11 @@
+/* The thin strip above the header advertising the current sale. */
+.sale-strip {
+  background: repeating-linear-gradient(45deg, #f9a825, #f9a825 12px, #fbc02d 12px, #fbc02d 24px);
+  color: var(--ink);
+  text-align: center;
+  font-weight: 700;
+  padding: 0.35rem 1rem;
+  font-size: 0.9rem;
+}
+.sale-strip a { color: inherit; }
+.sale-strip .close { float: right; background: none; color: inherit; padding: 0 0.4rem; }

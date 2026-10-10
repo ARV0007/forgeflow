@@ -449,6 +449,9 @@ paths:
         - { name: q, in: query, required: true, schema: { type: string }, example: dark mode toggle }
         - { name: k, in: query, schema: { type: integer, default: 8, maximum: 20 } }
         - { name: mode, in: query, description: "hybrid (default), or vector / keyword alone - for measuring each half", schema: { type: string, enum: [hybrid, vector, keyword], default: hybrid } }
+        - { name: vectorWeight, in: query, description: "RRF weight of the vector list for this search (0-10)", schema: { type: number } }
+        - { name: keywordWeight, in: query, description: "RRF weight of the keyword list for this search (0-10)", schema: { type: number } }
+        - { name: rerank, in: query, description: "reorder the top 15 with the chat model before returning k", schema: { type: boolean, default: false } }
       responses:
         "200": { description: Hits, best first, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/SearchHit" } } } } }
 

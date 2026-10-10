@@ -909,6 +909,48 @@ mode, paraphrases 64% hybrid. One thing it already shows: fusing a strong
 list with a weak one can *lower* recall@5 below the strong list alone. The
 live run with Gemini embeddings is what counts. 151 tests.
 
+**Live result (v1, Gemini embeddings on Render, 12:12 IST):**
+
+| | recall@1 | recall@3 | recall@5 | MRR | paraphrase recall@5 |
+|---|---|---|---|---|---|
+| hybrid (shipped) | 83% | 98% | 98% | 0.90 | 93% |
+| vector only | 86% | 100% | 100% | 0.92 | 100% |
+| keyword only | 69% | 86% | 95% | 0.78 | 86% |
+
+Two findings. Embeddings earn their keep: on paraphrases, vector 100% vs
+keyword 86%. And **the hybrid we ship lost to vector alone** - its one miss
+was a question where the keyword list had nothing relevant and its noise
+pushed the right file from 3rd to 6th. Also: vector-only at 100% recall@5
+means v1 is too easy to separate methods any further.
+
+### Tuning retrieval with the benchmark
+
+- **v2 question set.** 11 decoy files (`evals/retrieval/fixture-v2`) that
+  borrow v1's vocabulary - gift cards and loyalty points beside promo codes,
+  driver tracking beside delivery cost, address lookup beside postcode
+  validation, back-in-stock alerts beside the in-stock filter - and 28
+  questions aimed at the decoys *and* at the files they imitate. 70
+  questions over 40 files; the runner's default is now `--set v2`.
+- **Fusion moved from SQL to Java** (`CodeIndex.fuse`): each half returns a
+  ranked id list, RRF merges them with weights - `w_v/(60+r_v) +
+  w_k/(60+r_k)`. Defaults 1/1 (`forgeflow.retrieval.vector-weight`,
+  `keyword-weight`); a search can override them (`?vectorWeight=&
+  keywordWeight=`). Also the prerequisite for a vector store outside
+  Postgres (Qdrant, next).
+- **LLM rerank** (`LlmReranker`, `?rerank=true`): the top 15 go to the chat
+  model with the question; it returns the order. Metered against the
+  caller's daily AI tokens (else `rerank=true` on a read endpoint would be
+  free model calls); failure keeps the fused order and sets
+  `X-Rerank-Failed`, which the eval treats as "retry", never as a result.
+- **Query-embedding cache** (LRU, 512, keyed by model + text): the eval asks
+  each question six ways; the agent and `search_code` often repeat a query.
+- The runner compares keyword / vector / hybrid / hybrid kw0.5 / hybrid
+  kw0.25 (+ hybrid+rerank with `--rerank`) and prints recall@1 by kind.
+
+Offline dry run on v2 (hashing embedder, so not the real numbers): hybrid
+recall@1 70%, keyword 64%, vector 54%; paraphrase recall@1 drops to 19-38%
+- the decoys work. 157 tests.
+
 ---
 
 ## Open items

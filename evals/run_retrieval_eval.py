@@ -43,10 +43,27 @@ from datetime import datetime, timezone
 from run_evals import call, delete_project, sign_in
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FIXTURE = os.path.join(HERE, "retrieval", "fixture")
-QUERIES = os.path.join(HERE, "retrieval", "queries.json")
-MODES = ["hybrid", "vector", "keyword"]
+RETRIEVAL = os.path.join(HERE, "retrieval")
+SETS = {
+    # v1: 29 files, 42 questions. Came out near the ceiling (vector-only 100% recall@5).
+    "v1": {"fixtures": ["fixture"], "queries": ["queries.json"]},
+    # v2: v1 plus 11 decoy files that borrow v1's vocabulary, and 28 questions
+    # aimed at the decoys and at the files they imitate.
+    "v2": {"fixtures": ["fixture", "fixture-v2"], "queries": ["queries.json", "queries-v2.json"]},
+}
 KINDS = ["identifier", "described", "paraphrase"]
+
+# What gets compared. Each is a name and the search parameters it sends.
+# keyword / vector / hybrid are the three methods; the weighted hybrids are
+# the tuning sweep (how much should the keyword list count?).
+CONFIGS = [
+    ("keyword", {"mode": "keyword"}),
+    ("vector", {"mode": "vector"}),
+    ("hybrid", {"mode": "hybrid"}),
+    ("hybrid kw0.5", {"mode": "hybrid", "keywordWeight": 0.5}),
+    ("hybrid kw0.25", {"mode": "hybrid", "keywordWeight": 0.25}),
+]
+RERANK_CONFIG = ("hybrid+rerank", {"mode": "hybrid", "rerank": "true"})
 DEPTH = 20            # chunks asked for per query; the server's maximum
 PROJECT_NAME = "eval-retrieval"
 
@@ -55,9 +72,10 @@ class Unfair(Exception):
     """The server couldn't embed, so this result wouldn't measure what it claims to."""
 
 
-def search(base, pid, query, mode, token, pause):
+def search(base, pid, query, params, token, pause):
+    mode = params.get("mode", "hybrid")
     url = f"{base}/api/v1/projects/{pid}/search?" + urllib.parse.urlencode(
-        {"q": query, "k": DEPTH, "mode": mode})
+        {"q": query, "k": DEPTH, **params})
     for attempt in range(6):
         req = urllib.request.Request(url)
         req.add_header("Authorization", "Bearer " + token)
@@ -66,12 +84,19 @@ def search(base, pid, query, mode, token, pause):
                 hits = json.loads(r.read().decode())
                 degraded = r.headers.get("X-Search-Degraded") == "true"
                 missing = int(r.headers.get("X-Index-Missing-Vectors") or 0)
+                rerank_failed = r.headers.get("X-Rerank-Failed") == "true"
         except urllib.error.HTTPError as e:
             if e.code == 429:
                 time.sleep(int(e.headers.get("Retry-After") or 5))
                 continue
             raise RuntimeError(f"search -> {e.code}: {e.read().decode()[:300]}")
 
+        if rerank_failed:
+            if attempt < 5:
+                print("(rerank call failed; waiting 30s) ", end="", flush=True)
+                time.sleep(30)
+                continue
+            raise Unfair("the rerank model call kept failing - check quota and run again")
         needs_vectors = mode != "keyword"
         if needs_vectors and (degraded or missing):
             if attempt < 5:
@@ -108,12 +133,19 @@ def metrics(ranks):
             "mrr": sum(1 / r for r in ranks if r) / n}
 
 
-def load_fixture(base, pid, token):
+def load_fixture(base, pid, token, fixtures):
     count = 0
-    for root, _, names in os.walk(FIXTURE):
+    for fixture in fixtures:
+        count += load_dir(base, pid, token, os.path.join(RETRIEVAL, fixture))
+    return count
+
+
+def load_dir(base, pid, token, folder):
+    count = 0
+    for root, _, names in os.walk(folder):
         for name in sorted(names):
             full = os.path.join(root, name)
-            rel = os.path.relpath(full, FIXTURE).replace(os.sep, "/")
+            rel = os.path.relpath(full, folder).replace(os.sep, "/")
             with open(full, encoding="utf-8") as f:
                 call(base, f"/api/v1/projects/{pid}/files/content", "PUT",
                      {"path": rel, "content": f.read()}, token)
@@ -130,9 +162,15 @@ def main():
                     help="seconds between searches; each hybrid/vector search embeds the query,\n"
                          "and the free embedding tier has a per-minute cap")
     ap.add_argument("--keep", action="store_true", help="keep the project afterwards, to look around")
+    ap.add_argument("--set", choices=sorted(SETS), default="v2", help="question set (default v2, the harder one)")
+    ap.add_argument("--rerank", action="store_true",
+                    help="also score hybrid + LLM rerank (one model call per question; slow on the free tier)")
     args = ap.parse_args()
 
-    queries = json.load(open(QUERIES))["queries"]
+    chosen = SETS[args.set]
+    queries = [q for name in chosen["queries"] for q in json.load(open(os.path.join(RETRIEVAL, name)))["queries"]]
+    configs = CONFIGS + ([RERANK_CONFIG] if args.rerank else [])
+    names = [c[0] for c in configs]
     token = sign_in(args.base, args.email, args.password)
 
     for p in call(args.base, "/api/v1/projects", token=token) or []:
@@ -142,26 +180,26 @@ def main():
 
     started = time.time()
     try:
-        n_files = load_fixture(args.base, pid, token)
-        print(f"Retrieval eval - {len(queries)} questions over {n_files} files, "
-              f"{len(MODES)} modes, against {args.base}\n")
+        n_files = load_fixture(args.base, pid, token, chosen["fixtures"])
+        print(f"Retrieval eval [{args.set}] - {len(queries)} questions over {n_files} files, "
+              f"{len(configs)} configurations, against {args.base}\n")
 
         # The first search indexes the project (embeds every chunk). Do it
         # once up front, waiting until every chunk has a vector.
         print("indexing ... ", end="", flush=True)
-        search(args.base, pid, "warm up", "vector", token, 0)
+        search(args.base, pid, "warm up", {"mode": "vector"}, token, 0)
         print(f"done ({time.time() - started:.0f}s)\n")
 
         rows = []
         for i, q in enumerate(queries, 1):
-            print(f"[{i:>2}/{len(queries)}] {q['kind']:<10} {q['q'][:52]:<52}", end=" ", flush=True)
+            print(f"[{i:>2}/{len(queries)}] {q['kind']:<10} {q['q'][:46]:<46}", end=" ", flush=True)
             row = {"q": q["q"], "kind": q["kind"], "expect": q["expect"], "ranks": {}, "top": {}}
-            for mode in MODES:
-                files = ranked_files(search(args.base, pid, q["q"], mode, token, args.pause))
-                row["ranks"][mode] = rank_of(files, q)
-                row["top"][mode] = files[:3]
+            for name, params in configs:
+                files = ranked_files(search(args.base, pid, q["q"], params, token, args.pause))
+                row["ranks"][name] = rank_of(files, q)
+                row["top"][name] = files[:3]
             rows.append(row)
-            print("  ".join(f"{m[0]}:{row['ranks'][m] or '-'}" for m in MODES))
+            print(" ".join(f"{row['ranks'][n] or '-':>2}" for n in names))
     except Unfair as e:
         print(f"\n\nstopped: {e}")
         sys.exit(2)
@@ -169,34 +207,34 @@ def main():
         if not args.keep:
             delete_project(args.base, pid, token)
 
-    summary = {mode: {"all": metrics([r["ranks"][mode] for r in rows]),
-                      **{k: metrics([r["ranks"][mode] for r in rows if r["kind"] == k]) for k in KINDS}}
-               for mode in MODES}
+    summary = {n: {"all": metrics([r["ranks"][n] for r in rows]),
+                   **{k: metrics([r["ranks"][n] for r in rows if r["kind"] == k]) for k in KINDS}}
+               for n in names}
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_dir = os.path.join(HERE, "results")
     os.makedirs(out_dir, exist_ok=True)
     out = os.path.join(out_dir, f"retrieval-{stamp}.json")
     with open(out, "w") as f:
-        json.dump({"base": args.base, "ranAt": stamp, "files": n_files, "questions": len(rows),
-                   "summary": summary, "rows": rows}, f, indent=2)
+        json.dump({"base": args.base, "ranAt": stamp, "set": args.set, "files": n_files,
+                   "questions": len(rows), "configs": dict(configs), "summary": summary, "rows": rows}, f, indent=2)
 
-    print("\n" + "=" * 66)
-    print(f"  {'':<10}{'recall@1':>10}{'recall@3':>10}{'recall@5':>10}{'MRR':>8}")
-    for mode in MODES:
-        a = summary[mode]["all"]
-        print(f"  {mode:<10}{a['recall@1']:>10.0%}{a['recall@3']:>10.0%}{a['recall@5']:>10.0%}{a['mrr']:>8.2f}")
-    print(f"\n  recall@5 by kind of question")
-    print(f"  {'':<12}" + "".join(f"{m:>10}" for m in MODES))
-    for k in KINDS:
-        n = summary["hybrid"][k]["n"]
-        print(f"  {k + f' ({n})':<12}" + "".join(f"{summary[m][k]['recall@5']:>10.0%}" for m in MODES))
+    print("\n" + "=" * 72)
+    print(f"  [{args.set}] {len(rows)} questions, {n_files} files")
+    print(f"  {'':<16}{'recall@1':>10}{'recall@3':>10}{'recall@5':>10}{'MRR':>8}")
+    for n in names:
+        a = summary[n]["all"]
+        print(f"  {n:<16}{a['recall@1']:>10.0%}{a['recall@3']:>10.0%}{a['recall@5']:>10.0%}{a['mrr']:>8.2f}")
+    print(f"\n  recall@1 by kind of question")
+    print(f"  {'':<16}" + "".join(f"{k[:10]:>12}" for k in KINDS))
+    for n in names:
+        print(f"  {n:<16}" + "".join(f"{summary[n][k]['recall@1']:>12.0%}" for k in KINDS))
     misses = [r for r in rows if not r["ranks"]["hybrid"] or r["ranks"]["hybrid"] > 5]
     if misses:
         print("\n  hybrid misses (right file not in top 5):")
         for r in misses:
             print(f"    - {r['q']}  -> wanted {r['expect']}, got {', '.join(r['top']['hybrid'])}")
-    print("=" * 66)
+    print("=" * 72)
     print(f"\nwritten to {os.path.relpath(out, os.getcwd())}  ({(time.time() - started) / 60:.1f} min)")
 
 

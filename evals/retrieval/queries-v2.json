@@ -1,0 +1,35 @@
+{
+  "_comment": "The harder set (v2). Asked over fixture/ PLUS fixture-v2/ (11 decoy files that share vocabulary with the v1 answers: gift cards and loyalty points next to promo codes, driver tracking next to delivery cost, address lookup next to postcode validation...). Half the questions target a decoy, half target the original file the decoy imitates - so a search that latches onto shared words gets one of each pair wrong. v1 numbers came out near the ceiling (vector-only 100% recall@5), which measures nothing; this set is meant to separate the methods.",
+  "queries": [
+    { "kind": "identifier", "q": "redeemGiftCard", "expect": "js/gift-cards.js" },
+    { "kind": "identifier", "q": "pointsForOrder", "expect": "js/loyalty.js" },
+    { "kind": "identifier", "q": "etaMinutes", "expect": "js/delivery-tracking.js" },
+    { "kind": "identifier", "q": "lookupAddress", "expect": "js/address-lookup.js" },
+    { "kind": "identifier", "q": "subscribeBackInStock", "expect": "js/stock-alerts.js" },
+    { "kind": "identifier", "q": "recordView", "expect": "js/recently-viewed.js" },
+    { "kind": "identifier", "q": "resetIdleTimers", "expect": "js/session-timeout.js" },
+
+    { "kind": "described", "q": "redeem a gift card balance against the order", "expect": "js/gift-cards.js" },
+    { "kind": "described", "q": "apply a percentage off with a promo code", "expect": "js/discounts.js" },
+    { "kind": "described", "q": "flat delivery fee for orders under the free threshold", "expect": "js/shipping.js" },
+    { "kind": "described", "q": "check the postcode format is valid", "expect": "js/validation.js" },
+    { "kind": "described", "q": "fill in the street and city from the postcode", "expect": "js/address-lookup.js" },
+    { "kind": "described", "q": "email customers when a sold out product is back in stock", "expect": "js/stock-alerts.js" },
+    { "kind": "described", "q": "only show products that are in stock", "expect": "js/product-filter.js" },
+    { "kind": "described", "q": "how many days a login is remembered", "expect": "js/auth.js" },
+    { "kind": "described", "q": "sign the user out after a period of inactivity", "expect": "js/session-timeout.js" },
+
+    { "kind": "paraphrase", "q": "points customers collect every time they shop", "expect": "js/loyalty.js" },
+    { "kind": "paraphrase", "q": "where is my driver right now", "expect": "js/delivery-tracking.js" },
+    { "kind": "paraphrase", "q": "choose which marketing messages I want to receive", "expect": "js/notifications.js" },
+    { "kind": "paraphrase", "q": "brief confirmation that pops up after adding something to the basket", "expect": "js/toast.js" },
+    { "kind": "paraphrase", "q": "items I looked at a moment ago", "expect": "js/recently-viewed.js" },
+    { "kind": "paraphrase", "q": "has this item got cheaper over the past month", "expect": "js/price-history.js" },
+    { "kind": "paraphrase", "q": "striped strip above the header advertising a sale", "expect": "css/banner.css" },
+    { "kind": "paraphrase", "q": "the large welcome section with the main headline", "expect": "index.html" },
+    { "kind": "paraphrase", "q": "offer product names as the shopper types in the search box", "expect": "js/search-suggestions.js" },
+    { "kind": "paraphrase", "q": "do not filter the catalogue on every keystroke", "expect": "js/product-filter.js" },
+    { "kind": "paraphrase", "q": "turn pounds into whole pence", "expect": "js/currency.js" },
+    { "kind": "paraphrase", "q": "the basket survives closing the tab", "expect": "js/cart.js", "accept": ["js/storage.js"] }
+  ]
+}
