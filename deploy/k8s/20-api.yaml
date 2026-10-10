@@ -20,6 +20,7 @@ spec:
     metadata:
       labels: { app: api }
     spec:
+      serviceAccountName: forgeflow-api      # may create preview namespaces - see 24-previews.yaml
       containers:
         - name: api
           image: forgeflow:latest

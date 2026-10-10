@@ -49,7 +49,11 @@ public class CodeChangeNotifier {
         String files = event.paths().size() <= 3
                 ? String.join(", ", event.paths())
                 : String.join(", ", event.paths().subList(0, 3)) + " +" + (event.paths().size() - 3) + " more";
+        // A container or pod serves a copy of the files: redeploy it (the
+        // diagram's "code.generated -> execution-service -> pods"). The
+        // in-process preview reads the project live and needs nothing.
+        boolean redeployed = execution.refreshPreview(event.projectId());
         logs.info(event.projectId(), "preview", "Run " + event.runId() + " changed " + files
-                + " - reload the preview to see it");
+                + (redeployed ? " - preview redeployed with the new files" : " - reload the preview to see it"));
     }
 }

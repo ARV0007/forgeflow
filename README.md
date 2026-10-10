@@ -33,7 +33,7 @@ live preview · file tree · every step streamed to the browser
 | **AI generation** | **screenshot to app** (paste a screenshot or sketch; Gemini builds from it); chat sessions with **memory** (last 10 messages); streaming replies; **retry if failed**; a self-healing build gate; targeted `edit_file` changes; errors from the running preview fed back to the agent |
 | **Files** | file tree, file content, save by hand, **download as zip**, who created / last changed each file |
 | **History** | a **version per AI run**, coloured diffs between versions, **one-click restore** (itself undoable) |
-| **Preview** | live preview link, start / stop, **logs stream** — builds, requests, 404s and the generated app's own `console` output |
+| **Preview** | live preview link, start / stop, **a Kubernetes namespace + pod per preview** (redeployed on `code.generated`), **logs stream** — builds, requests, 404s and the generated app's own `console` output |
 | **React apps** | create a project as **React + Vite**: the agent writes a real Vite project; the preview **compiles it in the browser** (Sucrase + a tiny module loader); **Run with Node** boots it under real Node.js in a **WebContainer** (`npm install`, `npm run dev`) |
 | **AI checks its own app** | after each change the preview photographs itself in the browser, a **vision model** scores it against the request, and major issues go back to the agent for **one automatic fix round** |
 | **Search (RAG)** | hybrid code search (pgvector or Qdrant + full-text, weighted rank fusion, optional LLM rerank); the agent has a `search_code` tool; big projects get relevant code attached to each request; **measured** by a 70-question retrieval benchmark |
@@ -170,13 +170,14 @@ python3 scripts/ui-walk.py
 
 ## Not built yet
 
-- **A Kubernetes pod per preview** (the spec's execution box). Previews run
-  in-process, or in Docker locally; `SandboxProvider` is the seam.
+- **A run on a real cluster.** Kubernetes previews (a namespace + pod per
+  preview) are built and tested against a fake API server.
 - **A server-side browser** for the visual check and runtime errors, so they
   happen without anyone opening the preview.
 
-Everything else in the spec's diagram - gateway, Kafka, MinIO, Qdrant,
-WebContainer - is built; see `docs/architecture.md` §17.6 and §18-22.
+Everything in the spec's diagram - gateway, Kafka, MinIO, Qdrant,
+WebContainer, a Kubernetes pod per preview - is built; see
+`docs/architecture.md` §17.6 and §18-24.
 
 ---
 

@@ -8,7 +8,11 @@ metadata:
 data:
   DB_URL: jdbc:postgresql://postgres:5432/forgeflow
   DB_USERNAME: forgeflow
-  FORGEFLOW_SANDBOX_PROVIDER: in-process
+  # A namespace + pod per preview (24-previews.yaml). "in-process" serves
+  # previews from the API itself and needs no cluster permissions.
+  FORGEFLOW_SANDBOX_PROVIDER: kubernetes
+  PREVIEW_DOMAIN: preview.forgeflow.local
+  PREVIEW_URL_SCHEME: http
   REDIS_URL: redis://redis:6379
   ZIPKIN_URL: http://zipkin:9411
   FORGEFLOW_EVENTS: kafka

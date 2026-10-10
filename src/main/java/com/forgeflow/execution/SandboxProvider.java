@@ -5,9 +5,11 @@ import java.util.Map;
 /**
  * Where generated code gets checked and served.
  *
- * An interface because the security model differs per backend. v1 is Docker on
- * one machine; Phase 2 is Kubernetes with a namespace per project. Swapping one
- * for the other should change which class Spring injects, not the callers.
+ * An interface because the security model differs per backend: in-process
+ * (Render: structure checks, files served by the API), Docker (one machine:
+ * locked-down build container, nginx per preview), Kubernetes (a namespace and
+ * a pod per preview). Swapping one for another changes which class Spring
+ * injects, not the callers.
  */
 public interface SandboxProvider {
 
@@ -18,4 +20,17 @@ public interface SandboxProvider {
     PreviewHandle startPreview(Long projectId, Map<String, String> files);
 
     void stopPreview(Long projectId);
+
+    /**
+     * Whether a running preview serves a COPY of the files (a container, a
+     * pod) rather than reading the project live. If so, code.generated has to
+     * push changes into it - see CodeChangeNotifier.
+     */
+    default boolean previewsCopyFiles() {
+        return false;
+    }
+
+    /** Put the current files into the running preview, keeping its address. */
+    default void refreshPreview(Long projectId, Map<String, String> files) {
+    }
 }

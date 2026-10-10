@@ -77,12 +77,18 @@ public class ProxyFilter extends OncePerRequestFilter {
         String requestId = Optional.ofNullable(req.getHeader("X-Request-Id")).orElseGet(() -> hex(8));
         res.setHeader("X-Request-Id", requestId);
 
-        RouteTable.Match route = routes.match(path);
+        // A Kubernetes preview host first: the whole host belongs to one
+        // preview pod, and - like /p/{token} links - the token is the key.
+        RouteTable.Match route = routes.matchPreviewHost(req.getServerName());
+        boolean preview = route != null;
+        if (route == null) {
+            route = routes.match(path);
+        }
         if (route == null) {
             problem(res, 404, "No route for " + path);
             return;
         }
-        if (!EdgeAuth.isPublic(req.getMethod(), path) && auth.verify(req.getHeader("Authorization")).isEmpty()) {
+        if (!preview && !EdgeAuth.isPublic(req.getMethod(), path) && auth.verify(req.getHeader("Authorization")).isEmpty()) {
             res.setHeader("WWW-Authenticate", "Bearer");
             problem(res, 401, "A valid bearer token is required");
             access(req, route, 401, started, requestId);

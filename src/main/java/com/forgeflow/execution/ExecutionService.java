@@ -139,6 +139,25 @@ public class ExecutionService {
         return toResponse(p);
     }
 
+    /**
+     * code.generated while a preview is running, on a backend that serves a
+     * copy of the files: push the new files in. The address stays the same.
+     *
+     * @return true if there was a preview to refresh
+     */
+    public boolean refreshPreview(Long projectId) {
+        if (!sandbox.previewsCopyFiles() || current(projectId).isEmpty()) {
+            return false;
+        }
+        try {
+            sandbox.refreshPreview(projectId, files.snapshot(projectId));
+            return true;
+        } catch (SandboxException e) {
+            logs.error(projectId, "preview", "Preview refresh failed: " + e.getMessage());
+            return false;
+        }
+    }
+
     public void stopPreview(Long projectId) {
         sandbox.stopPreview(projectId);
         if (markStopped(projectId) > 0) {

@@ -40,6 +40,12 @@ class GatewayTest {
     static final HttpServer core = fake("core");
     static final HttpServer core2 = fake("core");                // a second instance of the same service
     static final HttpServer intelligence = fake("intelligence");
+    static final HttpServer previewPod = fake("preview-pod");
+
+    static {
+        // Lets the test client send a Host header, as a browser on a preview domain would.
+        System.setProperty("jdk.httpclient.allowRestrictedHeaders", "host");
+    }
     static final List<Map<String, String>> received = new CopyOnWriteArrayList<>();
 
     @LocalServerPort
@@ -55,6 +61,9 @@ class GatewayTest {
                 + ", http://127.0.0.1:" + core2.getAddress().getPort());
         r.add("gateway.upstreams.intelligence", () -> "http://127.0.0.1:" + intelligence.getAddress().getPort());
         r.add("gateway.upstreams.execution", () -> "http://127.0.0.1:1");      // nothing listens: "down"
+        r.add("gateway.preview-domain", () -> "preview.test");
+        // Stands in for http://preview.ffp-{token}.svc: the token lands in the path so the test can see it.
+        r.add("gateway.preview-upstream", () -> "http://127.0.0.1:" + previewPod.getAddress().getPort() + "/ns-{token}");
     }
 
     static HttpServer fake(String name) {
@@ -98,6 +107,7 @@ class GatewayTest {
         core.stop(0);
         core2.stop(0);
         intelligence.stop(0);
+        previewPod.stop(0);
     }
 
     @BeforeEach
@@ -188,6 +198,18 @@ class GatewayTest {
         }
         assertThat(instances).containsExactlyInAnyOrder(
                 String.valueOf(core.getAddress().getPort()), String.valueOf(core2.getAddress().getPort()));
+    }
+
+    @Test
+    void aKubernetesPreviewHostGoesToItsOwnPodWithoutAToken() throws Exception {
+        String token = "0123456789abcdef0123456789abcdef";
+        HttpResponse<String> r = get("/assets/app.js?v=1", Map.of("Host", token + ".preview.test"));
+        assertThat(r.statusCode()).isEqualTo(200);
+        assertThat(r.body()).isEqualTo("served by preview-pod");
+        assertThat(received.get(received.size() - 1).get("path")).isEqualTo("/ns-" + token + "/assets/app.js?v=1");
+
+        // Not a token: not a preview - so it's routed by path, and needs a login like any API call.
+        assertThat(get("/api/v1/projects", Map.of("Host", "evil.example.com.preview.test")).statusCode()).isEqualTo(401);
     }
 
     @Test

@@ -1121,3 +1121,29 @@ Where every piece of state lives, so any pod can answer any request:
 | retrying POSTs at the gateway | only on connect-refused (the request never left); never on timeout |
 | Kubernetes | 2 replicas, HPA 2-6 on CPU, PodDisruptionBudget minAvailable 1; the Service balances, the gateway's list has one URL |
 
+## 24. Kubernetes previews (a namespace per preview)
+
+```
+POST /preview ─► ExecutionService ─► KubernetesSandboxProvider (KubernetesApi: HTTPS + SA token + cluster CA)
+                   delete namespaces labelled project-id=N        (one preview per project)
+                   POST namespace ffp-{token} → resourcequota → networkpolicy → configmap → pod → service
+                   poll pod until Ready (fail fast on ImagePullBackOff / CrashLoopBackOff; delete ns on any failure)
+                 ◄─ https://{token}.{preview-domain}/
+
+browser ─► Ingress *.preview-domain ─► gateway: host {token}.{domain} ─► http://preview.ffp-{token}.svc ─► pod
+
+code.generated ─► CodeChangeNotifier (group "execution") ─► ExecutionService.refreshPreview
+                   PUT configmap files → DELETE pod → POST pod (retry 409 while the old one terminates)
+```
+
+| Concern | Decision |
+|---|---|
+| isolation | namespace per preview: NetworkPolicy + ResourceQuota apply to everything in it; delete the namespace = clean up all of it |
+| generated code | non-root, read-only rootfs, drop ALL, seccomp RuntimeDefault, no SA token, no service links, activeDeadlineSeconds = lifetime |
+| files into the pod | a ConfigMap (≤ ~900 KB, refused before any API call if bigger); keys escaped `_xx`, mapped back to paths by volume items |
+| React | node image runs `npm install` then Vite on :3000 - the diagram's `project-456:3000`; egress only DNS and 443 |
+| routing | token = namespace = subdomain; gateway fills `preview.ffp-{token}.svc`; non-token hosts fall through to path routing |
+| which replica owns a preview | none - previews are found by label, so any API replica can stop or refresh them |
+| permissions | ClusterRole for namespaces + the objects inside; ValidatingAdmissionPolicy limits the API's SA to `ffp-*` |
+| client library | none: ~150 lines over java.net.http, like Redis/Stripe/S3 |
+

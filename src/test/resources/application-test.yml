@@ -21,3 +21,11 @@ forgeflow:
     # Every test calls from 127.0.0.1 and signs up dozens of users; limits
     # would trip constantly. RateLimitTest switches them back on, low.
     enabled: false
+
+spring:
+  datasource:
+    hikari:
+      # Spring caches one application context per distinct test configuration,
+      # each with its own pool. A dozen contexts x 10 connections ran Postgres
+      # (max_connections 100) out of clients; tests need very few each.
+      maximum-pool-size: 4

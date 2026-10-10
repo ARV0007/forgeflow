@@ -1,0 +1,80 @@
+# Previews as pods: what the API may do to the cluster, and no more.
+#
+# KubernetesSandboxProvider gives every preview its own namespace
+# (ffp-{token}) holding a ResourceQuota, a NetworkPolicy, a ConfigMap of the
+# project's files, one Pod and one Service - and deletes the namespace to
+# stop it. Namespaces are cluster-scoped and created on the fly, so the
+# permissions are a ClusterRole. RBAC can't say "only namespaces named
+# ffp-*", so an admission policy says it instead (below).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: forgeflow-api
+  namespace: forgeflow
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: forgeflow-previews
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [create, get, list, delete]
+  - apiGroups: [""]
+    resources: [resourcequotas, configmaps, pods, services]
+    verbs: [create, get, update, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: forgeflow-previews
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: forgeflow-previews
+subjects:
+  - kind: ServiceAccount
+    name: forgeflow-api
+    namespace: forgeflow
+---
+# The guard rail RBAC can't express: the API's service account may only
+# create or delete namespaces called ffp-..., labelled as ForgeFlow previews,
+# and may only touch objects inside such namespaces. A bug (or an attacker
+# holding the API's token) can't delete kube-system or the forgeflow namespace.
+# Kubernetes 1.30+.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: forgeflow-previews-only
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [namespaces, resourcequotas, configmaps, pods, services]
+      - apiGroups: [networking.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [networkpolicies]
+  matchConditions:
+    - name: only-the-forgeflow-api
+      expression: "request.userInfo.username == 'system:serviceaccount:forgeflow:forgeflow-api'"
+  validations:
+    - expression: >-
+        request.kind.kind == 'Namespace'
+          ? request.name.startsWith('ffp-')
+          : request.namespace.startsWith('ffp-')
+      message: "forgeflow-api may only manage preview namespaces (ffp-*) and what is inside them"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: forgeflow-previews-only
+spec:
+  policyName: forgeflow-previews-only
+  validationActions: [Deny]

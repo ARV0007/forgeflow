@@ -28,6 +28,11 @@ gateway:
     core: ${CORE_URL:http://localhost:8081}
     intelligence: ${INTELLIGENCE_URL:${CORE_URL:http://localhost:8081}}
     execution: ${EXECUTION_URL:${CORE_URL:http://localhost:8081}}
+  # Kubernetes previews (forgeflow.sandbox.provider=kubernetes): a wildcard
+  # Ingress sends *.PREVIEW_DOMAIN here, and {token}.PREVIEW_DOMAIN is proxied
+  # to that preview's Service. Blank = no preview hosts.
+  preview-domain: ${PREVIEW_DOMAIN:}
+  preview-upstream: ${PREVIEW_UPSTREAM:http://preview.ffp-{token}.svc.cluster.local}
   # First match wins; "*" matches one path segment.
   routes:
     - { prefix: "/api/v1/projects/*/chat/", service: intelligence }

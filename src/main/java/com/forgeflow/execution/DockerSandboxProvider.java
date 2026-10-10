@@ -200,6 +200,27 @@ public class DockerSandboxProvider implements SandboxProvider {
     }
 
     @Override
+    public boolean previewsCopyFiles() {
+        return true;
+    }
+
+    /** nginx serves the bind-mounted folder: rewriting it is the whole redeploy. */
+    @Override
+    public void refreshPreview(Long projectId, Map<String, String> files) {
+        Path dir = workRoot.resolve("previews").resolve(String.valueOf(projectId));
+        if (!Files.isDirectory(dir)) {
+            return;
+        }
+        try {
+            deleteQuietly(dir);
+            writeFiles(dir, files);
+            makeReadable(dir);
+        } catch (IOException e) {
+            throw new SandboxException("Could not refresh the preview: " + e.getMessage());
+        }
+    }
+
+    @Override
     public void stopPreview(Long projectId) {
         forceRemove(previewName(projectId));
         deleteQuietly(workRoot.resolve("previews").resolve(String.valueOf(projectId)));

@@ -29,10 +29,23 @@ public class RouteTable {
     private record Compiled(String prefix, String[] parts, boolean trailingSlash, String service, List<URI> upstreams) {
     }
 
+    private static final java.util.regex.Pattern TOKEN = java.util.regex.Pattern.compile("[0-9a-f]{32}");
+
     private final List<Compiled> routes = new ArrayList<>();
     private final Map<String, AtomicInteger> turns = new HashMap<>();
+    private final String previewSuffix;
+    private final String previewUpstream;
 
     public RouteTable(List<GatewayProperties.Route> routes, Map<String, String> upstreams) {
+        this(routes, upstreams, null, null);
+    }
+
+    public RouteTable(List<GatewayProperties.Route> routes, Map<String, String> upstreams,
+                      String previewDomain, String previewUpstream) {
+        boolean previews = previewDomain != null && !previewDomain.isBlank()
+                && previewUpstream != null && !previewUpstream.isBlank();
+        this.previewSuffix = previews ? "." + previewDomain.toLowerCase(java.util.Locale.ROOT) : null;
+        this.previewUpstream = previews ? previewUpstream : null;
         for (GatewayProperties.Route r : routes) {
             String url = upstreams.get(r.service());
             if (url == null) {
@@ -44,6 +57,30 @@ public class RouteTable {
             this.routes.add(new Compiled(p, split(p), p.endsWith("/"), r.service(), instances));
             turns.putIfAbsent(r.service(), new AtomicInteger());
         }
+    }
+
+    /**
+     * A Kubernetes preview, addressed by host: {token}.{preview-domain} goes to
+     * that preview's own Service (preview.ffp-{token}.svc). The token is the
+     * namespace, so nothing needs to look it up - and anything that isn't a
+     * 32-hex token is not a preview, which keeps the template from being
+     * steered at arbitrary hosts.
+     *
+     * @return null when the host is not a preview host
+     */
+    public Match matchPreviewHost(String host) {
+        if (previewSuffix == null || host == null) {
+            return null;
+        }
+        String h = host.toLowerCase(java.util.Locale.ROOT);
+        if (!h.endsWith(previewSuffix)) {
+            return null;
+        }
+        String token = h.substring(0, h.length() - previewSuffix.length());
+        if (!TOKEN.matcher(token).matches()) {
+            return null;
+        }
+        return new Match("*" + previewSuffix, "preview", List.of(URI.create(previewUpstream.replace("{token}", token))));
     }
 
     public Match match(String path) {

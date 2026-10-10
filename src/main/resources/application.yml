@@ -139,6 +139,14 @@ forgeflow:
     pids-limit: 128
     network: none
     timeout-seconds: 30
+    # provider: kubernetes - a namespace and a pod per preview (deploy/k8s/24-previews.yaml)
+    kubernetes:
+      api-url: ${K8S_API_URL:}           # blank = in-cluster (the pod's service account)
+      token: ${K8S_TOKEN:}
+      preview-domain: ${PREVIEW_DOMAIN:preview.localhost}
+      url-scheme: ${PREVIEW_URL_SCHEME:https}
+      gateway-namespace: ${FORGEFLOW_NAMESPACE:forgeflow}
+      ready-timeout-seconds: ${PREVIEW_READY_TIMEOUT_SECONDS:180}
 
 logging:
   level:

@@ -1190,6 +1190,58 @@ and everything that crosses instances - a log line from a build on one
 reaching a viewer on the other, a chat lock, the checkout redirect - worked.
 199 tests.
 
+### A Kubernetes pod per preview
+
+Stage 8, the last box in the diagram: `code.generated → Kafka →
+execution-service → Kubernetes pods (project-456:3000, new namespace)`.
+`FORGEFLOW_SANDBOX_PROVIDER=kubernetes` gives every preview its own
+namespace, created over the Kubernetes REST API (no client library -
+`KubernetesApi` is ~150 lines of HTTPS + the pod's service-account token
+and CA):
+
+```
+ffp-{token}   Namespace      labelled forgeflow.dev/project-id=456
+  quota       ResourceQuota  2 pods, 1 CPU, 1 GiB
+  preview     NetworkPolicy  in: only from the gateway's namespace; out: nothing (static) / DNS+443 (React, for npm)
+  files       ConfigMap      the project's files (keys escaped: "/" can't be in a key; mapped back by volume items)
+  preview     Pod            static: nginx-unprivileged :8080   React: node, npm install, vite :3000
+  preview     Service        :80 -> the pod
+```
+
+Every pod: non-root, read-only root filesystem, all capabilities dropped,
+seccomp RuntimeDefault, **no service-account token** (generated code gets
+no cluster credentials), and `activeDeadlineSeconds` = the preview's 30
+minutes, so Kubernetes kills it even if ForgeFlow forgets.
+
+The preview's address is `https://{token}.preview.domain/`. A wildcard
+Ingress sends every preview host to the gateway, which proxies
+`{token}.{domain}` to `preview.ffp-{token}.svc` - the token *is* the
+namespace, so there's no lookup table, and any API replica can stop or
+refresh a preview by its project label. Anything that isn't 32 hex
+characters isn't a preview host, so the template can't be steered.
+
+And the arrow from Kafka: when `code.generated` arrives for a project with
+a running pod, the execution consumer replaces the ConfigMap and recreates
+the pod in the same namespace - **same address, new code**. (Docker
+previews do the same by rewriting their mounted folder; in-process previews
+read the project live and need nothing.)
+
+Permissions: a ClusterRole (namespaces are cluster-scoped and created on
+the fly) plus a **ValidatingAdmissionPolicy** for what RBAC can't say: the
+API's service account may only touch namespaces named `ffp-*`.
+
+Tested against a fake Kubernetes API server (the Stripe approach: real
+protocol, fake server): order of creation, every security setting,
+ConfigMap key escaping, React on :3000 with npm egress, replace-on-restart,
+stop-by-label, ImagePullBackOff failing fast and cleaning up, too-big
+refused before touching the cluster, redeploy surviving a 409 from a
+terminating pod - and end to end with the whole app: start a preview →
+generate a change → `code.generated` → the ConfigMap holds the new file and
+the URL is unchanged. Not yet run on a real cluster. 207 tests.
+
+Also fixed: the test suite ran Postgres out of connections (one pool of 10
+per cached Spring context); the test profile now caps pools at 4.
+
 
 ---
 
@@ -1213,8 +1265,11 @@ reaching a viewer on the other, a chat lock, the checkout redirect - worked.
   the candidate list (pgvector 0.8's iterative scans fix this).
 - Embedding calls aren't counted against the token quota (rerank calls are).
 - Unreferenced blobs in object storage are never deleted (no sweep yet).
-- Kubernetes pods per preview - not built; `SandboxProvider` is the seam. (The
-  diagram's other execution box, the WebContainer, is built: Run with Node.)
+- Kubernetes previews are tested against a fake API server, not a real
+  cluster yet (kind or minikube would do it).
+- Kubernetes previews don't get the console bridge or the visual check (nginx
+  and Vite serve the files, not ForgeFlow); Vite's hot-reload websocket isn't
+  proxied by the gateway, so the page reloads instead.
 - Run with Node hasn't been watched booting yet (needs stackblitz.com - check on Render).
 - React previews load non-React packages from esm.sh at view time; offline, only
   react/react-dom work.

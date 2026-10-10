@@ -10,7 +10,7 @@ class GatewayConfig {
 
     @Bean
     RouteTable routeTable(GatewayProperties props) {
-        return new RouteTable(props.routes(), props.upstreams());
+        return new RouteTable(props.routes(), props.upstreams(), props.previewDomain(), props.previewUpstream());
     }
 
     @Bean

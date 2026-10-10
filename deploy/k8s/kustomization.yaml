@@ -8,4 +8,5 @@ resources:
   - 20-api.yaml
   - 21-worker.yaml
   - 22-gateway.yaml
+  - 24-previews.yaml
   - 30-infra.yaml

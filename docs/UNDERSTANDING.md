@@ -2178,7 +2178,65 @@ yourself is how you learn what the Service is doing for you.
 
 ---
 
-## Chapter 29 — What's next
+## Chapter 29 — A booth per customer (Kubernetes previews)
+
+**Plain English.** Until now every preview was served from the API's own
+kitchen. On Kubernetes, each preview gets its own booth - a *namespace* -
+with its own little server inside (a *pod*), its own walls (a *network
+policy*: only the front door may talk to it, and it may not call out), and
+its own budget (a *quota*). When the preview ends, the whole booth is
+removed in one go.
+
+### How a preview is built
+
+ForgeFlow talks to Kubernetes the way everything does: a REST API. It
+sends JSON documents - "make a namespace called ffp-3f9a…", "put these
+files in a ConfigMap", "run this pod" - and Kubernetes makes them so. For a
+plain site the pod is a tiny web server; for a React app it's Node running
+`npm install` and Vite on port 3000 (the diagram's `project-456:3000`).
+
+### How your browser finds it
+
+The preview's address is a subdomain: `3f9a….preview.forgeflow.local`.
+The random part is the namespace's name, so the gateway doesn't need to
+look anything up - it reads the name off the address and forwards to that
+namespace's service.
+
+### When the agent changes code
+
+`code.generated` already went to Kafka. Now the execution side, hearing it,
+swaps the files in the booth and restarts its server - same address, new
+code.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why a namespace per preview, not one namespace with many pods?**
+Isolation and cleanup. A network policy and a quota cover everything in a
+namespace, and deleting a namespace deletes everything in it - no leaked
+services or config maps.
+
+**Q: What stops generated code from attacking the cluster?**
+It runs as a non-root user with a read-only filesystem and no Linux
+capabilities, it gets no Kubernetes credentials at all, the network policy
+lets nothing in but the gateway and nothing out (except npm for React), and
+Kubernetes kills the pod when its time is up.
+
+**Q: The API can create namespaces. Isn't that dangerous?**
+Yes, which is why there's a second lock: an admission policy that only lets
+the API's account touch namespaces whose names start with `ffp-`. Even a
+bug - or a stolen token - can't delete anything else.
+
+**Q: How did you test it without a cluster?**
+Against a fake Kubernetes API server that speaks the same JSON, the same
+way the Stripe integration was tested. It proves what ForgeFlow *asks* for.
+A real cluster (kind) is the next check.
+
+</details>
+
+---
+
+## Chapter 30 — What's next
 
 Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
 the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
@@ -2187,7 +2245,7 @@ roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
 (Chapter 18), **RAG** (Chapter 19), **tracing** (Chapter 20), the
 **workbench** (Chapter 21), `edit_file`, the runtime loop and prompt
 caching (Chapter 22), and the full topology - Kafka, MinIO, Qdrant, the
-gateway, Kubernetes (Chapter 23), version history (Chapter 24), screenshot to app (Chapter 25), the AI checking its own app (Chapter 26), React apps running in the browser (Chapter 27), and a stateless API that scales out (Chapter 28). What's left:
+gateway, Kubernetes (Chapter 23), version history (Chapter 24), screenshot to app (Chapter 25), the AI checking its own app (Chapter 26), React apps running in the browser (Chapter 27), a stateless API that scales out (Chapter 28), and a Kubernetes pod per preview (Chapter 29). What's left:
 
 - **Measure it** — re-run the evals against real Gemini and count how often
   edit requests now use `edit_file`.

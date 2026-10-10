@@ -1027,3 +1027,36 @@ redis-cli TTL ff:lock:chat:<sessionId>   # while a reply is being written
 - **Gateway retries only refused connections.** If an instance hangs instead
   of dying, its requests time out (504) until it's removed from the list.
 
+## 24. Kubernetes previews (10 Oct)
+
+### Try it on a laptop cluster (kind)
+
+```bash
+kind create cluster --name forgeflow          # needs Docker
+# a CNI that enforces NetworkPolicy (Calico/Cilium) if you want to see the fences work
+docker build -t forgeflow:latest . && docker build -t forgeflow-gateway:latest gateway
+kind load docker-image forgeflow:latest forgeflow-gateway:latest --name forgeflow
+cp deploy/k8s/11-secret.example.yaml deploy/k8s/11-secret.yaml   # fill it in
+kubectl apply -k deploy/k8s
+# add "127.0.0.1 forgeflow.local" and "<token>.preview.forgeflow.local" to /etc/hosts, or use a wildcard DNS
+```
+
+Start a preview in the workbench, then watch it appear:
+
+```bash
+kubectl get ns -l app.kubernetes.io/part-of=forgeflow-previews
+kubectl -n ffp-<token> get all,configmap,networkpolicy,resourcequota
+kubectl -n ffp-<token> logs preview -f        # React: npm install, then Vite
+```
+
+### Gotchas
+
+- **The admission policy needs Kubernetes 1.30+.** On older clusters drop
+  the last two objects in 24-previews.yaml (RBAC still applies).
+- **NetworkPolicy does nothing without a CNI that enforces it** (kind's
+  default doesn't). The pods still run; they just aren't fenced.
+- **A React preview takes a while** - npm install inside the pod. The
+  request waits up to `PREVIEW_READY_TIMEOUT_SECONDS` (180).
+- **Projects over ~900 KB** can't use Kubernetes previews (ConfigMap limit).
+  The next step would be an init container pulling from S3.
+
