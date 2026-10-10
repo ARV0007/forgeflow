@@ -761,6 +761,20 @@ query ─┬─ embed (RETRIEVAL_QUERY) ─► top 30 by cosine distance ─┐
 Embedders: `gemini-embedding-001` at 768 dims (`FORGEFLOW_EMBEDDER=gemini`,
 needs `GOOGLE_API_KEY`) or the offline `hashing` embedder.
 
+**Modes and honesty.** `CodeIndex.Mode` = `HYBRID` (always, in the product),
+`VECTOR`, `KEYWORD` - the last two exist to measure each half
+(`GET …/search?mode=`). `searchDetailed` also reports whether the query
+embedding failed (`degraded`) and how many chunks lack vectors; the search
+endpoint exposes them as `X-Search-Degraded` / `X-Index-Missing-Vectors`.
+
+**Measured by** `evals/run_retrieval_eval.py`: 29-file fixture, 42 labelled
+questions (identifier / described / paraphrase), recall@1/3/5 and MRR per
+mode, file level. `RetrievalEvalTest` runs the non-paraphrase questions in
+CI with the hashing embedder.
+
+**Visible:** `AgentEvent.retrieved(excerpts, files)` → the chat step
+"used N code excerpts from …".
+
 ### 17.10 Tracing
 
 ```

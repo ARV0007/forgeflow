@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Your cart - FreshCart</title>
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/cart.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="logo" href="index.html">FreshCart</a>
+  </header>
+
+  <main class="cart-page">
+    <h1>Your cart</h1>
+    <table id="cart-table">
+      <thead>
+        <tr><th>Item</th><th>Price</th><th>Quantity</th><th>Total</th><th></th></tr>
+      </thead>
+      <tbody id="cart-rows"></tbody>
+    </table>
+    <p id="cart-empty" hidden>Your cart is empty. <a href="products.html">Go shopping</a></p>
+
+    <form id="promo-form" class="promo">
+      <input id="promo-code" placeholder="Promo code">
+      <button type="submit">Apply</button>
+    </form>
+
+    <dl class="summary">
+      <dt>Subtotal</dt><dd id="subtotal"></dd>
+      <dt>Discount</dt><dd id="discount"></dd>
+      <dt>Delivery</dt><dd id="shipping"></dd>
+      <dt>Total</dt><dd id="grand-total"></dd>
+    </dl>
+    <a class="button" href="checkout.html">Checkout</a>
+  </main>
+
+  <div id="toast-root"></div>
+
+  <script src="js/storage.js"></script>
+  <script src="js/currency.js"></script>
+  <script src="js/toast.js"></script>
+  <script src="js/products.js"></script>
+  <script src="js/discounts.js"></script>
+  <script src="js/shipping.js"></script>
+  <script src="js/cart.js"></script>
+  <script src="js/cart-page.js"></script>
+</body>
+</html>

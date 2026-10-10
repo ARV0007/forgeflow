@@ -12,6 +12,8 @@ import com.forgeflow.workspace.ProjectFileService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 
@@ -81,6 +83,30 @@ class RetrievalTest extends ApiTestSupport {
 
         JsonNode dark = get("/api/v1/projects/" + id + "/search?q=dark mode toggle", a, 200);
         assertThat(dark.get(0).path("path").asText()).isEqualTo("theme.js");
+    }
+
+    @Test
+    void eachHalfOfTheSearchCanRunAlone() throws Exception {
+        Account a = signup("modes");
+        long id = siteWithTwoScripts(a);
+
+        // Keyword-only still finds an exact identifier...
+        JsonNode kw = get("/api/v1/projects/" + id + "/search?q=renderTodos&mode=keyword", a, 200);
+        assertThat(kw.get(0).path("path").asText()).isEqualTo("app.js");
+        // ...and finds nothing for words that appear nowhere in the code,
+        assertThat(get("/api/v1/projects/" + id + "/search?q=zebra&mode=keyword", a, 200)).isEmpty();
+        // where vector-only always ranks *something* - nearest is never empty.
+        assertThat(get("/api/v1/projects/" + id + "/search?q=zebra&mode=vector", a, 200)).isNotEmpty();
+
+        assertThat(index.search(id, "dark mode toggle", 5, CodeIndex.Mode.VECTOR).get(0).path())
+                .isEqualTo("theme.js");
+        // A healthy search carries neither warning header.
+        MvcResult healthy = mvc.perform(MockMvcRequestBuilders.get("/api/v1/projects/" + id + "/search").param("q", "renderTodos")
+                                .header("Authorization", "Bearer " + a.token()))
+                .andReturn();
+        assertThat(healthy.getResponse().getHeader(SearchController.DEGRADED_HEADER)).isNull();
+        assertThat(healthy.getResponse().getHeader(SearchController.MISSING_VECTORS_HEADER)).isNull();
+        get("/api/v1/projects/" + id + "/search?q=x&mode=telepathy", a, 400);
     }
 
     @Test
@@ -159,6 +185,37 @@ class RetrievalTest extends ApiTestSupport {
     }
 
     @Test
+    void theChatStreamShowsWhichFilesRetrievalUsed() throws Exception {
+        Account a = signup("visible-rag");
+        long id = createProject(a, "big");
+        List<ToolCall> writes = new ArrayList<>(List.of(write("index.html", INDEX), write("styles.css", CSS),
+                write("app.js", APP_JS), write("theme.js", THEME_JS)));
+        for (int i = 1; i <= 13; i++) {
+            writes.add(write("feature" + i + ".js", "function feature" + i + "() { return " + i + "; }"));
+        }
+        llm.then(calls(writes.toArray(ToolCall[]::new))).then(calls(finish("Built 17 files.")));
+        post("/api/v1/projects/" + id + "/generate", a, Map.of("prompt", "build"), 200);
+
+        long sid = post("/api/v1/projects/" + id + "/chat/sessions", a, Map.of(), 201).path("id").asLong();
+        llm.then(calls(finish("Done.")));
+        MvcResult result = mvc.perform(MockMvcRequestBuilders
+                        .post("/api/v1/projects/" + id + "/chat/sessions/" + sid + "/messages/stream")
+                        .header("Authorization", "Bearer " + a.token())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(Map.of("content", "make the dark mode toggle remember its state"))))
+                .andReturn();
+        String body = "";
+        for (int i = 0; i < 100 && !body.contains("event:message"); i++) {
+            Thread.sleep(50);
+            body = result.getResponse().getContentAsString();
+        }
+        assertThat(body).contains("event:retrieved");
+        String retrieved = body.substring(body.indexOf("event:retrieved"));
+        retrieved = retrieved.substring(0, retrieved.indexOf("\n\n"));
+        assertThat(retrieved).contains("code excerpt").contains("theme.js");
+    }
+
+    @Test
     void aSmallProjectsRequestIsLeftAlone() {
         Account a = signup("small");
         long id = siteWithTwoScripts(a);
@@ -186,9 +243,14 @@ class RetrievalTest extends ApiTestSupport {
         };
         CodeIndex degraded = new CodeIndex(files, broken, jdbc, tx, new Tracer(SpanReporter.NOOP), 15, 8);
 
-        List<CodeIndex.SearchHit> hits = degraded.search(id, "renderTodos", 5);
+        CodeIndex.SearchResult result = degraded.searchDetailed(id, "renderTodos", 5, CodeIndex.Mode.HYBRID);
+        List<CodeIndex.SearchHit> hits = result.hits();
         assertThat(hits).isNotEmpty();
         assertThat(hits.get(0).path()).isEqualTo("app.js");
+        // ...and it says so, so a measurement can tell this from a real hybrid result.
+        assertThat(result.degraded()).isTrue();
+        assertThat(result.chunksMissingVectors()).isPositive();
+        assertThat(degraded.searchDetailed(id, "renderTodos", 5, CodeIndex.Mode.KEYWORD).degraded()).isFalse();
         // Stored without vectors - and flagged, so the next healthy pass fills them in.
         assertThat(jdbc.queryForObject("SELECT count(*) FROM file_chunks WHERE project_id = ? AND embedding IS NOT NULL",
                 Integer.class, id)).isZero();

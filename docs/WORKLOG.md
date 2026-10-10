@@ -872,6 +872,43 @@ cases build from an empty project, where write_file is the right tool. So:
 The eval account spent ~174k of its 200k daily tokens today, so the first
 live run with follow-ups waits until the allowance resets (05:30 IST).
 
+### Measuring the R in RAG
+
+Aman wants RAG and the LLM to be the project's headline - which means
+numbers, not "built RAG". Until now retrieval was built and tested but never
+*measured*, and on projects under 16 files it doesn't even switch on.
+
+- **A retrieval eval** (`evals/run_retrieval_eval.py`). A fixed 29-file
+  sample shop, FreshCart (`evals/retrieval/fixture`, ~1,100 lines: pages,
+  cart, promo codes, delivery, checkout validation, i18n, dark mode…), and 42
+  labelled questions (`evals/retrieval/queries.json`) in three kinds: 14
+  exact identifiers (`applyPromoCode`), 14 plain descriptions ("evening
+  delivery surcharge") and 14 paraphrases that share few or no words with
+  the code ("how much does it cost to bring the groceries to my house"). Each
+  question is run in three modes - hybrid, vector only, keyword only - and
+  scored by recall@1/3/5 and MRR at the file level.
+- **`?mode=` on search** (`CodeIndex.Mode`), so each half can run alone.
+  The product still always uses hybrid.
+- **Honest measurement.** If Gemini embeddings fail, search quietly falls
+  back to keywords - fine for the product, fatal for a measurement. Search
+  now says so in `X-Search-Degraded` and `X-Index-Missing-Vectors`, and the
+  runner waits and retries instead of scoring a keyword result as "vector".
+- **`PUT /files/content`** - save a file by hand (EDITOR or owner, same path
+  rules and 200 KB cap as the agent). The eval loads its fixture with it;
+  it's also Lovable's "edit the code yourself".
+- **RAG made visible.** When a request goes out with retrieved code, the
+  chat shows "→ used 8 code excerpts from js/shipping.js, checkout.html …".
+- **CI guard** (`RetrievalEvalTest`): the same fixture and the 28
+  non-paraphrase questions, with the offline embedder, must all find their
+  file in the top 5. Sabotage-checked: reversing the ranking fails it.
+
+Dry run with the offline hashing embedder (word-level, so its "vector" mode
+is really keywords again - **not** the real numbers): hybrid recall@5 88%,
+keyword 95%, MRR 0.83 / 0.77; identifiers and descriptions 100% in every
+mode, paraphrases 64% hybrid. One thing it already shows: fusing a strong
+list with a weak one can *lower* recall@5 below the strong list alone. The
+live run with Gemini embeddings is what counts. 151 tests.
+
 ---
 
 ## Open items

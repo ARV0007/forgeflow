@@ -53,6 +53,16 @@ public class CodeIndex {
     public record SearchHit(String path, int startLine, int endLine, double score, String content) {
     }
 
+    /**
+     * Hits, plus whether they can be trusted as a measurement. {@code degraded}:
+     * the query embedding failed, so a hybrid or vector search ran on keywords
+     * alone. {@code chunksMissingVectors}: chunks stored without a vector (an
+     * embedding call failed while indexing) that vector search cannot see yet.
+     * The product shrugs both off; the retrieval eval must not.
+     */
+    public record SearchResult(List<SearchHit> hits, boolean degraded, int chunksMissingVectors) {
+    }
+
     public record IndexReport(int filesIndexed, int chunksWritten, int filesRemoved, int filesUnchanged) {
     }
 
@@ -189,23 +199,43 @@ public class CodeIndex {
 
     // -------------------------------------------------------------- search
 
+    /**
+     * Which halves of the search to run. HYBRID is what the product uses; the
+     * other two exist so the retrieval eval can measure what each half
+     * contributes - "hybrid beats vector-only by N points" needs vector-only.
+     */
+    public enum Mode { HYBRID, VECTOR, KEYWORD }
+
     /** Fresh results: the index is brought up to date first. */
     public List<SearchHit> search(Long projectId, String query, int limit) {
+        return search(projectId, query, limit, Mode.HYBRID);
+    }
+
+    public List<SearchHit> search(Long projectId, String query, int limit, Mode mode) {
+        return searchDetailed(projectId, query, limit, mode).hits();
+    }
+
+    public SearchResult searchDetailed(Long projectId, String query, int limit, Mode mode) {
         if (query == null || query.isBlank()) {
-            return List.of();
+            return new SearchResult(List.of(), false, 0);
         }
         ensureIndexed(projectId);
         int k = Math.max(1, Math.min(limit, 20));
 
-        String keywords = keywordQuery(query);
+        String keywords = mode == Mode.VECTOR ? null : keywordQuery(query);
         String vector = null;
-        try {
-            vector = literal(embedder.embed(List.of(query), Embedder.Kind.QUERY).get(0));
-        } catch (RuntimeException e) {
-            log.warn("query embedding failed, searching by keyword only: {}", e.getMessage());
+        if (mode != Mode.KEYWORD) {
+            try {
+                vector = literal(embedder.embed(List.of(query), Embedder.Kind.QUERY).get(0));
+            } catch (RuntimeException e) {
+                log.warn("query embedding failed, searching by keyword only: {}", e.getMessage());
+            }
         }
+        boolean degraded = mode != Mode.KEYWORD && vector == null;
+        int missingVectors = jdbc.queryForObject(
+                "SELECT count(*) FROM file_chunks WHERE project_id = ? AND embedding IS NULL", Integer.class, projectId);
         if (vector == null && keywords == null) {
-            return List.of();
+            return new SearchResult(List.of(), degraded, missingVectors);
         }
 
         // Each half produces a ranked candidate list; RRF scores a chunk by
@@ -248,10 +278,11 @@ public class CodeIndex {
                 WHERE c.project_id = ? AND (v.id IS NOT NULL OR kw.id IS NOT NULL)
                 ORDER BY score DESC, c.file_path, c.chunk_index
                 LIMIT ?""";
-        return jdbc.query(sql, (rs, i) -> new SearchHit(
+        List<SearchHit> hits = jdbc.query(sql, (rs, i) -> new SearchHit(
                         rs.getString("file_path"), rs.getInt("start_line"), rs.getInt("end_line"),
                         rs.getDouble("score"), rs.getString("content")),
                 args.toArray());
+        return new SearchResult(hits, degraded, missingVectors);
     }
 
     /**
@@ -260,7 +291,7 @@ public class CodeIndex {
      * stops being affordable, so the most relevant chunks are attached to the
      * request instead. That is the retrieval half of RAG.
      */
-    public Optional<String> contextFor(Long projectId, String prompt) {
+    public Optional<RetrievedContext> contextFor(Long projectId, String prompt) {
         if (files.list(projectId).size() <= wholeProjectThreshold) {
             return Optional.empty();
         }
@@ -268,13 +299,21 @@ public class CodeIndex {
         if (hits.isEmpty()) {
             return Optional.empty();
         }
+        List<String> sources = hits.stream().map(SearchHit::path).distinct().toList();
         StringBuilder sb = new StringBuilder("RELEVANT CODE (retrieved for this request - excerpts, not whole files; "
                 + "read_file before editing):\n");
         for (SearchHit h : hits) {
             sb.append("\n--- ").append(h.path()).append(" lines ").append(h.startLine())
               .append('-').append(h.endLine()).append(" ---\n").append(h.content()).append('\n');
         }
-        return Optional.of(sb.toString());
+        return Optional.of(new RetrievedContext(sb.toString(), hits.size(), sources));
+    }
+
+    /**
+     * What retrieval attached to a request: the text the model sees, and - for
+     * the person watching - how many excerpts, from which files.
+     */
+    public record RetrievedContext(String text, int excerpts, List<String> files) {
     }
 
     // ------------------------------------------------------------- helpers

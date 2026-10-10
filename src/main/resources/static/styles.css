@@ -182,6 +182,8 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--e
 .st-pass { color: var(--verdigris); }
 .st-bad { color: var(--rust); }
 .st-repair { color: var(--ember); }
+.st-rag { color: var(--bone); }
+.st-rag::before { content: "\2192  "; color: var(--ember); }
 .st .why { color: var(--ash); }
 
 .spinner {

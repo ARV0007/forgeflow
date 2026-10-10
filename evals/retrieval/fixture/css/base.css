@@ -1,0 +1,39 @@
+/* Colour palette, type scale and resets used by every page. */
+:root {
+  --green: #2f7d32;
+  --green-dark: #1b5e20;
+  --cream: #fbf8f1;
+  --ink: #1f2421;
+  --muted: #6b716d;
+  --danger: #b3261e;
+  --radius: 10px;
+  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--cream);
+}
+
+h1, h2, h3 { line-height: 1.2; margin: 0 0 0.5em; }
+a { color: var(--green-dark); }
+
+.button, button {
+  display: inline-block;
+  padding: 0.6em 1.2em;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--green);
+  color: white;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+button:disabled { background: var(--muted); cursor: not-allowed; }
+:focus-visible { outline: 3px solid #f9a825; outline-offset: 2px; }

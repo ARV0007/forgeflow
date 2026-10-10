@@ -1,5 +1,7 @@
 package com.forgeflow.intelligence;
 
+import java.util.List;
+
 /**
  * A progress event streamed to the client while a run is in flight.
  *
@@ -11,6 +13,12 @@ public record AgentEvent(String type, String message, String path, Object data) 
 
     public static AgentEvent status(String message) {
         return new AgentEvent("status", message, null, null);
+    }
+
+    /** RAG at work: the request went out with these retrieved excerpts attached. */
+    public static AgentEvent retrieved(int excerpts, List<String> files) {
+        return new AgentEvent("retrieved", "Used " + excerpts + " code excerpt" + (excerpts == 1 ? "" : "s")
+                + " from " + files.size() + " file" + (files.size() == 1 ? "" : "s"), null, files);
     }
 
     public static AgentEvent thinking(int round, int promptTokens) {

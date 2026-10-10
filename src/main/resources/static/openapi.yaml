@@ -344,6 +344,26 @@ paths:
           description: The file
           content: { application/json: { schema: { type: object, properties: { path: { type: string }, content: { type: string } } } } }
         "404": { $ref: "#/components/responses/Problem" }
+    put:
+      tags: [Files]
+      summary: Save a file by hand - create or overwrite (WRITE)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path, content]
+              properties:
+                path: { type: string, example: js/cart.js }
+                content: { type: string }
+      responses:
+        "200":
+          description: Saved
+          content: { application/json: { schema: { type: object, properties: { path: { type: string }, version: { type: integer }, sizeBytes: { type: integer } } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
 
   /api/v1/projects/{projectId}/files/download:
     parameters: [{ $ref: "#/components/parameters/projectId" }]
@@ -428,6 +448,7 @@ paths:
       parameters:
         - { name: q, in: query, required: true, schema: { type: string }, example: dark mode toggle }
         - { name: k, in: query, schema: { type: integer, default: 8, maximum: 20 } }
+        - { name: mode, in: query, description: "hybrid (default), or vector / keyword alone - for measuring each half", schema: { type: string, enum: [hybrid, vector, keyword], default: hybrid } }
       responses:
         "200": { description: Hits, best first, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/SearchHit" } } } } }
 

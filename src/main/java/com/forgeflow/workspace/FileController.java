@@ -3,6 +3,9 @@ package com.forgeflow.workspace;
 import com.forgeflow.shared.ResourceNotFoundException;
 import com.forgeflow.workspace.dto.FileEntry;
 import com.forgeflow.workspace.dto.ProjectResponse;
+import com.forgeflow.workspace.dto.SaveFileRequest;
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -10,19 +13,24 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
 /**
  * Spec: Files - File Tree, File Content, Download all files as zip.
- * All three are reads, so a VIEWER can use them.
+ * Those three are reads, so a VIEWER can use them. Saving a file by hand is
+ * a write: EDITOR or owner.
  */
 @RestController
 @RequestMapping("/api/v1/projects/{projectId}/files")
@@ -50,6 +58,44 @@ public class FileController {
         return files.read(projectId, path)
                 .map(content -> Map.<String, Object>of("path", path, "content", content))
                 .orElseThrow(() -> new ResourceNotFoundException("File not found: " + path));
+    }
+
+    /** Same cap as the agent's write tool: these are source files, not uploads. */
+    static final int MAX_FILE_BYTES = 200_000;
+
+    /**
+     * Save one file by hand: an edit in the code view, or importing an
+     * existing project file by file (the retrieval eval loads its sample app
+     * this way). Search re-indexes on its next call, so a saved file is
+     * searchable straight away.
+     */
+    @PutMapping("/content")
+    public Map<String, Object> save(@PathVariable Long projectId,
+                                    @Valid @RequestBody SaveFileRequest req,
+                                    Authentication auth) {
+        Long userId = (Long) auth.getPrincipal();
+        projects.requireWrite(projectId, userId);
+        String path = cleanPath(req.path());
+        int bytes = req.content().getBytes(StandardCharsets.UTF_8).length;
+        if (bytes > MAX_FILE_BYTES) {
+            throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,
+                    "File is " + bytes + " bytes; the limit is " + MAX_FILE_BYTES);
+        }
+        int version = files.write(projectId, path, req.content(), userId);
+        return Map.of("path", path, "version", version, "sizeBytes", bytes);
+    }
+
+    /** The same rules the agent's tools apply to the paths the model writes. */
+    static String cleanPath(String raw) {
+        String p = raw.replace('\\', '/').trim();
+        while (p.startsWith("/")) {
+            p = p.substring(1);
+        }
+        if (p.isBlank() || p.contains("..") || p.contains("\0")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Invalid path: use a relative path like css/site.css, without '..'");
+        }
+        return p;
     }
 
     /**

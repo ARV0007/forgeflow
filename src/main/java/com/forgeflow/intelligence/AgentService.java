@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -153,7 +154,11 @@ public class AgentService {
         // the agent still has list_files, read_file and search_code.
         String request = prompt;
         try {
-            request = index.contextFor(projectId, prompt).map(ctx -> prompt + "\n\n" + ctx).orElse(prompt);
+            Optional<CodeIndex.RetrievedContext> context = index.contextFor(projectId, prompt);
+            if (context.isPresent()) {
+                request = prompt + "\n\n" + context.get().text();
+                emit(listener, AgentEvent.retrieved(context.get().excerpts(), context.get().files()));
+            }
         } catch (RuntimeException e) {
             log.warn("retrieval for project {} failed, continuing without it: {}", projectId, e.toString());
         }

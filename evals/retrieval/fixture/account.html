@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Account - FreshCart</title>
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/forms.css">
+</head>
+<body>
+  <main class="account">
+    <section id="signed-out">
+      <h1>Sign in</h1>
+      <form id="login-form">
+        <label>Email <input name="email" type="email" required></label>
+        <label>Password <input name="password" type="password" required></label>
+        <button type="submit">Sign in</button>
+      </form>
+    </section>
+    <section id="signed-in" hidden>
+      <h1>Hello, <span id="account-name"></span></h1>
+      <h2>Past orders</h2>
+      <ul id="order-history"></ul>
+      <h2>Saved for later</h2>
+      <ul id="wishlist-items"></ul>
+      <button id="logout">Sign out</button>
+    </section>
+  </main>
+
+  <div id="toast-root"></div>
+
+  <script src="js/storage.js"></script>
+  <script src="js/currency.js"></script>
+  <script src="js/toast.js"></script>
+  <script src="js/products.js"></script>
+  <script src="js/wishlist.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/order-history.js"></script>
+</body>
+</html>

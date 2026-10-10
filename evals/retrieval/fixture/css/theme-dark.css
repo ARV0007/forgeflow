@@ -1,0 +1,14 @@
+/* Night colours, switched on by data-theme="dark" on <html>. */
+[data-theme="dark"] {
+  --cream: #121513;
+  --ink: #e8ebe9;
+  --muted: #8d948f;
+  --green: #66bb6a;
+  --green-dark: #a5d6a7;
+}
+[data-theme="dark"] .site-header,
+[data-theme="dark"] .product-card,
+[data-theme="dark"] .summary,
+[data-theme="dark"] #cart-table { background: #1c201d; border-color: #2c312d; }
+[data-theme="dark"] input,
+[data-theme="dark"] select { background: #1c201d; color: var(--ink); border-color: #3a403b; }

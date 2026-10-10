@@ -120,6 +120,13 @@ breaking the feature on purpose and watching it go red.
 Also under test: the API reference matches the routes Spring serves, module
 boundaries hold, and an SSE stream ends cleanly on a real Tomcat.
 
+Two evals against real Gemini:
+
+```bash
+python3 evals/run_evals.py --base <url>            # 20 prompts: does the app build? (+5 follow-up edits)
+python3 evals/run_retrieval_eval.py --base <url>   # 42 questions: does search find the right file?
+```
+
 Browser walk-through (sign up → chat → preview → logs → search → upgrade →
 share → quota), against a demo-mode server:
 

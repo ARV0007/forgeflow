@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Checkout - FreshCart</title>
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/forms.css">
+</head>
+<body>
+  <main class="checkout">
+    <h1>Checkout</h1>
+    <form id="checkout-form" novalidate>
+      <fieldset>
+        <legend>Contact</legend>
+        <label>Full name <input name="fullName" required></label>
+        <label>Email <input name="email" type="email" required></label>
+        <label>Phone <input name="phone" type="tel"></label>
+      </fieldset>
+      <fieldset>
+        <legend>Delivery address</legend>
+        <label>Street <input name="street" required></label>
+        <label>City <input name="city" required></label>
+        <label>Postcode <input name="postcode" required></label>
+        <label>Delivery slot
+          <select name="slot">
+            <option value="asap">As soon as possible</option>
+            <option value="evening">This evening (6-9pm)</option>
+            <option value="tomorrow">Tomorrow morning</option>
+          </select>
+        </label>
+      </fieldset>
+      <fieldset>
+        <legend>Payment</legend>
+        <label>Card number <input name="cardNumber" inputmode="numeric" required></label>
+        <label>Expiry (MM/YY) <input name="expiry" required></label>
+        <label>CVC <input name="cvc" inputmode="numeric" required></label>
+      </fieldset>
+      <p class="order-total">Order total: <strong id="checkout-total"></strong></p>
+      <button type="submit">Place order</button>
+    </form>
+    <div id="order-confirmation" hidden></div>
+  </main>
+
+  <div id="toast-root"></div>
+
+  <script src="js/storage.js"></script>
+  <script src="js/currency.js"></script>
+  <script src="js/toast.js"></script>
+  <script src="js/products.js"></script>
+  <script src="js/discounts.js"></script>
+  <script src="js/shipping.js"></script>
+  <script src="js/cart.js"></script>
+  <script src="js/validation.js"></script>
+  <script src="js/checkout.js"></script>
+</body>
+</html>

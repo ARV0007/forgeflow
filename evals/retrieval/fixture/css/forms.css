@@ -1,0 +1,16 @@
+/* Inputs, fieldsets and inline error messages for checkout and sign-in. */
+fieldset { border: 1px solid #e4e1d8; border-radius: var(--radius); margin: 0 0 1.25rem; padding: 1rem; }
+legend { font-weight: 700; padding: 0 0.4em; }
+label { display: block; margin-bottom: 0.9rem; }
+input, select {
+  display: block;
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.55em 0.7em;
+  border: 1px solid #c9c6bd;
+  border-radius: 6px;
+  font: inherit;
+}
+input[aria-invalid="true"] { border-color: var(--danger); background: #fff5f4; }
+.field-error { display: block; color: var(--danger); font-size: 0.85rem; margin-top: 0.2rem; }
+.order-total { font-size: 1.2rem; }

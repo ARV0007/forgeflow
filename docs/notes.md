@@ -842,6 +842,15 @@ Multi-round runs should show a healthy cached share; single-round runs ~0.
   `rewrite` = whole files resent, `mixed` = both. Per case, the results
   JSON has `followup.toolUsage`. The demo model always rewrites — only a
   real-model run means anything here.
+- **Retrieval eval.** `python3 evals/run_retrieval_eval.py --base <url>`
+  loads the 29-file FreshCart fixture into a project called
+  `eval-retrieval`, asks 42 questions in hybrid / vector / keyword mode
+  (126 searches, ~85 query embeddings), prints recall@1/3/5 + MRR and saves
+  `evals/results/retrieval-*.json`. Costs no AI tokens from the daily quota
+  (embeddings aren't counted), takes ~3–5 min with the default 1 s pause.
+  It needs real embeddings: against a server with `FORGEFLOW_EMBEDDER=hashing`
+  the "vector" numbers are word matching. `--keep` leaves the project so you
+  can open it in the UI and try the Search tab yourself.
 - **Lost password?** There's no reset flow yet (no email sender). Sign up
   again — Gmail ignores everything after a `+`, so `you+ff@gmail.com` is a
   new ForgeFlow account that still reaches your inbox.

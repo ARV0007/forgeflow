@@ -366,6 +366,13 @@ function pendingReply() {
       switch (ev.type) {
         case 'status': el.querySelector('.work-now').textContent = ev.message; break;
         case 'thinking': el.querySelector('.work-now').textContent = 'Thinking'; break;
+        case 'retrieved': {
+          // RAG made visible: the request went out with these excerpts attached.
+          const files = Array.isArray(ev.data) ? ev.data : [];
+          const shown = files.slice(0, 4).map(f => `<code>${esc(f)}</code>`).join(', ');
+          step('st st-rag', `${esc(ev.message.split(' from ')[0].toLowerCase())} from ${shown}${files.length > 4 ? ` +${files.length - 4} more` : ''}`);
+          break;
+        }
         case 'tool':
           if (ev.message !== 'write_file') step('st', `${esc(ev.message.replace('_', ' '))} <code>${esc(ev.path || '')}</code>`);
           break;

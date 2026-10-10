@@ -1367,6 +1367,26 @@ the spec's design, that event goes onto a Kafka topic called `code.generated`
 and the indexer is a separate service. The event wouldn't change — only how
 it's delivered. That's what "seam" means.
 
+### Measuring it (added 10 Oct)
+
+Building RAG is half the job; knowing how good it is is the other half. The
+retrieval eval gives search a fixed exam: a 29-file sample shop and 42
+questions where we know which file is the right answer. Two scores:
+
+- **recall@5** - for what share of questions is the right file somewhere in
+  the top 5? (Like: did the archivist's pile of five sheets include the one
+  you needed?)
+- **MRR** (mean reciprocal rank) - how high up it was. First place scores 1,
+  second 1/2, third 1/3, missing 0; average over all questions.
+
+The questions come in three kinds, because each half of the search is good at
+different things: **exact names** (`applyPromoCode` - keywords are perfect),
+**plain descriptions** ("evening delivery surcharge" - both work) and
+**paraphrases** ("how much does it cost to bring the groceries to my house" -
+no shared words, so only meaning-based search can get it). Every question is
+asked three ways - hybrid, vector only, keyword only - so the report shows
+what each half contributes.
+
 <details>
 <summary><b>Counter-questions</b></summary>
 
@@ -1394,6 +1414,22 @@ Tests must be deterministic and work offline. The hashing embedder maps words
 to slots in a 768-long list. It only knows about shared words, not meaning —
 which is enough to check the pipeline end to end, and honest about what it
 isn't.
+
+**Q: Why is the score per file, not per chunk?**
+Because the real question is "which file do I open?". A file counts at the
+rank of its first chunk.
+
+**Q: The embedding API failed halfway through the eval. What would happen?**
+Search would quietly use keywords only - fine for users, but then a "vector"
+score would really be a keyword score. So search now reports it (response
+headers), and the eval waits and retries instead of recording a lie.
+
+**Q: In the offline dry run, keyword-only beat hybrid on recall@5. How can merging make it worse?**
+Rank fusion trusts both lists equally. If one list is weak (the offline
+embedder only matches words, so its "vector" list is noise for paraphrases),
+its wrong guesses get votes too and can push a right answer out of the top
+five. With a good embedding model the two lists are both strong and disagree
+usefully - which is exactly what the live run checks.
 
 **Q: Can one project's search return another project's code?**
 No. Both halves of the search filter by project id, and so does the final

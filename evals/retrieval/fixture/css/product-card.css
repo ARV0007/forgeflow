@@ -1,0 +1,31 @@
+/* The product tiles on the home and shop pages. */
+.product-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1.25rem;
+}
+.product-card {
+  position: relative;
+  background: white;
+  border-radius: var(--radius);
+  padding: 1rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.product-card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12); }
+.product-card img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; }
+.product-card .price { font-weight: 700; color: var(--green-dark); }
+.product-card.sold-out { opacity: 0.55; }
+.product-card.sold-out::after {
+  content: "Sold out";
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  padding: 0.2em 0.6em;
+  background: var(--danger);
+  color: white;
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+.save-for-later { position: absolute; top: 0.5rem; right: 0.5rem; background: white; color: var(--danger); }
+.save-for-later.saved { background: var(--danger); color: white; }

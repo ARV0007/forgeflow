@@ -1,0 +1,17 @@
+/* Cart table and the order summary box. */
+#cart-table { width: 100%; border-collapse: collapse; background: white; }
+#cart-table th, #cart-table td { padding: 0.75rem; border-bottom: 1px solid #eee; text-align: left; }
+#cart-table .qty { width: 4.5em; }
+#cart-table .remove { background: transparent; color: var(--danger); font-size: 1.3rem; }
+.promo { display: flex; gap: 0.5rem; margin: 1.5rem 0; }
+.promo input { flex: 1; max-width: 240px; }
+.summary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  max-width: 320px;
+  margin-left: auto;
+  padding: 1rem;
+  background: white;
+  border-radius: var(--radius);
+}
+.summary dt:last-of-type, .summary dd:last-of-type { font-weight: 800; border-top: 1px solid #ddd; padding-top: 0.5rem; }
