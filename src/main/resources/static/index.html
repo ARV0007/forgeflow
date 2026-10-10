@@ -45,6 +45,7 @@
     <span id="stack-badge" class="badge badge-stack" title="This project is a Vite + React app" hidden>React</span>
     <button id="btn-new-project" class="btn btn-quiet btn-sm">New project</button>
     <button id="btn-share" class="btn btn-quiet btn-sm">Share</button>
+    <button id="btn-publish" class="btn btn-quiet btn-sm" title="Give this app a public address">Publish</button>
     <span class="spacer"></span>
     <button id="btn-plan" class="plan-pill" title="Your plan and usage" hidden></button>
     <span id="whoami" class="whoami"></span>
@@ -166,6 +167,7 @@
             <div class="cp-head">
               <span id="cp-title" class="cp-title">Pick a version to see what changed</span>
               <span class="spacer"></span>
+              <button id="btn-cp-publish" class="btn btn-quiet btn-xs" hidden title="Make this version the public site (a rollback, if it's older)">Publish this version</button>
               <button id="btn-restore" class="btn btn-quiet btn-xs" hidden>Restore this version</button>
             </div>
             <div id="cp-diff" class="cp-diff"></div>
@@ -192,6 +194,21 @@
   </div>
   <p id="share-msg" class="msg"></p>
   <div class="dlg-actions"><button class="btn btn-quiet btn-sm" data-close>Done</button></div>
+</dialog>
+
+<dialog id="dlg-publish" class="dlg">
+  <h2>Publish</h2>
+  <p class="dlg-sub">A public address anyone can open. It shows a frozen version: keep editing, and
+     visitors see nothing new until you publish again. Any older version can be put back in one click.</p>
+  <div id="site-box" class="site-box"></div>
+  <ol id="site-releases" class="site-releases"></ol>
+  <p id="publish-msg" class="msg"></p>
+  <div class="dlg-actions">
+    <button id="btn-unpublish" class="btn btn-quiet btn-sm" hidden>Unpublish</button>
+    <span class="spacer"></span>
+    <button class="btn btn-quiet btn-sm" data-close>Close</button>
+    <button id="btn-do-publish" class="btn btn-primary btn-sm">Publish</button>
+  </div>
 </dialog>
 
 <dialog id="dlg-plan" class="dlg dlg-wide">

@@ -1296,6 +1296,35 @@ mid-sweep can be lost. One replica sweeps at a time - a Postgres
 gone, history and current files kept, a fresh object inside the grace
 period untouched. 210 tests.
 
+### Publish: immutable sites, one-click rollback
+
+Lovable's most visible button. **Publish** gives a project a public address,
+`/s/{name}-{4 random chars}/`, that anyone can open without signing in.
+
+The design decision: a site serves a **checkpoint**, never the live files.
+
+- **Frozen.** Keep editing; visitors see nothing new until you publish again.
+- **Atomic.** Publishing moves one pointer (`UPDATE sites SET checkpoint_id`):
+  a visitor gets the old version or the new one, never half of each.
+- **Rollback is the same operation.** "Put back" on any earlier release (or
+  "Publish this version" in History) just points the site at that
+  checkpoint. The project's files aren't touched.
+- **Free.** A release is a pointer to content-addressed blobs that version
+  history already keeps - no copy, no build artefact.
+- **Same sandbox as previews** (served from our origin, so the CSP sandbox
+  keeps generated code away from the user's session). React sites get the
+  in-browser runner; they don't get the console bridge - visitors aren't
+  the developers.
+- Unpublish keeps the slug, so the address comes back; a deleted project's
+  site goes dark at once. Only editors publish.
+
+V14 (`sites`, `site_releases`), `SiteService`, `SiteController`, a gateway
+route for `/s/`. Tests: frozen while editing, republish at the same address,
+rollback, unpublish/republish, React runner on the site, viewers refused,
+another project's checkpoint refused, deleted project dark. The browser walk
+publishes, opens the site signed out, edits, checks the site didn't change,
+republishes, rolls back. 213 tests.
+
 
 ---
 

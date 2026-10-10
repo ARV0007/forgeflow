@@ -1155,3 +1155,22 @@ code.generated ─► CodeChangeNotifier (group "execution") ─► ExecutionSer
 | blob GC | `BlobSweeper`, nightly cron (`forgeflow.storage.sweep.cron`): list `projects/` → mark `project_files.object_key ∪ file_blobs.object_key` → delete unmarked objects older than the grace (24 h); one replica at a time via `pg_try_advisory_xact_lock` |
 | S3 listing | `S3ObjectStore.list`: ListObjectsV2 with continuation tokens; the query string is SigV4-canonical (sorted, every value encoded, `/` as `%2F`) because it is part of the signature |
 
+## 26. Publish (sites from checkpoints)
+
+```
+POST /projects/{id}/site {checkpointId?}  ─► CheckpointService.snapshot (latest if unchanged, else new BASELINE)
+                                          ─► UPDATE sites SET checkpoint_id = ?, live = true   (or INSERT with a fresh slug)
+                                          ─► INSERT site_releases
+GET /s/{slug}/{path}  (public)            ─► sites JOIN projects (live, not deleted) ─► checkpoint_files ─► file_blobs ─► bytes
+                                             + SANDBOX CSP, React: module runner, __files.json, vendored React
+```
+
+| Concern | Decision |
+|---|---|
+| what a site serves | a checkpoint - immutable, so the site can't change under visitors while the project is edited |
+| deploy / rollback | one pointer update; rollback = publish an older checkpoint; history in `site_releases` |
+| storage cost of a release | none - checkpoints already reference content-addressed blobs |
+| address | `{name}-{4 chars}` from an alphabet without l/1/o/0; kept across unpublish |
+| security | public GET only; same CSP sandbox as previews; no console bridge; deleted projects 404 |
+| caching | `max-age=30` - the slug can move to another version at any time; `X-ForgeFlow-Version` names the checkpoint served |
+

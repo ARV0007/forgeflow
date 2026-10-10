@@ -42,4 +42,6 @@ gateway:
     - { prefix: "/api/v1/projects/*/preview", service: execution }
     - { prefix: "/api/v1/projects/*/build", service: execution }
     - { prefix: "/p/", service: execution }
+    - { prefix: "/s/", service: execution }
+    - { prefix: "/api/v1/projects/*/site", service: execution }
     - { prefix: "/", service: core }

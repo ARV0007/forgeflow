@@ -427,6 +427,39 @@ paths:
           content: { application/zip: { schema: { type: string, format: binary } } }
 
   # --------------------------------------------------------------- history
+  /api/v1/projects/{projectId}/site:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    get:
+      tags: [Preview]
+      summary: The published site and its release history (READ)
+      responses:
+        "200": { description: The site, content: { application/json: { schema: { $ref: "#/components/schemas/Site" } } } }
+        "404": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [Preview]
+      summary: Publish - the project as it is now, or a chosen version (rollback) (WRITE)
+      description: >
+        The site serves a checkpoint, never the live files, so it stays exactly as
+        published while the project changes. Public at /s/{slug}/ - no token -
+        under the same sandbox CSP as previews. The slug is kept across
+        unpublish / publish.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, properties: { checkpointId: { type: integer, format: int64, description: "omit to publish the current files" } } }
+      responses:
+        "200": { description: Published, content: { application/json: { schema: { $ref: "#/components/schemas/Site" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [Preview]
+      summary: Unpublish (WRITE) - the address is kept for next time
+      responses:
+        "204": { description: Unpublished }
+        "404": { $ref: "#/components/responses/Problem" }
+
   /api/v1/projects/{projectId}/checkpoints:
     parameters: [{ $ref: "#/components/parameters/projectId" }]
     get:
@@ -767,6 +800,18 @@ components:
           description: Calls per tool name, e.g. {"edit_file":1,"finish":1,"read_file":1}
           additionalProperties: { type: integer }
         costUsd: { type: number, description: "the run's model calls at list price, USD (0 for a model with no known price)" }
+    Site:
+      type: object
+      properties:
+        slug: { type: string }
+        url: { type: string, description: "relative, /s/{slug}/" }
+        live: { type: boolean }
+        checkpointId: { type: integer, format: int64 }
+        label: { type: string }
+        publishedAt: { type: string, format: date-time }
+        releases:
+          type: array
+          items: { type: object, properties: { checkpointId: { type: integer, format: int64 }, label: { type: string }, publishedAt: { type: string, format: date-time } } }
     Checkpoint:
       type: object
       properties:

@@ -1073,3 +1073,17 @@ kubectl -n ffp-<token> logs preview -f        # React: npm install, then Vite
   the object first and the row a moment later; a zero grace could delete it
   in between.
 
+## 26. Publish (11 Oct)
+
+1. Click **Publish** in the top bar, then **Publish**. Copy the address and
+   open it in a private window - no sign-in needed.
+2. Keep editing. The site doesn't change until you click **Publish latest
+   changes**.
+3. Rollback: in the Publish dialog click **Put back** next to an older
+   release - or open **History**, pick a version, **Publish this version**.
+4. **Unpublish** takes it offline; publishing again brings the same address back.
+
+Gotcha: the address is `/s/...` on the same domain as ForgeFlow. A custom
+domain per site would need a wildcard certificate and host routing (the
+gateway already routes by host for Kubernetes previews - same idea).
+

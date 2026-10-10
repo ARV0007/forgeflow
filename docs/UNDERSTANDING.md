@@ -2236,7 +2236,43 @@ A real cluster (kind) is the next check.
 
 ---
 
-## Chapter 30 — What's next
+## Chapter 30 — Publish: a shop window that only changes when you say so
+
+**Plain English.** A preview is the workshop: messy, changing, yours. A
+published site is the shop window: what customers see. ForgeFlow's shop
+window shows a *saved version* - one of the checkpoints from version history
+- not the workshop's current state. So you can keep working; the window
+only changes when you click Publish again. And if the new display is
+wrong, you put the previous one back with a click.
+
+### Why this is cheap
+
+Every checkpoint already points at its files by fingerprint, and those
+contents are stored once. Publishing doesn't copy anything - the site just
+*points* at a checkpoint. Moving the pointer is the whole deploy, and moving
+it back is the whole rollback.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why not serve the project's current files?**
+Then every half-finished edit would be live, and "rollback" would mean
+editing files back by hand. Serving a frozen version makes deploys
+deliberate and rollbacks instant.
+
+**Q: Can a visitor see half an update?**
+No. The switch is one database update; each request is answered entirely
+from whichever version the pointer named when it arrived.
+
+**Q: The site runs code the AI wrote, on your domain. Is that safe?**
+It gets the same sandbox as previews: the browser runs it in an anonymous
+origin, so it can't read ForgeFlow's cookies or storage.
+
+</details>
+
+---
+
+## Chapter 31 — What's next
 
 Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
 the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
@@ -2245,7 +2281,7 @@ roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
 (Chapter 18), **RAG** (Chapter 19), **tracing** (Chapter 20), the
 **workbench** (Chapter 21), `edit_file`, the runtime loop and prompt
 caching (Chapter 22), and the full topology - Kafka, MinIO, Qdrant, the
-gateway, Kubernetes (Chapter 23), version history (Chapter 24), screenshot to app (Chapter 25), the AI checking its own app (Chapter 26), React apps running in the browser (Chapter 27), a stateless API that scales out (Chapter 28), and a Kubernetes pod per preview (Chapter 29). What's left:
+gateway, Kubernetes (Chapter 23), version history (Chapter 24), screenshot to app (Chapter 25), the AI checking its own app (Chapter 26), React apps running in the browser (Chapter 27), a stateless API that scales out (Chapter 28), a Kubernetes pod per preview (Chapter 29), and Publish (Chapter 30). What's left:
 
 - **Measure it** — re-run the evals against real Gemini and count how often
   edit requests now use `edit_file`.

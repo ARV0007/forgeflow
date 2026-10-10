@@ -95,6 +95,32 @@ public class CheckpointService {
         }
     }
 
+    /**
+     * A checkpoint of the project as it is right now: the latest one if
+     * nothing has changed since it, otherwise a new one. Publishing takes
+     * this, so a published site is always a frozen, restorable version.
+     */
+    @Transactional
+    public long snapshot(Long projectId, Long userId, String label) {
+        return record(projectId, "BASELINE", label, null, userId).map(Summary::id).orElseGet(() ->
+                jdbc.queryForObject("SELECT id FROM checkpoints WHERE project_id = ? ORDER BY id DESC LIMIT 1",
+                        Long.class, projectId));
+    }
+
+    /** The label a checkpoint was saved with ("Make the header blue", "Before restoring to #12"). */
+    @Transactional(readOnly = true)
+    public String label(Long projectId, long id) {
+        requireOwned(projectId, id);
+        return jdbc.queryForObject("SELECT label FROM checkpoints WHERE id = ?", String.class, id);
+    }
+
+    /** Every path in a checkpoint. */
+    @Transactional(readOnly = true)
+    public Set<String> paths(Long projectId, long id) {
+        requireOwned(projectId, id);
+        return tree(id).keySet();
+    }
+
     // --------------------------------------------------------------- read
 
     /** Newest first, each with what changed since the one before it. */

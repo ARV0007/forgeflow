@@ -44,7 +44,7 @@ import java.util.regex.Pattern;
 @RestController
 public class PreviewContentController {
 
-    private static final String SANDBOX_CSP = "sandbox allow-scripts allow-forms allow-popups";
+    static final String SANDBOX_CSP = "sandbox allow-scripts allow-forms allow-popups";
     private static final Pattern HEAD_OPEN = Pattern.compile("<head(\\s[^>]*)?>", Pattern.CASE_INSENSITIVE);
     /** A whole <script ...>...</script> element, for swapping module entries out of a React page. */
     private static final Pattern SCRIPT_ELEMENT =
@@ -53,7 +53,7 @@ public class PreviewContentController {
     private static final Pattern SRC_ATTR = Pattern.compile("\\bsrc\\s*=\\s*['\"]([^'\"]+)['\"]", Pattern.CASE_INSENSITIVE);
 
     /** Files the preview serves from the classpath, by the name the runner asks for. */
-    private static final Map<String, Resource> VENDOR = Map.of(
+    static final Map<String, Resource> VENDOR = Map.of(
             "__snapshot.js", new Resource("/preview/html-to-image.min.js"),
             "__runner.js", new Resource("/preview/module-runner.js"),
             "__vendor/react.js", new Resource("/preview/react.production.min.js"),
@@ -237,7 +237,7 @@ public class PreviewContentController {
     }
 
     /** A classpath file, read on first use; a missing one is a packaging bug, so it fails loudly. */
-    private static final class Resource {
+    static final class Resource {
         private final String name;
         private volatile byte[] bytes;
 
@@ -308,7 +308,7 @@ public class PreviewContentController {
                 : script + page;
     }
 
-    private MediaType contentTypeOf(String path) {
+    static MediaType contentTypeOf(String path) {
         String lower = path.toLowerCase();
         if (lower.endsWith(".html") || lower.endsWith(".htm")) return MediaType.TEXT_HTML;
         if (lower.endsWith(".css"))  return MediaType.valueOf("text/css");

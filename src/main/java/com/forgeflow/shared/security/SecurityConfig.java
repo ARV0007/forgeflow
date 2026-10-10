@@ -68,6 +68,8 @@ public class SecurityConfig {
                         // Preview links are meant to be shareable. The token in the URL is the
                         // credential, and PreviewContentController checks it is live.
                         .requestMatchers("/p/**").permitAll()
+                        // Published sites are public by definition; SiteService checks the slug is live.
+                        .requestMatchers(HttpMethod.GET, "/s/**").permitAll()
                         .requestMatchers("/actuator/**").permitAll()
                         .requestMatchers("/api/v1/auth/**").permitAll()
                         // The pricing page is public. Stripe's webhook carries no JWT - its

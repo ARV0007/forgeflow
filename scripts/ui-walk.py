@@ -12,7 +12,7 @@ account is needed and every step is deterministic:
 
 Signs up, chats, opens the code, starts a preview, clicks inside the generated
 app and checks its console line arrives in Logs, searches, opens the version
-history and restores a version, lets the AI check how its app looks (and fix
+history and restores a version, publishes the app (and rolls it back), lets the AI check how its app looks (and fix
 it once), sends a screenshot, builds a React project that compiles and runs in
 the browser (and opens it under Node in a WebContainer), downloads the zip,
 upgrades through the test checkout, shares with a viewer and checks the
@@ -164,6 +164,36 @@ with sync_playwright() as p:
     if versions > 1:
         expect(page.locator("#cp-title")).to_contain_text("Restored to #")     # the detail follows the new version
     shot(page, "06b-history")
+
+    # 6c. publish: a public address serving a frozen version; editing doesn't
+    #     change it, publishing again does, and an older release can be put back
+    page.click("#btn-publish")
+    expect(page.locator("#dlg-publish")).to_be_visible()
+    expect(page.locator(".site-state")).to_contain_text("Not published yet")
+    page.click("#btn-do-publish")
+    expect(page.locator(".site-live")).to_be_visible(timeout=10000)
+    site_url = page.locator(".site-url a").get_attribute("href")
+    shot(page, "06c-publish")
+    page.click("#dlg-publish [data-close]")
+    visitor = browser.new_context().new_page()                           # signed out: the public
+    visitor.goto(site_url)
+    first_heading = visitor.locator("h1").inner_text()
+    page.evaluate("""async () => { await fetch('/api/v1/projects/' + document.getElementById('project-select').value + '/files/content', {
+        method: 'PUT', headers: {'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('ff_token')},
+        body: JSON.stringify({path: 'index.html', content: '<!doctype html><h1>Second release</h1>'}) }); }""")
+    visitor.reload()
+    expect(visitor.locator("h1")).to_have_text(first_heading)                # frozen
+    page.click("#btn-publish")
+    page.click("#btn-do-publish")
+    expect(page.locator(".site-releases li")).to_have_count(2, timeout=10000)
+    visitor.reload()
+    expect(visitor.locator("h1")).to_have_text("Second release")
+    page.locator(".site-releases li:not(.is-current) button").click()       # roll back
+    expect(page.locator(".site-releases li")).to_have_count(3, timeout=10000)
+    visitor.reload()
+    expect(visitor.locator("h1")).to_have_text(first_heading)
+    page.click("#dlg-publish [data-close]")
+    visitor.context.close()
 
     # 7. download the zip
     with page.expect_download() as dl:

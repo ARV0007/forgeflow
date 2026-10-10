@@ -654,6 +654,7 @@ function resetHistory() {
   $('cp-title').textContent = 'Pick a version to see what changed';
   $('cp-diff').innerHTML = '';
   $('btn-restore').hidden = true;
+  $('btn-cp-publish').hidden = true;
 }
 
 function ago(iso) {
@@ -698,6 +699,7 @@ async function showCheckpoint(cp) {
   $('cp-title').textContent = `#${cp.id} · ${cp.label}`;
   disarmRestore();
   $('btn-restore').hidden = !canWrite();
+  $('btn-cp-publish').hidden = !canWrite();
   const box = $('cp-diff');
   box.innerHTML = '';
   let changes;
@@ -1134,6 +1136,90 @@ async function search() {
 document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
 
 $('btn-share').addEventListener('click', openShare);
+
+// ── publish ─────────────────────────────────────────────
+// A site serves a checkpoint, so it is frozen until published again; any
+// release can be put back (rollback) from the list or from History.
+
+const siteUrl = (s) => location.origin + s.url;
+
+async function openPublish() {
+  $('publish-msg').textContent = '';
+  $('dlg-publish').showModal();
+  await renderSite();
+}
+
+async function renderSite() {
+  let site = null;
+  try {
+    site = await api(`/api/v1/projects/${state.projectId}/site`);
+  } catch (err) {
+    if (err.status !== 404) { $('publish-msg').textContent = err.message; return; }
+  }
+  const box = $('site-box');
+  const list = $('site-releases');
+  list.innerHTML = '';
+  $('btn-do-publish').hidden = !canWrite();
+  $('btn-unpublish').hidden = !canWrite() || !site || !site.live;
+  if (!site) {
+    box.innerHTML = '<p class="site-state">Not published yet.</p>';
+    $('btn-do-publish').textContent = 'Publish';
+    return;
+  }
+  box.innerHTML = `<p class="site-state">${site.live ? '<span class="site-live">Live</span>' : 'Unpublished - the address is kept for next time'}</p>
+    <div class="site-url"><a target="_blank" rel="noopener"></a><button class="btn btn-quiet btn-xs" type="button">Copy</button></div>
+    <p class="site-version">Showing <b></b> · ${esc(ago(site.publishedAt))}</p>`;
+  const a = box.querySelector('a');
+  a.href = siteUrl(site);
+  a.textContent = siteUrl(site);
+  box.querySelector('.site-version b').textContent = `#${site.checkpointId} ${site.label}`;
+  box.querySelector('.site-url button').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(siteUrl(site)); toast('Address copied.'); } catch { toast(siteUrl(site)); }
+  });
+  $('btn-do-publish').textContent = site.live ? 'Publish latest changes' : 'Publish again';
+  for (const r of site.releases) {
+    const li = document.createElement('li');
+    const current = site.live && r.checkpointId === site.checkpointId;
+    li.innerHTML = `<span class="rel-label"></span><span class="rel-when">${esc(ago(r.publishedAt))}</span>`;
+    li.querySelector('.rel-label').textContent = `#${r.checkpointId} ${r.label}`;
+    if (current) {
+      li.classList.add('is-current');
+    } else if (canWrite()) {
+      const b = document.createElement('button');
+      b.className = 'btn btn-quiet btn-xs';
+      b.textContent = 'Put back';
+      b.title = 'Publish this version again (a rollback)';
+      b.addEventListener('click', () => publish(r.checkpointId));
+      li.appendChild(b);
+    }
+    list.appendChild(li);
+  }
+}
+
+async function publish(checkpointId) {
+  $('publish-msg').textContent = '';
+  try {
+    const site = await api(`/api/v1/projects/${state.projectId}/site`, {
+      method: 'POST', body: checkpointId ? { checkpointId } : {},
+    });
+    toast(`Published #${site.checkpointId} at ${siteUrl(site)}`);
+    if ($('dlg-publish').open) await renderSite();
+    if ($('tab-history').classList.contains('is-on')) loadHistory();
+  } catch (err) {
+    $('publish-msg').textContent = err.message;
+    if (!$('dlg-publish').open) toast(err.message);
+  }
+}
+
+$('btn-publish').addEventListener('click', openPublish);
+$('btn-do-publish').addEventListener('click', () => publish(null));
+$('btn-unpublish').addEventListener('click', async () => {
+  try {
+    await api(`/api/v1/projects/${state.projectId}/site`, { method: 'DELETE' });
+    await renderSite();
+  } catch (err) { $('publish-msg').textContent = err.message; }
+});
+$('btn-cp-publish').addEventListener('click', () => { if (state.checkpoint) publish(state.checkpoint); });
 
 async function openShare() {
   $('share-msg').textContent = '';
