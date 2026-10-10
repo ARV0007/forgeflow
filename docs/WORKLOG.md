@@ -830,6 +830,18 @@ wasteful) — the note is for the rest of that run, since tool results are
 what the model actually reads mid-task. Two tests, sabotage-checked.
 145 tests.
 
+**The evals vs. my own Free plan.** Aman ran the eval suite against Render:
+cases 1–3 passed, then every case after that got a 402 — "The Free plan
+allows 3 projects." The runner makes a fresh project per case, and Day 10's
+quotas apply to the eval account like anyone else. The runner now deletes
+each project once it's scored (deleted projects don't count), clears any
+`eval-*` projects an interrupted run left behind, and stops cleanly —
+keeping finished cases — if the account runs out of daily AI tokens, since
+every remaining case would fail on the plan, not the agent. Checked locally
+against the demo model: 3 leftovers removed, 5 cases passed on a 3-project
+plan, 0 projects left; with the token limit shrunk to 3,000, it stopped at
+case 3 with cases 1–2 saved.
+
 ---
 
 ## Open items

@@ -832,6 +832,11 @@ Multi-round runs should show a healthy cached share; single-round runs ~0.
   SELECT id, tool_calls, tokens_used FROM chat_messages
   WHERE role = 'assistant' ORDER BY id DESC LIMIT 10;
   ```
+- **Evals and plan limits.** The eval account is on the Free plan: 3
+  projects, 200k AI tokens per UTC day (resets 05:30 IST). The runner
+  deletes each project after scoring and stops on the token limit. A full
+  20-case sweep uses roughly 150–170k tokens, so run it once a day at most,
+  or use `--limit`.
 - **Lost password?** There's no reset flow yet (no email sender). Sign up
   again — Gmail ignores everything after a `+`, so `you+ff@gmail.com` is a
   new ForgeFlow account that still reaches your inbox.
