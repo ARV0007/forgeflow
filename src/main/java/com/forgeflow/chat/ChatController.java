@@ -6,6 +6,8 @@ import com.forgeflow.chat.dto.ChatTurnResponse;
 import com.forgeflow.chat.dto.CreateSessionRequest;
 import com.forgeflow.chat.dto.RenameSessionRequest;
 import com.forgeflow.chat.dto.SendMessageRequest;
+import com.forgeflow.chat.dto.VisualReviewRequest;
+import com.forgeflow.chat.dto.VisualReviewResponse;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -112,6 +114,17 @@ public class ChatController {
                 .header("Cache-Control", "private, max-age=86400")
                 .header("X-Content-Type-Options", "nosniff")
                 .body(img.data());
+    }
+
+    /**
+     * "AI checks its own app": the workbench screenshots the live preview after
+     * a reply and sends it here; a vision model judges it against the request.
+     */
+    @PostMapping("/{sessionId}/messages/{messageId}/visual-review")
+    public VisualReviewResponse review(@PathVariable Long projectId, @PathVariable Long sessionId,
+                                       @PathVariable Long messageId, @Valid @RequestBody VisualReviewRequest req,
+                                       Authentication auth) {
+        return chat.review(projectId, sessionId, messageId, caller(auth), req.screenshot());
     }
 
     /** Spec: "Retry if failed". */

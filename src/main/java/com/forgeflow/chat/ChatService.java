@@ -8,11 +8,14 @@ import com.forgeflow.chat.dto.ImageAttachment;
 import com.forgeflow.chat.dto.ChatSessionResponse;
 import com.forgeflow.chat.dto.ChatTurnResponse;
 import com.forgeflow.chat.dto.ToolCallSummary;
+import com.forgeflow.chat.dto.VisualReviewResponse;
 import com.forgeflow.intelligence.AgentEvent;
 import com.forgeflow.intelligence.AgentService;
+import com.forgeflow.intelligence.VisualReviewer;
 import com.forgeflow.intelligence.dto.GenerateResponse;
 import com.forgeflow.shared.ResourceNotFoundException;
 import com.forgeflow.shared.llm.ImagePart;
+import com.forgeflow.shared.llm.LlmException;
 import com.forgeflow.shared.llm.LlmMessage;
 import com.forgeflow.workspace.ProjectService;
 import org.springframework.beans.factory.annotation.Value;
@@ -57,6 +60,8 @@ public class ChatService {
     private final SessionLocks locks;
     private final Entitlements entitlements;
     private final AttachmentStore attachments;
+    private final ReviewStore reviews;
+    private final VisualReviewer reviewer;
     private final ObjectMapper json = new ObjectMapper();
     private final int memoryMessages;
 
@@ -67,6 +72,8 @@ public class ChatService {
                        SessionLocks locks,
                        Entitlements entitlements,
                        AttachmentStore attachments,
+                       ReviewStore reviews,
+                       VisualReviewer reviewer,
                        @Value("${forgeflow.chat.memory-messages:10}") int memoryMessages) {
         this.projects = projects;
         this.sessions = sessions;
@@ -75,6 +82,8 @@ public class ChatService {
         this.locks = locks;
         this.entitlements = entitlements;
         this.attachments = attachments;
+        this.reviews = reviews;
+        this.reviewer = reviewer;
         this.memoryMessages = memoryMessages;
     }
 
@@ -119,8 +128,11 @@ public class ChatService {
         projects.getById(projectId, userId);
         load(projectId, sessionId);
         List<ChatMessage> all = messages.findBySessionIdOrderByIdAsc(sessionId);
-        Map<Long, List<AttachmentInfo>> images = attachments.infoFor(all.stream().map(ChatMessage::getId).toList());
-        return all.stream().map(m -> toResponse(m, images.getOrDefault(m.getId(), List.of()))).toList();
+        List<Long> ids = all.stream().map(ChatMessage::getId).toList();
+        Map<Long, List<AttachmentInfo>> images = attachments.infoFor(ids);
+        Map<Long, VisualReviewResponse> reviewed = reviews.latestFor(ids);
+        return all.stream().map(m -> toResponse(m, images.getOrDefault(m.getId(), List.of()), reviewed.get(m.getId())))
+                .toList();
     }
 
     // --------------------------------------------------------------- turns
@@ -236,8 +248,8 @@ public class ChatService {
             List<AttachmentInfo> sent = turn.userMessage() == null ? List.of()
                     : attachments.infoFor(List.of(turn.userMessage().getId())).getOrDefault(turn.userMessage().getId(), List.of());
             return new ChatTurnResponse(
-                    turn.userMessage() == null ? null : toResponse(turn.userMessage(), sent),
-                    toResponse(reply, List.of()), run);
+                    turn.userMessage() == null ? null : toResponse(turn.userMessage(), sent, null),
+                    toResponse(reply, List.of(), null), run);
         } finally {
             locks.release(turn.sessionId());
         }
@@ -349,10 +361,10 @@ public class ChatService {
         return json.readValue(raw, TOOL_CALLS);
     }
 
-    private ChatMessageResponse toResponse(ChatMessage m, List<AttachmentInfo> images) {
+    private ChatMessageResponse toResponse(ChatMessage m, List<AttachmentInfo> images, VisualReviewResponse review) {
         return new ChatMessageResponse(m.getId(), m.getSessionId(), m.getRole(), m.getContent(), m.getAuthorId(),
                 parseToolCalls(m.getToolCalls()), m.getTokensUsed(), m.getStatus(), m.getRunId(), m.getCreatedAt(),
-                images);
+                images, review);
     }
 
     /** One stored image's bytes - a read: anyone who can see the project. */
@@ -366,5 +378,53 @@ public class ChatService {
                 .orElseThrow(() -> new ResourceNotFoundException("Message not found"));
         return attachments.load(m.getId(), attachmentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Attachment not found"));
+    }
+
+    // ------------------------------------------------------- visual review
+
+    /** How many of the conversation's requests the reviewer is shown: the goal, and the latest changes. */
+    static final int REVIEW_REQUESTS = 3;
+
+    /**
+     * "AI checks its own app": a screenshot of the preview, taken after a reply
+     * landed, judged against what was asked for. Editors only - it spends the
+     * caller's AI tokens. Not under the session lock and not in a transaction:
+     * it changes no files and holds no connection across the model call.
+     */
+    public VisualReviewResponse review(Long projectId, Long sessionId, Long messageId, Long userId,
+                                       ImageAttachment screenshot) {
+        try {
+            ImagePart.validate(screenshot.mimeType(), screenshot.data());
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+        projects.requireWrite(projectId, userId);
+        load(projectId, sessionId);
+        ChatMessage reply = messages.findById(messageId)
+                .filter(m -> m.getSessionId().equals(sessionId))
+                .orElseThrow(() -> new ResourceNotFoundException("Message not found"));
+        if (!reply.isAssistant() || !"SUCCEEDED".equals(reply.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only a reply that finished can be reviewed");
+        }
+
+        List<String> asked = new ArrayList<>();
+        for (ChatMessage m : messages.findBySessionIdAndIdLessThanOrderByIdDesc(sessionId, messageId, PageRequest.of(0, 12))) {
+            if (m.isUser() && asked.size() < REVIEW_REQUESTS) {
+                asked.add(m.getContent());
+            }
+        }
+        Collections.reverse(asked);
+
+        VisualReviewer.Verdict v;
+        try {
+            v = reviewer.review(userId, projectId, asked, new ImagePart(screenshot.mimeType(), screenshot.data()));
+        } catch (VisualReviewer.UnreadableReview e) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "The model's review couldn't be read: " + e.getMessage());
+        } catch (LlmException e) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "The model couldn't be reached for a review");
+        }
+        return reviews.save(messageId, userId, v.score(), v.verdict(), v.summary(),
+                v.issues().stream().map(i -> new VisualReviewResponse.Issue(i.severity(), i.text())).toList(),
+                v.tokensUsed());
     }
 }

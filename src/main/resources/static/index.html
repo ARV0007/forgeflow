@@ -89,6 +89,9 @@
           <div class="composer-actions">
             <input id="attach-input" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
             <button id="btn-attach" type="button" class="btn btn-quiet btn-sm" title="Attach a screenshot, mockup or sketch (or paste / drop one)">Attach image</button>
+            <label class="vcheck-toggle" title="After each change the AI screenshots the live preview, checks it against what you asked for, and fixes what looks wrong (one round)">
+              <input id="vcheck-toggle" type="checkbox" checked> AI checks the preview
+            </label>
             <span class="spacer"></span>
             <button id="btn-retry" type="button" class="btn btn-quiet btn-sm" hidden>Retry</button>
             <button id="btn-send" type="button" class="btn btn-primary">Send</button>

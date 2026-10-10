@@ -175,6 +175,15 @@ class FilesAndPreviewTest extends ApiTestSupport {
 
         // Non-HTML files are served untouched.
         assertThat(raw("/p/" + token + "/app.js", null).getResponse().getContentAsString()).isEqualTo(JS);
+
+        // The snapshot half of the bridge: it answers only its parent window, and
+        // loads the vendored html-to-image from under the same token, on demand.
+        assertThat(html).contains("ff:snapshot").contains("e.source!==parent").contains("/p/" + token + "/__snapshot.js");
+        MvcResult lib = raw("/p/" + token + "/__snapshot.js", null);
+        assertThat(lib.getResponse().getStatus()).isEqualTo(200);
+        assertThat(lib.getResponse().getContentType()).startsWith("text/javascript");
+        assertThat(lib.getResponse().getContentAsString()).startsWith("/*! html-to-image 1.11.13");
+        assertThat(raw("/p/not-a-token/__snapshot.js", null).getResponse().getStatus()).isEqualTo(404);
     }
 
     @Test

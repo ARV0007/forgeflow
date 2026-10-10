@@ -407,3 +407,27 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--e
   .code-split { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .files { border-right: 0; border-bottom: var(--rail); max-height: 120px; }
 }
+
+/* ── AI checks its own app ─────────────────────────────── */
+.vcheck-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ash); cursor: pointer; user-select: none; }
+.vcheck-toggle input { accent-color: var(--ember); margin: 0; }
+.vcheck-toggle:has(input:disabled) { opacity: .5; cursor: default; }
+.vcheck { margin-top: 10px; padding: 9px 11px; border: var(--rail); border-radius: 8px; background: var(--ink-2); font-size: 13px; }
+.vcheck-ok  { border-color: color-mix(in srgb, var(--verdigris) 45%, var(--ink-3)); }
+.vcheck-bad { border-color: color-mix(in srgb, var(--brass) 55%, var(--ink-3)); }
+.vcheck-working, .vcheck-skip { color: var(--ash); }
+.vcheck-head { display: flex; align-items: center; gap: 8px; }
+.vcheck-score { font-family: var(--mono); font-size: 12px; padding: 0 6px; border-radius: 4px; background: var(--ink-3); }
+.vcheck-verdict { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+.vcheck-ok  .vcheck-verdict { color: var(--verdigris); }
+.vcheck-bad .vcheck-verdict { color: var(--brass); }
+.vcheck-summary { margin: 6px 0 0; }
+.vcheck-issues { margin: 6px 0 0; padding-left: 18px; }
+.vcheck-issues li { margin: 2px 0; }
+.vcheck-issues .vi-major::marker { color: var(--rust); }
+.vcheck-issues .vi-minor { color: var(--ash); }
+.vcheck-shot { display: block; margin-top: 8px; max-width: 160px; max-height: 120px; object-fit: cover; object-position: top;
+  border: var(--rail); border-radius: 6px; cursor: zoom-in; }
+.vcheck-shot.is-big { max-width: 100%; max-height: none; cursor: zoom-out; }
+.vcheck-fix { margin-top: 8px; }
+.vcheck-note { margin-top: 6px; color: var(--ember); font-size: 12.5px; }

@@ -921,3 +921,34 @@ summary lists each integration test class with its test/skip counts.
   A sweep of objects no row references is the missing piece.
 - **The api runs one replica** until preview tokens and the logs buffer move
   to Redis - see deploy/k8s/20-api.yaml.
+
+## 21. AI checks its own app (10 Oct)
+
+### Try it
+
+1. Open a project, click **Start preview** (the check needs a running preview).
+2. Make sure **AI checks the preview** (next to *Attach image*) is ticked.
+3. Ask for a change. When the reply lands you'll see *Looking at the
+   preview…*, then a **Visual check** card: score, verdict, issues, and a
+   thumbnail of exactly what the reviewer saw (click it to enlarge).
+4. If it says **needs fixes** with a major issue, a fix message is sent for
+   you once. Its result gets its own card. That's the whole loop.
+
+Untick the box to turn it off (remembered in this browser).
+
+### Gotchas
+
+- **Nothing happens?** No preview running, or the reply didn't change any
+  files, or you're a viewer. All three skip the check on purpose.
+- **"Visual check skipped: the preview did not answer"** — the page in the
+  preview took more than 20 s, or a script in it broke the bridge.
+- **html2canvas does not work in the preview** (sandboxed opaque origin; it
+  needs to read a child iframe). Use html-to-image - see architecture §21.
+- **Pictures in generated apps from other sites** may be blank in the
+  screenshot (the sandbox can't read them). The review prompt doesn't care
+  much about missing photos; it's looking at layout and text.
+- **Static files changed but the browser shows the old UI?** The local
+  server serves `target/classes/static` - run `./mvnw process-resources`
+  (or restart) after editing `app.js`.
+- **Docker sandbox:** the bridge is only injected by the in-process preview
+  server, so there's no visual check with `FORGEFLOW_SANDBOX_PROVIDER=docker`.

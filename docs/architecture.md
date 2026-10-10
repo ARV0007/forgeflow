@@ -1019,3 +1019,40 @@ composer: attach / paste / drop ──► (browser) scale to ≤1600 px, ≤3.5 
 | reading them back | `GET …/messages/{id}/attachments/{aid}` (READ), `nosniff`; the page fetches with the token and shows a blob URL |
 | validation | allow-list PNG/JPEG/WebP and the bytes must start with that format's signature - a renamed file is refused |
 | demo model | ignores images; titles the page with the user's words, not the brief |
+
+## 21. AI checks its own app (visual self-review)
+
+Three inspectors, three classes of failure:
+
+| Inspector | Catches | Where it runs |
+|---|---|---|
+| build gate (§ self-healing) | doesn't parse, missing files, broken references | server, before `finish` is accepted |
+| console bridge | throws at runtime, failed requests | the preview, in whoever's browser |
+| **visual review** | runs fine, **looks wrong** or misses what was asked | the preview photographs itself; Gemini judges |
+
+```
+app.js  send() ─► reply SUCCEEDED with files ─► reloadPreviewFrame() (resolves on load)
+        visualCheck(): switch to the Preview tab, wait for the load + 900 ms
+           frame.contentWindow.postMessage({type: "ff:snapshot", id})
+bridge  (PreviewContentController.CONSOLE_BRIDGE)  e.source === parent, else ignore
+           mute console forwarding; load /p/{token}/__snapshot.js (html-to-image 1.11.13, vendored)
+           htmlToImage.toJpeg(documentElement, ≤1024 px wide, ≤2000 px tall) ─► parent.postMessage({data})
+app.js  POST /api/v1/projects/{p}/chat/sessions/{s}/messages/{replyId}/visual-review {screenshot}
+ChatService.review   400 bad image / not a finished reply · 403 viewer · 404 not yours
+                     the session's last 3 user requests before the reply
+VisualReviewer       entitlements → llm.chat(SYSTEM, [user(prompt, [screenshot])], no tools) → meter "visual-review"
+                     parse: first {…} in the reply; issues ≤ 5; verdict = NEEDS_FIXES iff a major issue
+ReviewStore          visual_reviews (V11); history returns the newest per reply as ChatMessage.review
+app.js  NEEDS_FIXES + major + this wasn't already a fix turn + composer empty ─► send("Visual check (n/10) … Fix these: …")
+```
+
+| Concern | Decision |
+|---|---|
+| why the browser takes the picture | no headless Chromium on a 512 MB free instance; sees what the user sees; no new service |
+| why not html2canvas | it clones into a child iframe, which the sandbox makes a different opaque origin; html-to-image clones in place (SVG foreignObject) |
+| loops | one automatic round; the fix turn starts with `Visual check (` and its own review is shown, never chased |
+| user typing | auto-fix only when the composer is empty and nothing is attached; otherwise a "Fix these" button |
+| cost | one call per reply that changed files, ~1-2k tokens with the image; metered; the toggle turns it off |
+| storage | the verdict is kept, the screenshot isn't (the files are the record) |
+| docker sandbox | the bridge is injected by the in-process server only; with the docker sandbox there is no visual check yet |
+

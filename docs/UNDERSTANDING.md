@@ -1987,7 +1987,75 @@ the truth - that's what "magic bytes" checking is.
 
 ---
 
-## Chapter 26 — What's next
+## Chapter 26 — The contractor inspects its own work (visual check)
+
+**Plain English.** So far the contractor had two inspectors. One checks the
+drawings add up (the build gate). One stands in the finished room and
+listens for anything breaking (the console bridge). Neither *looks* at the
+room. A room can be structurally perfect and still have the light switch
+behind the door. Now, after each job, someone takes a photo of the room and
+an inspector who can read photos compares it with the order: "you asked
+for three plans and the middle one to stand out - all three look the same."
+If something major is wrong, the contractor gets one more go, automatically.
+
+### Who takes the photo
+
+Your browser. The preview already runs there, inside a sandbox, with a tiny
+helper script ForgeFlow adds to every page (it's what forwards console
+errors). That helper now also answers one question from the page around it:
+"send me a picture of yourself". It draws the page into an image and posts
+it back. No server-side browser, nothing new to run or pay for.
+
+The first library tried, html2canvas, failed inside the sandbox: it works by
+copying the page into a hidden frame, and the sandbox treats that frame as a
+stranger. The one in use, html-to-image, copies the page in place and turns
+it into a picture through SVG. The browser walk-through is what caught this.
+
+### What the inspector gets, and what comes back
+
+The photo, plus the last three things you asked for in this chat. Back
+comes a score out of 10, "looks right" or "needs fixes", a one-line
+summary, and up to five issues marked major or minor. "Needs fixes" only
+counts if there's a *major* issue - and ForgeFlow decides that from the
+issues themselves, not from the label the model chose.
+
+### Why only one automatic round
+
+Because a checker and a fixer can argue forever. The fix turn is marked
+("Visual check (6/10) found problems…"); its result is checked and shown,
+but never sent back again. And if you've started typing, it doesn't take
+over the composer - you get a "Fix these" button instead.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why not take the screenshot on the server with headless Chrome?**
+It needs a few hundred MB of memory per browser - the whole free instance
+has 512. Taking it in the user's browser costs nothing and shows exactly
+what the user sees, at their screen size. The trade-off: no browser open,
+no check.
+
+**Q: Can a generated app fake its own screenshot?**
+It could answer with a flattering picture - it's code we don't trust,
+running in that frame. The worst outcome is a wrong review of its own page.
+It can't reach anything of ours: the sandbox still keeps it away from your
+login, and the page only accepts the answer from that exact frame.
+
+**Q: Isn't a vision model's opinion subjective?**
+Partly - which is why the prompt says not to nitpick taste, and why only
+*major* issues trigger a fix. Whether it helps on balance is a measurement
+still to make: how often a fix round raises the score.
+
+**Q: What does it cost?**
+One model call per reply that changed files - the image is a few hundred
+tokens, the whole call one or two thousand. Metered like everything else,
+and there's a toggle.
+
+</details>
+
+---
+
+## Chapter 27 — What's next
 
 Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
 the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
@@ -1996,15 +2064,15 @@ roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
 (Chapter 18), **RAG** (Chapter 19), **tracing** (Chapter 20), the
 **workbench** (Chapter 21), `edit_file`, the runtime loop and prompt
 caching (Chapter 22), and the full topology - Kafka, MinIO, Qdrant, the
-gateway, Kubernetes (Chapter 23), version history (Chapter 24), and screenshot to app (Chapter 25). What's left:
+gateway, Kubernetes (Chapter 23), version history (Chapter 24), screenshot to app (Chapter 25), and the AI checking its own app (Chapter 26). What's left:
 
 - **Measure it** — re-run the evals against real Gemini and count how often
   edit requests now use `edit_file`.
 - **A headless browser in the build gate**, so runtime errors are caught
   without anyone opening the preview.
 - **"Forgot password?"** — needs an email sender to mail a reset link.
-- **The AI checking its own app** — the preview runs in a real browser that
-  can take the picture, and the model can now read pictures.
+- **Measure the visual check** — how often it flags something real, and how
+  often the fix round raises the score.
 - **React apps running in the browser** (WebContainers) — the diagram's
   "Code Execution Service: WebContainer" box.
 - **Preview state in Redis**, so the API can run more than one replica.

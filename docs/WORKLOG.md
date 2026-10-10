@@ -1054,6 +1054,57 @@ and the flow by API tests with the scripted model; the browser walk attaches
 a real PNG and checks the thumbnail survives a reload. The live check is
 Aman's: paste a screenshot on Render. 183 tests.
 
+### AI checks its own app
+
+Stage 5. The agent already had two inspectors: the build gate (does the code
+parse and link?) and the console bridge (does it throw when it runs?).
+Neither notices a page that works but **looks** wrong - white text on a
+white button, a "pricing table" with no prices, three cards collapsed into a
+pile. Now, after every reply that changed files, the workbench photographs
+the live preview and a vision model judges it against what was asked.
+
+```
+reply lands ─► preview reloads ─► parent posts {ff:snapshot} into the iframe
+   bridge (already injected for console logs) loads html-to-image from /p/{token}/__snapshot.js,
+   renders the page to a JPEG (≤1024 px wide, ≤2000 px tall), posts it back
+─► POST …/messages/{replyId}/visual-review  ─► Gemini: screenshot + the last 3 requests
+◄─ {score, verdict, summary, issues[major|minor]}  kept in visual_reviews (V11)
+NEEDS_FIXES with a major issue ─► ONE follow-up turn: "Visual check (6/10) found problems… Fix these: …"
+   ─► that reply is checked too, but never chased: one round, so it can't loop
+```
+
+The decisions:
+
+- **The screenshot is taken in the visitor's browser**, not on the server.
+  No headless Chrome on Render (512 MB wouldn't hold it), zero new
+  infrastructure, and the review sees exactly what the user sees at the size
+  they see it.
+- **html2canvas didn't work, html-to-image does.** The preview runs in a
+  sandboxed opaque origin (that's what keeps generated code away from the
+  user's token). html2canvas clones the page into a child iframe, and in a
+  sandbox that child is *another* opaque origin it may not touch - "Blocked
+  a frame with origin null". html-to-image clones in place and renders
+  through an SVG `foreignObject`, which works inside the sandbox. Found by
+  the browser walk, not by guessing. Vendored (20 KB, MIT), not loaded from
+  a CDN.
+- **The bridge answers only its parent** (`e.source === parent`) and is
+  **muted while it photographs**, so the library's own warnings never show
+  up as the app's runtime errors.
+- **The verdict follows the issues, not the label.** A review that says
+  "looks right" but lists a major issue needs fixes; one that lists none
+  looks right. Fenced or chatty JSON is repaired; an unreadable reply is a
+  502 and nothing is stored (its tokens are still metered - they were spent).
+- **Metered and editor-only**, like every model call.
+- **Toggle**: "AI checks the preview" by the composer, on by default,
+  remembered per browser. No preview running → nothing happens.
+
+The demo model plays the loop honestly labelled (a first look always finds
+one thing, the look after the fix passes), so the browser walk runs the
+whole path offline: real screenshot (checked to be a real 785 px image),
+review card, automatic fix turn, 9/10 re-check, exactly one round, verdicts
+still there after a reload, a viewer can read them but not act on them.
+186 tests.
+
 
 ---
 
@@ -1064,8 +1115,10 @@ Aman's: paste a screenshot on Render. 183 tests.
 - The agent timeout counts time spent waiting out rate limits.
 - `/mcp` runs as one service account for every caller; set
   `FORGEFLOW_MCP_API_KEY` on Render before advertising it.
-- Runtime errors only reach the agent if someone had the preview open when
-  they happened - nothing exercises the app on its own.
+- Runtime errors and the visual check only happen if someone has the preview
+  open - nothing exercises the app on its own (a server-side browser would).
+- Visual check isn't measured against real Gemini yet: how often does it
+  flag something real, and how often does the fix round raise the score?
 - Session locks, preview tokens and preview logs live in memory — correct for
   one instance (Render runs one, k8s runs one api replica on purpose), wrong
   the moment there are two. Next: move them to Redis, then scale the api. (Rate limits already

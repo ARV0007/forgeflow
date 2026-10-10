@@ -34,6 +34,7 @@ live preview · file tree · every step streamed to the browser
 | **Files** | file tree, file content, save by hand, **download as zip**, who created / last changed each file |
 | **History** | a **version per AI run**, coloured diffs between versions, **one-click restore** (itself undoable) |
 | **Preview** | live preview link, start / stop, **logs stream** — builds, requests, 404s and the generated app's own `console` output |
+| **AI checks its own app** | after each change the preview photographs itself in the browser, a **vision model** scores it against the request, and major issues go back to the agent for **one automatic fix round** |
 | **Search (RAG)** | hybrid code search (pgvector or Qdrant + full-text, weighted rank fusion, optional LLM rerank); the agent has a `search_code` tool; big projects get relevant code attached to each request; **measured** by a 70-question retrieval benchmark |
 | **Plans** | FREE / PRO — projects, live previews, AI tokens per day; **Stripe** Checkout and a signed webhook |
 | **Platform** | Redis **rate limiting**, request **tracing** (W3C traceparent, optional Zipkin), an **MCP server** so other AI agents can drive it |
@@ -149,8 +150,9 @@ python3 evals/run_evals.py --base <url>            # 20 prompts: does the app bu
 python3 evals/run_retrieval_eval.py --base <url>   # 42 questions: does search find the right file?
 ```
 
-Browser walk-through (sign up → chat → preview → logs → search → upgrade →
-share → quota), against a demo-mode server:
+Browser walk-through (sign up → chat → preview → logs → visual check and
+auto-fix → search → history → upgrade → share → screenshot → quota), against
+a demo-mode server:
 
 ```bash
 python3 scripts/ui-walk.py

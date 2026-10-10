@@ -17,6 +17,8 @@ const state = {
   lastLogSeq: 0,
   checkpoint: null,     // the version open in the History tab
   images: [],           // screenshots waiting to be sent: { mimeType, data (base64), url }
+  shots: {},            // reply id -> the preview screenshot its visual check saw (this page load only)
+  previewReload: null,  // resolves when the preview has reloaded after the latest reply
 };
 
 const $ = (id) => document.getElementById(id);
@@ -225,6 +227,7 @@ function applyRole() {
   $('prompt').disabled = !w;
   $('prompt').placeholder = w ? 'Describe what to build or change… or paste a screenshot' : 'You can view this project but not change it.';
   $('btn-attach').disabled = !w;
+  $('vcheck-toggle').disabled = !w;
   $('btn-send').disabled = !w || state.busy;
   $('btn-new-chat').disabled = !w;
   $('btn-build').disabled = !w;
@@ -291,7 +294,12 @@ async function openSession(id) {
   markActiveSession();
   const messages = await api(`/api/v1/projects/${state.projectId}/chat/sessions/${id}/messages`);
   resetThread(messages.length > 0);
-  for (const m of messages) appendMessage(m);
+  messages.forEach((m, i) => {
+    // A "needs fixes" verdict whose issues were already sent back shows that, not a button.
+    const next = messages[i + 1];
+    if (m.review && next && next.role === 'user' && next.content.startsWith(FIX_PREFIX)) m.fixSent = true;
+    appendMessage(m);
+  });
   updateRetry(messages);
 }
 
@@ -362,6 +370,8 @@ function appendMessage(m) {
       `<div class="bot-meta">${failed ? '<b>failed</b> · ' : ''}${esc(m.tokensUsed || 0)} tokens</div>`;
     el.querySelector('.bot-text').textContent = m.content;
     el.querySelectorAll('.file-chip').forEach((b) => b.addEventListener('click', () => showCode(b.dataset.path)));
+    if (m.id) el.dataset.messageId = m.id;
+    if (m.review) el.appendChild(reviewCard(m.review, state.shots[m.id], { fixSent: m.fixSent }));
   }
   thread.appendChild(el);
   scrollThread();
@@ -431,6 +441,7 @@ async function send({ retry = false } = {}) {
   if (state.busy || !canWrite() || (!retry && !content)) return;
   setBusy(true);
   let sentImages = [];
+  let toReview = null;
 
   try {
     if (!state.sessionId) {
@@ -459,10 +470,14 @@ async function send({ retry = false } = {}) {
     if (turn) {
       appendMessage(turn.assistantMessage);
       updateRetry([turn.assistantMessage]);
+      const reply = turn.assistantMessage;
+      if (reply.status === 'SUCCEEDED' && reply.toolCalls?.length && visualCheckOn()) {
+        toReview = { reply, isFix: content.startsWith(FIX_PREFIX) };
+      }
     }
     await Promise.all([loadSessions(state.sessionId), loadFiles(), refreshPlanPill()]);
     if ($('tab-history').classList.contains('is-on')) loadHistory();
-    reloadPreviewFrame();
+    state.previewReload = reloadPreviewFrame();
   } catch (err) {
     // A refusal before the stream opened (402, 409, 429): the server saved
     // nothing, so put the text back where the user typed it.
@@ -483,6 +498,7 @@ async function send({ retry = false } = {}) {
   } finally {
     setBusy(false);
   }
+  if (toReview) visualCheck(toReview.reply, toReview);
 }
 
 function setBusy(on) {
@@ -787,9 +803,16 @@ function showPreview(p) {
   }
 }
 
+/** Reload to pick up new files; resolves once the page has loaded (or after 10 s, whichever is first). */
 function reloadPreviewFrame() {
   const frame = $('preview-frame');
-  if (!frame.hidden && frame.src) frame.src = frame.src;   // pick up new files
+  if (frame.hidden || !frame.getAttribute('src')) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const done = () => { clearTimeout(timer); frame.removeEventListener('load', done); resolve(true); };
+    const timer = setTimeout(done, 10000);
+    frame.addEventListener('load', done);
+    frame.src = frame.src;
+  });
 }
 
 $('btn-preview').addEventListener('click', async () => {
@@ -809,6 +832,144 @@ $('btn-preview-stop').addEventListener('click', async () => {
     refreshPlanPill();
   } catch (err) { toast(err.message); }
 });
+
+// ── AI checks its own app ───────────────────────────────
+// After a reply changes the files, photograph the live preview (the bridge
+// script inside it renders the page with html-to-image and posts back a JPEG),
+// have a vision model judge it against the request, and - once - send the
+// major issues back to the agent as the next turn. The build gate proves the
+// code parses, the console bridge catches what throws; this catches what
+// merely LOOKS wrong.
+
+const FIX_PREFIX = 'Visual check (';
+
+function visualCheckOn() {
+  return $('vcheck-toggle').checked && !$('vcheck-toggle').disabled;
+}
+try {
+  if (localStorage.getItem('ff_visual_check') === 'off') $('vcheck-toggle').checked = false;
+} catch { /* storage unavailable: keep the default */ }
+$('vcheck-toggle').addEventListener('change', (e) => {
+  try { localStorage.setItem('ff_visual_check', e.target.checked ? 'on' : 'off'); } catch { /* fine */ }
+});
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Ask the bridge inside the preview for a picture of the page. Resolves to a JPEG data URL. */
+function snapshotPreview(timeoutMs = 20000) {
+  const frame = $('preview-frame');
+  if (frame.hidden || !frame.getAttribute('src') || !frame.contentWindow) {
+    return Promise.reject(new Error('no preview running'));
+  }
+  const id = Math.random().toString(36).slice(2);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { removeEventListener('message', onMessage); reject(new Error('the preview did not answer')); }, timeoutMs);
+    function onMessage(e) {
+      // Only the frame we asked, only the answer to this question.
+      if (e.source !== frame.contentWindow || !e.data || e.data.type !== 'ff:snapshot' || e.data.id !== id) return;
+      clearTimeout(timer);
+      removeEventListener('message', onMessage);
+      const url = e.data.data;
+      if (typeof url === 'string' && url.startsWith('data:image/jpeg;base64,') && url.length < 5_500_000) resolve(url);
+      else reject(new Error(e.data.error || 'the snapshot came back empty'));
+    }
+    addEventListener('message', onMessage);
+    frame.contentWindow.postMessage({ type: 'ff:snapshot', id }, '*');
+  });
+}
+
+function fixPrompt(review) {
+  const lines = review.issues.map((i) => `- ${i.severity === 'major' ? '' : '(minor, if quick) '}${i.text}`);
+  return `${FIX_PREFIX}${review.score}/10) found problems in the preview. Fix these:\n${lines.join('\n')}`;
+}
+
+/** The verdict, as a block inside the reply it judged. */
+function reviewCard(review, shot, { fixSent = false } = {}) {
+  const card = document.createElement('div');
+  const bad = review.verdict === 'NEEDS_FIXES';
+  card.className = 'vcheck ' + (bad ? 'vcheck-bad' : 'vcheck-ok');
+  card.innerHTML = `<div class="vcheck-head"><b>Visual check</b><span class="vcheck-score">${esc(review.score)}/10</span>
+      <span class="vcheck-verdict">${bad ? 'needs fixes' : 'looks right'}</span></div>
+    <p class="vcheck-summary"></p><ul class="vcheck-issues"></ul>`;
+  card.querySelector('.vcheck-summary').textContent = review.summary;
+  const list = card.querySelector('.vcheck-issues');
+  for (const i of review.issues) {
+    const li = document.createElement('li');
+    li.className = 'vi-' + i.severity;
+    li.textContent = i.text;
+    list.appendChild(li);
+  }
+  if (!review.issues.length) list.remove();
+  if (shot) {
+    const img = document.createElement('img');
+    img.className = 'vcheck-shot';
+    img.alt = 'What the reviewer saw';
+    img.title = 'What the reviewer saw (click to enlarge)';
+    img.src = shot;
+    img.addEventListener('click', () => img.classList.toggle('is-big'));
+    card.appendChild(img);
+  }
+  if (bad && fixSent) {
+    const note = document.createElement('div');
+    note.className = 'vcheck-note';
+    note.textContent = 'Sent back to the agent to fix.';
+    card.appendChild(note);
+  } else if (bad && canWrite()) {
+    const fix = document.createElement('button');
+    fix.type = 'button';
+    fix.className = 'btn btn-quiet btn-sm vcheck-fix';
+    fix.textContent = 'Fix these';
+    fix.addEventListener('click', () => {
+      if (state.busy) return;
+      fix.remove();
+      $('prompt').value = fixPrompt(review);
+      send();
+    });
+    card.appendChild(fix);
+  }
+  return card;
+}
+
+async function visualCheck(reply, { isFix = false } = {}) {
+  const host = thread.querySelector(`.msg-bot[data-message-id="${reply.id}"]`);
+  const frame = $('preview-frame');
+  if (!host || frame.hidden || !frame.getAttribute('src')) return;   // no preview running: nothing to look at
+  const card = document.createElement('div');
+  card.className = 'vcheck vcheck-working';
+  card.innerHTML = '<div class="vcheck-head"><span class="spinner"></span><span>Looking at the preview…</span></div>';
+  host.appendChild(card);
+  scrollThread();
+  try {
+    // The page has to be on screen to be laid out - and photographed.
+    if (!$('tab-preview').classList.contains('is-on')) switchTab('preview');
+    await (state.previewReload || Promise.resolve());
+    await sleep(900);                                   // fonts, transitions, first paint of scripts
+    const shot = await snapshotPreview();
+    const review = await api(`/api/v1/projects/${state.projectId}/chat/sessions/${reply.sessionId}/messages/${reply.id}/visual-review`,
+      { method: 'POST', body: { screenshot: { mimeType: 'image/jpeg', data: shot.slice(shot.indexOf(',') + 1) } } });
+    state.shots[reply.id] = shot;                       // so a re-render of the thread keeps the picture
+    const done = reviewCard(review, shot);
+    card.replaceWith(done);
+    scrollThread();
+    refreshPlanPill();
+    // One round only: a fix that is itself judged "needs fixes" is shown, not chased.
+    const majors = review.issues.some((i) => i.severity === 'major');
+    if (review.verdict === 'NEEDS_FIXES' && majors && !isFix && canWrite() && !state.busy
+        && state.sessionId === reply.sessionId && !$('prompt').value.trim() && !state.images.length) {
+      done.querySelector('.vcheck-fix')?.remove();
+      const note = document.createElement('div');
+      note.className = 'vcheck-note';
+      note.textContent = 'Sent back to the agent to fix.';
+      done.appendChild(note);
+      $('prompt').value = fixPrompt(review);
+      send();
+    }
+  } catch (err) {
+    card.className = 'vcheck vcheck-skip';
+    card.textContent = `Visual check skipped: ${err.message}`;
+    if (err.upgrade) toast(err.message, { upgrade: true });
+  }
+}
 
 // ── live logs ───────────────────────────────────────────
 

@@ -12,7 +12,8 @@ account is needed and every step is deterministic:
 
 Signs up, chats, opens the code, starts a preview, clicks inside the generated
 app and checks its console line arrives in Logs, searches, opens the version
-history and restores a version, sends a screenshot, downloads the zip,
+history and restores a version, lets the AI check how its app looks (and fix
+it once), sends a screenshot, downloads the zip,
 upgrades through the test checkout, shares with a viewer and checks the
 viewer is read-only, hits the project quota, and checks a phone-sized screen.
 """
@@ -50,6 +51,8 @@ with sync_playwright() as p:
     expect(page.locator("#gate")).to_be_hidden()
     expect(page.locator("#project-select option")).to_have_count(1)
     expect(page.locator("#btn-plan")).to_contain_text("Free")
+    expect(page.locator("#vcheck-toggle")).to_be_checked()          # on by default
+    page.uncheck("#vcheck-toggle")                                   # off until step 5c, so counts below stay simple
     shot(page, "01-empty-workbench")
 
     # 2. chat: send a message, watch the live reply, see the saved reply
@@ -106,6 +109,30 @@ with sync_playwright() as p:
     expect(page.locator(".msg-user").last).to_have_text("Fix the error the preview reported.")
     expect(page.locator(".msg-bot:not(.is-working)")).to_have_count(2, timeout=20000)
     expect(page.locator("#runtime-bar")).to_be_hidden(timeout=10000)   # the run's build cleared it
+
+    # 5c. AI checks its own app: the preview is photographed in the browser,
+    #     a vision model (the demo stand-in here) flags a major issue, ONE fix
+    #     turn goes back to the agent on its own, and the re-check passes.
+    page.check("#vcheck-toggle")
+    page.fill("#prompt", "Make the counter button stand out")
+    page.click("#btn-send")
+    expect(page.locator(".vcheck-bad")).to_have_count(1, timeout=40000)
+    expect(page.locator(".vcheck-bad .vcheck-score")).to_have_text("6/10")
+    expect(page.locator(".vcheck-bad .vi-major")).to_contain_text("counter button")
+    page.wait_for_function("() => { const i = document.querySelector('.vcheck-bad .vcheck-shot');"
+                           " return i && i.naturalWidth > 200; }", timeout=10000)     # a real picture of the page
+    expect(page.locator(".msg-user").last).to_contain_text("Visual check (6/10) found problems", timeout=20000)
+    expect(page.locator(".vcheck-ok")).to_have_count(1, timeout=40000)
+    expect(page.locator(".vcheck-ok .vcheck-score")).to_have_text("9/10")
+    page.wait_for_timeout(1500)
+    expect(page.locator(".msg-bot:not(.is-working)")).to_have_count(4)     # one fix round, not a loop
+    shot(page, "05c-visual-check")
+    page.uncheck("#vcheck-toggle")
+    page.reload()
+    expect(page.locator(".vcheck")).to_have_count(2, timeout=10000)         # verdicts stay with their replies
+    expect(page.locator(".vcheck-bad .vcheck-note")).to_have_text("Sent back to the agent to fix.")
+    expect(page.locator(".vcheck-fix")).to_have_count(0)                    # no button for what was already fixed
+    expect(page.locator("#vcheck-toggle")).not_to_be_checked()              # the choice is remembered
 
     # 6. search
     page.click(".tab[data-tab=search]")
@@ -178,7 +205,10 @@ with sync_playwright() as p:
     expect(page2.locator("#role-badge")).to_have_text("viewer")
     expect(page2.locator("#prompt")).to_be_disabled()
     expect(page2.locator("#btn-build")).to_be_disabled()
-    expect(page2.locator(".msg-bot")).to_have_count(2, timeout=10000)   # can read the chat (build + fix)
+    expect(page2.locator(".msg-bot")).to_have_count(4, timeout=10000)   # can read the chat (build, fix, change, visual fix)
+    expect(page2.locator(".vcheck")).to_have_count(2)                     # sees the visual checks...
+    expect(page2.locator(".vcheck-fix")).to_have_count(0)                 # ...but can't act on them
+    expect(page2.locator("#vcheck-toggle")).to_be_disabled()
     shot(page2, "10-viewer")
 
     # 10. a 402 surfaces as a friendly toast with a way to upgrade (viewer is on FREE)
@@ -209,7 +239,7 @@ with sync_playwright() as p:
     page.click("#btn-send")
     expect(page.locator(".msg-user-wrap .msg-images img")).to_have_count(1, timeout=10000)
     expect(page.locator("#attach-list")).to_be_hidden()
-    expect(page.locator(".msg-bot:not(.is-working)")).to_have_count(3, timeout=20000)
+    expect(page.locator(".msg-bot:not(.is-working)")).to_have_count(5, timeout=20000)
     page.reload()
     img = page.locator(".msg-user-wrap .msg-images img").first
     expect(img).to_be_visible(timeout=10000)

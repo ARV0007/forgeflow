@@ -8,6 +8,7 @@ import java.util.List;
  *                  reply is part of the history, and it is what retry retries.
  * @param toolCalls for assistant replies: what the agent changed.
  * @param images    for user messages: images sent with it (metadata; bytes at .../attachments/{id})
+ * @param review    for assistant replies: the latest visual review of the result, if one was made
  */
 public record ChatMessageResponse(
         Long id,
@@ -20,5 +21,6 @@ public record ChatMessageResponse(
         String status,
         Long runId,
         Instant createdAt,
-        List<AttachmentInfo> images) {
+        List<AttachmentInfo> images,
+        VisualReviewResponse review) {
 }

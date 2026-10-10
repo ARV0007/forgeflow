@@ -31,6 +31,20 @@ public class DemoLlmClient implements LlmClient {
     public LlmResponse chat(String systemPrompt, List<LlmMessage> history, List<ToolSpec> tools) {
         LlmMessage last = history.get(history.size() - 1);
 
+        // The visual reviewer (no tools, a screenshot attached). The demo can't
+        // see, so it plays the loop honestly labelled: the first look at a
+        // change flags one issue, the look after the fix passes - which is
+        // enough to walk the whole review -> fix -> re-review path offline.
+        if (systemPrompt != null && systemPrompt.startsWith("You review a screenshot")) {
+            boolean afterFix = last.text() != null && last.text().contains("LATEST REQUEST: Visual check");
+            String review = afterFix
+                    ? "{\"score\": 9, \"verdict\": \"looks_right\", \"summary\": \"Demo review: the fix is in and the page reads well.\", \"issues\": []}"
+                    : "{\"score\": 6, \"verdict\": \"needs_fixes\", \"summary\": \"Demo review: the demo model always finds one thing on a first look.\", "
+                      + "\"issues\": [{\"severity\": \"major\", \"text\": \"The counter button blends into the page; give it a solid background colour.\"}, "
+                      + "{\"severity\": \"minor\", \"text\": \"The heading could use more space above it.\"}]}";
+            return new LlmResponse(review, List.of(), "[]", estimate(history) + 258, 60, estimate(history) + 318);
+        }
+
         // A fresh request: write the files. Anything else (our own tool
         // results coming back): we're done.
         if (last.role() == LlmMessage.Role.USER) {

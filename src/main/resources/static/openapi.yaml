@@ -319,6 +319,43 @@ paths:
         "200": { description: The image, content: { image/png: { schema: { type: string, format: binary } }, image/jpeg: { schema: { type: string, format: binary } }, image/webp: { schema: { type: string, format: binary } } } }
         "404": { $ref: "#/components/responses/Problem" }
 
+  /api/v1/projects/{projectId}/chat/sessions/{sessionId}/messages/{messageId}/visual-review:
+    parameters:
+      - { $ref: "#/components/parameters/projectId" }
+      - { $ref: "#/components/parameters/sessionId" }
+      - { name: messageId, in: path, required: true, description: the assistant reply whose result is on screen, schema: { type: integer, format: int64 } }
+    post:
+      tags: [Chat]
+      summary: AI checks its own app - a vision model reviews a screenshot of the preview (WRITE, metered)
+      description: >
+        The workbench screenshots the live preview in the browser right after a reply
+        lands and sends it here. A vision model judges it against the conversation's
+        requests. NEEDS_FIXES means at least one major issue; the workbench then sends
+        one follow-up turn asking the agent to fix them. The latest review is returned
+        on the reply in the message history.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [screenshot]
+              properties:
+                screenshot:
+                  type: object
+                  required: [mimeType, data]
+                  properties:
+                    mimeType: { type: string, enum: [image/png, image/jpeg, image/webp] }
+                    data: { type: string, description: base64, no data-URL prefix; at most 4 MB decoded }
+      responses:
+        "200": { description: The verdict, content: { application/json: { schema: { $ref: "#/components/schemas/VisualReview" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "402": { $ref: "#/components/responses/QuotaExceeded" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "502": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+
   /api/v1/projects/{projectId}/chat/sessions/{sessionId}/retry:
     parameters: [{ $ref: "#/components/parameters/projectId" }, { $ref: "#/components/parameters/sessionId" }]
     post:
@@ -777,6 +814,24 @@ components:
           type: array
           description: images sent with a user message; bytes at .../messages/{id}/attachments/{imageId}
           items: { type: object, properties: { id: { type: integer, format: int64 }, mimeType: { type: string }, sizeBytes: { type: integer } } }
+        review:
+          nullable: true
+          description: on assistant replies - the latest visual review of the result
+          allOf: [{ $ref: "#/components/schemas/VisualReview" }]
+    VisualReview:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        messageId: { type: integer, format: int64 }
+        score: { type: integer, minimum: 1, maximum: 10 }
+        verdict: { type: string, enum: [LOOKS_RIGHT, NEEDS_FIXES] }
+        summary: { type: string }
+        issues:
+          type: array
+          maxItems: 5
+          items: { type: object, properties: { severity: { type: string, enum: [major, minor] }, text: { type: string } } }
+        tokensUsed: { type: integer }
+        createdAt: { type: string, format: date-time }
     ChatTurn:
       type: object
       properties:
