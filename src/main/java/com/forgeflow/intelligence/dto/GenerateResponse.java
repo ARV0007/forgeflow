@@ -1,6 +1,7 @@
 package com.forgeflow.intelligence.dto;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * @param status      the OUTCOME - did the code work. SUCCEEDED means the
@@ -9,6 +10,8 @@ import java.util.List;
  *                    status so a success that ended untidily (NO_TOOL_CALL)
  *                    stays visible to the eval harness.
  * @param errorMessage why the run broke, when stopReason is ERROR; otherwise null.
+ * @param toolUsage   calls per tool name, e.g. {edit_file=1, finish=1, read_file=1}.
+ *                    Lets an eval tell a targeted edit from a whole-file rewrite.
  */
 public record GenerateResponse(
         Long runId,
@@ -21,5 +24,6 @@ public record GenerateResponse(
         Boolean buildPassed,
         int totalTokens,
         long durationMs,
-        String errorMessage) {
+        String errorMessage,
+        Map<String, Integer> toolUsage) {
 }

@@ -841,3 +841,8 @@ count), the write succeeds and its result adds a note pointing at
 `edit_file`. A nudge, not a refusal: a refused write would cost a round and
 could leave the user's change half-made.
 
+**Measuring it.** `GenerateResponse.toolUsage` counts calls per tool name for
+the run. The eval runner's follow-up cases (a small change on the app just
+built) classify each follow-up as `edit` (edit_file only), `rewrite`
+(write_file only) or `mixed`, reported apart from the pass rate.
+

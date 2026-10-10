@@ -177,6 +177,38 @@ def main():
     sys.exit(0 if results and all(r.get("passed") for r in results) and len(results) == len(cases) else 1)
 
 
+def edit_style(tool_usage):
+    """
+    How a follow-up changed the app. "edit" is the goal for a small change:
+    edit_file touched only what changed. "rewrite" means whole files were
+    resent. An older server that doesn't report tool usage gives "unknown".
+    """
+    if tool_usage is None:
+        return "unknown"
+    edits, writes = tool_usage.get("edit_file", 0), tool_usage.get("write_file", 0)
+    if edits and not writes:
+        return "edit"
+    if writes and not edits:
+        return "rewrite"
+    return "mixed" if edits else "none"
+
+
+def run_followup(args, case, pid, token):
+    """
+    A small change asked of the app the case just built, in the same project -
+    the way a person actually uses ForgeFlow. Scored on its own: did the build
+    still pass, and did the agent edit or rewrite. It doesn't change whether
+    the case passes, so pass rates stay comparable with older runs.
+    """
+    time.sleep(min(args.pause, 30))     # the build just used a chunk of the model's per-minute quota
+    run = call(args.base, f"/api/v1/projects/{pid}/generate", "POST",
+               {"prompt": case["followup"]}, token)
+    usage = run.get("toolUsage")
+    return {"prompt": case["followup"], "buildPassed": run.get("buildPassed") is True,
+            "style": edit_style(usage), "toolUsage": usage,
+            "totalTokens": run.get("totalTokens"), "durationMs": run.get("durationMs")}
+
+
 def run_cases(args, cases, results, save):
     token = None
     for i, case in enumerate(cases, 1):
@@ -195,10 +227,13 @@ def run_cases(args, cases, results, save):
                            {"name": f"eval-{case['id']}"}, token)
             pid = project["id"]
 
+            follow = None
             try:
                 run = call(args.base, f"/api/v1/projects/{pid}/generate", "POST",
                            {"prompt": case["prompt"]}, token)
                 files = call(args.base, f"/api/v1/projects/{pid}/files", token=token)
+                if case.get("followup") and run.get("buildPassed"):
+                    follow = run_followup(args, case, pid, token)
             finally:
                 # Scored or not, the project has done its job. Deleting it
                 # keeps the account under the plan's project limit.
@@ -212,14 +247,19 @@ def run_cases(args, cases, results, save):
                 "repairRounds": run.get("repairRounds"),
                 "totalTokens": run.get("totalTokens"),
                 "durationMs": run.get("durationMs"),
+                "toolUsage": run.get("toolUsage"),
             })
+            if follow:
+                results[-1]["followup"] = follow
 
             mark = "PASS" if passed else "FAIL"
             failed = [k for k, v in checks.items() if not v]
             print(f"{mark}  {run.get('stopReason','?'):<14} "
                   f"{len(files)} files  {run.get('repairRounds',0)} repair  "
                   f"{(run.get('durationMs') or 0)/1000:.0f}s"
-                  + (f"   <- {', '.join(failed)}" if failed else ""))
+                  + (f"   <- {', '.join(failed)}" if failed else "")
+                  + (f"   | follow-up: {follow['style']}"
+                     + ("" if follow["buildPassed"] else " (build FAILED)") if follow else ""))
 
         except Exception as e:
             # Out of daily AI tokens: every remaining case would fail the same
@@ -254,6 +294,15 @@ def report(results, started):
     for name in ["build_passed", "has_index", "no_empty_files", "js_when_needed"]:
         n = sum(1 for r in done if r.get("checks", {}).get(name))
         print(f"  {name:<17}{n}/{len(done)}")
+
+    follows = [r["followup"] for r in done if r.get("followup")]
+    if follows:
+        styles = {}
+        for f in follows:
+            styles[f["style"]] = styles.get(f["style"], 0) + 1
+        print(f"  follow-ups       {sum(f['buildPassed'] for f in follows)}/{len(follows)} still build")
+        print(f"  how they changed " + ", ".join(f"{k} {v}" for k, v in sorted(styles.items())))
+        print(f"  follow-up tokens {sum(f['totalTokens'] or 0 for f in follows)/len(follows):.0f} mean")
     print("=" * 62)
 
 

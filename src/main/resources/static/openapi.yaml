@@ -626,6 +626,10 @@ components:
         totalTokens: { type: integer }
         durationMs: { type: integer, format: int64 }
         errorMessage: { type: string }
+        toolUsage:
+          type: object
+          description: Calls per tool name, e.g. {"edit_file":1,"finish":1,"read_file":1}
+          additionalProperties: { type: integer }
     ChatSession:
       type: object
       properties:

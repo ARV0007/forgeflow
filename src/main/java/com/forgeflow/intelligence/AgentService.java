@@ -23,7 +23,9 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.function.Consumer;
 
 /**
@@ -167,6 +169,8 @@ public class AgentService {
 
         Set<String> written = new LinkedHashSet<>();
         int toolCallCount = 0;
+        // Which tools, how often - so an eval can tell an edit from a rewrite.
+        Map<String, Integer> toolUsage = new TreeMap<>();
         int round = 0;
         int repairRounds = 0;
         int promptTokens = 0;
@@ -248,6 +252,7 @@ public class AgentService {
 
                 for (ToolCall call : response.toolCalls()) {
                     toolCallCount++;
+                    toolUsage.merge(call.name(), 1, Integer::sum);
                     Object rawPath = call.args().get("path");
                     String path = rawPath == null ? null : rawPath.toString();
 
@@ -344,7 +349,7 @@ public class AgentService {
 
         GenerateResponse result = new GenerateResponse(run.getId(), status, stopReason, summary,
                 List.copyOf(written), toolCallCount, repairRounds, buildPassed, totalTokens, durationMs,
-                run.getErrorMessage());
+                run.getErrorMessage(), java.util.Collections.unmodifiableMap(toolUsage));
 
         emit(listener, AgentEvent.done(result));
         return result;

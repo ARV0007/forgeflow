@@ -1648,6 +1648,19 @@ which tools it called (`toolCalls`). Looking at that for one real run showed
 `write_file`. Checking *how* a result was produced, not just *that* it came
 out right, is what caught it.
 
+**Q: The evals scored 20/20. Doesn't that prove the edit_file fix works?**
+No - and this is the trap worth remembering. All twenty eval prompts build an
+app from nothing, where rewriting (write_file) is the *right* tool. A test
+can only measure what it exercises. So five cases now get a follow-up ("make
+the button green") on the app they just built, and the report counts how
+many were edits. A passing test suite tells you what you tested passed -
+nothing more.
+
+**Q: Why are follow-ups reported separately instead of counting toward the pass rate?**
+Because the pass rate's value is comparison over time. If follow-ups could
+fail a case, today's 19/20 and last month's 20/20 would be measuring
+different things. Keep the old ruler; add a new one beside it.
+
 **Q: Why count unchanged lines instead of comparing file sizes?**
 A file can stay the same size and be completely different, or grow by one
 line and be 99% the same. "How many of the old lines are still there, word

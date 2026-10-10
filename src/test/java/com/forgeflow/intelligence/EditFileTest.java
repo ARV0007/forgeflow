@@ -57,6 +57,10 @@ class EditFileTest extends ApiTestSupport {
         assertThat(run.path("filesWritten")).extracting(JsonNode::asText).containsExactly("index.html");
         assertThat(content(a, id, "index.html")).isEqualTo(INDEX.replace("<h1>Hello</h1>", "<h1>Hello, edited</h1>"));
         assertThat(lastResult(3).output()).startsWith("Edited index.html");
+        // The response says which tools did it - what the evals count.
+        assertThat(run.path("toolUsage").path("edit_file").asInt()).isEqualTo(1);
+        assertThat(run.path("toolUsage").path("finish").asInt()).isEqualTo(1);
+        assertThat(run.path("toolUsage").has("write_file")).isFalse();
 
         JsonNode index = null;
         for (JsonNode f : get("/api/v1/projects/" + id + "/files", a, 200)) {

@@ -842,6 +842,36 @@ against the demo model: 3 leftovers removed, 5 cases passed on a 3-project
 plan, 0 projects left; with the token limit shrunk to 3,000, it stopped at
 case 3 with cases 1–2 saved.
 
+**Live eval, 10 Oct 11:06 IST — 20/20 again.** Real Gemini on Render, with
+edit_file, the runtime loop, the RAG context and the new prompt:
+
+| | 27 Sep (Day 9) | 10 Oct |
+|---|---|---|
+| pass rate | 20/20 | 20/20 |
+| repair rounds | 0 | 0 |
+| mean tokens per case | 5,236 | 7,565 (+44%) |
+| mean time per case | 13.4 s | 9.1 s |
+
+Nothing broke. The token rise is most likely the price of what was added
+since Day 9 - two more tools (search_code, edit_file) and a longer system
+prompt, both re-sent on every round. (Likely, not measured: the next step
+would be one case run with and without them.) Time went *down* - that's Gemini's
+side, not ours; don't read it as a win.
+
+What this run could **not** show: whether edit_file gets used. All twenty
+cases build from an empty project, where write_file is the right tool. So:
+
+- `GenerateResponse` now includes `toolUsage` - calls per tool name.
+- Five golden cases gained a `followup` - a small change asked of the app
+  just built, in the same project ("make the Calculate button green with
+  rounded corners"). The runner reports, separately from the pass rate,
+  whether each follow-up still builds and whether it was an **edit**, a
+  **rewrite** or **mixed**. Separate, so pass rates stay comparable with
+  every earlier run.
+
+The eval account spent ~174k of its 200k daily tokens today, so the first
+live run with follow-ups waits until the allowance resets (05:30 IST).
+
 ---
 
 ## Open items
@@ -874,7 +904,8 @@ case 3 with cases 1–2 saved.
    anyone opening the preview (needs a host that can run Chromium)
 3. "Forgot password?" — needs an email sender (a reset link mailed to the
    user); until then a lost password means a new account
-4. Re-run the evals and count how often edit runs now use `edit_file`
+4. Run the evals (after 05:30 IST) and read the follow-up line: how many of
+   the five small changes were edits, not rewrites
 
 ## Done since the original plan
 

@@ -835,8 +835,13 @@ Multi-round runs should show a healthy cached share; single-round runs ~0.
 - **Evals and plan limits.** The eval account is on the Free plan: 3
   projects, 200k AI tokens per UTC day (resets 05:30 IST). The runner
   deletes each project after scoring and stops on the token limit. A full
-  20-case sweep uses roughly 150–170k tokens, so run it once a day at most,
-  or use `--limit`.
+  20-case sweep uses roughly 150–170k tokens (more with the five
+  follow-ups), so run it once a day at most, or use `--limit`.
+- **Reading an eval run.** The summary's `how they changed` line counts the
+  follow-ups: `edit` = edit_file only (what we want for small changes),
+  `rewrite` = whole files resent, `mixed` = both. Per case, the results
+  JSON has `followup.toolUsage`. The demo model always rewrites — only a
+  real-model run means anything here.
 - **Lost password?** There's no reset flow yet (no email sender). Sign up
   again — Gmail ignores everything after a `+`, so `you+ff@gmail.com` is a
   new ForgeFlow account that still reaches your inbox.
