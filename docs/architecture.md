@@ -998,3 +998,24 @@ bytes to the bucket. Diffs: `LineDiff`, LCS line diff in unified format with
 API: `GET …/checkpoints`, `GET …/checkpoints/{id}/diff[?against=]`,
 `GET …/checkpoints/{id}/files/content?path=`, `POST …/checkpoints/{id}/restore`
 (WRITE). Never fatal to a run: checkpoint failures are logged.
+
+---
+
+## 20. Screenshot to app (multimodal input)
+
+```
+composer: attach / paste / drop ──► (browser) scale to ≤1600 px, ≤3.5 MB, base64
+   POST …/messages[/stream] { content, images: [{mimeType, data}] ≤ 3 }
+      ChatService.begin: ImagePart.validate (type allow-list, magic bytes, ≤ 4 MB) → 400 before anything is saved
+                         message saved, images → chat_attachments (V10, BYTEA)
+      AgentService: request = imageBrief + text; LlmMessage.user(request, images)
+      GeminiClient: parts = [ {text}, {inlineData: {mimeType, data}}, … ]
+```
+
+| Concern | Decision |
+|---|---|
+| retry | re-reads the question's attachments - the same images go again |
+| memory | past images are **not** re-sent; the past turn says "[N images attached to this message]" |
+| reading them back | `GET …/messages/{id}/attachments/{aid}` (READ), `nosniff`; the page fetches with the token and shows a blob URL |
+| validation | allow-list PNG/JPEG/WebP and the bytes must start with that format's signature - a renamed file is refused |
+| demo model | ignores images; titles the page with the user's words, not the brief |

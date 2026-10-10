@@ -84,7 +84,11 @@ public class DemoLlmClient implements LlmClient {
     }
 
     private static String firstLine(String s) {
-        String line = s == null ? "" : s.strip().split("\n", 2)[0];
+        String text = s == null ? "" : s.strip();
+        if (text.startsWith("ATTACHED:") && text.contains("\n\n")) {
+            text = text.substring(text.indexOf("\n\n") + 2).strip();     // skip the image brief: title the page with the ask
+        }
+        String line = text.split("\n", 2)[0];
         return line.length() > 80 ? line.substring(0, 77) + "..." : (line.isEmpty() ? "Your app" : line);
     }
 

@@ -30,7 +30,7 @@ live preview · file tree · every step streamed to the browser
 |---|---|
 | **Projects** | create, list, rename, delete; share with **editors** and **viewers**; public projects |
 | **Auth** | sign up, log in (JWT), get / edit my profile |
-| **AI generation** | chat sessions with **memory** (last 10 messages); streaming replies; **retry if failed**; a self-healing build gate; targeted `edit_file` changes; errors from the running preview fed back to the agent |
+| **AI generation** | **screenshot to app** (paste a screenshot or sketch; Gemini builds from it); chat sessions with **memory** (last 10 messages); streaming replies; **retry if failed**; a self-healing build gate; targeted `edit_file` changes; errors from the running preview fed back to the agent |
 | **Files** | file tree, file content, save by hand, **download as zip**, who created / last changed each file |
 | **History** | a **version per AI run**, coloured diffs between versions, **one-click restore** (itself undoable) |
 | **Preview** | live preview link, start / stop, **logs stream** — builds, requests, 404s and the generated app's own `console` output |

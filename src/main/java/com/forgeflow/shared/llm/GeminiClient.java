@@ -166,7 +166,7 @@ public class GeminiClient implements LlmClient {
         return Optional.empty();
     }
 
-    private ObjectNode buildRequest(String systemPrompt, List<LlmMessage> history, List<ToolSpec> tools) {
+    ObjectNode buildRequest(String systemPrompt, List<LlmMessage> history, List<ToolSpec> tools) {
 
         ObjectNode root = mapper.createObjectNode();
 
@@ -179,7 +179,15 @@ public class GeminiClient implements LlmClient {
                 case USER -> {
                     ObjectNode turn = contents.addObject();
                     turn.put("role", "user");
-                    turn.putArray("parts").addObject().put("text", m.text());
+                    ArrayNode parts = turn.putArray("parts");
+                    parts.addObject().put("text", m.text());
+                    // Multimodal: each image is its own part, after the text
+                    // that says what to do with it.
+                    for (ImagePart img : m.images() == null ? List.<ImagePart>of() : m.images()) {
+                        ObjectNode inline = parts.addObject().putObject("inlineData");
+                        inline.put("mimeType", img.mimeType());
+                        inline.put("data", img.base64());
+                    }
                 }
                 case MODEL -> {
                     ObjectNode turn = contents.addObject();

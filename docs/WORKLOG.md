@@ -1031,6 +1031,30 @@ History, checks the diff renders, and restores the first build.
 edits, access; plus restore over S3).
 
 
+### Screenshot to app
+
+Stage 4. Attach, paste or drop up to three images in the chat - a
+screenshot of a site you like, a Figma export, a photo of a paper sketch -
+and the agent builds from them. Gemini is multimodal, so the images travel
+as `inlineData` parts after the text, and the request opens with a brief:
+treat the picture as the spec - layout, sections, visible text verbatim,
+colours, spacing.
+
+Decisions worth defending: the browser scales big screenshots down before
+upload (the model doesn't need retina pixels; the server caps 4 MB); the
+server checks each image's first bytes against its claimed type, so a
+renamed file is a 400 before anything is saved; images are kept with the
+message so reload shows them and **retry resends them**; past images are
+mentioned in memory, not re-sent, so a long chat doesn't pay for the same
+picture every turn.
+
+Real Gemini can't be reached from the build workspace, so the wire format
+is pinned by a unit test (text part, then one `inlineData` part per image)
+and the flow by API tests with the scripted model; the browser walk attaches
+a real PNG and checks the thumbnail survives a reload. The live check is
+Aman's: paste a screenshot on Render. 183 tests.
+
+
 ---
 
 ## Open items

@@ -88,7 +88,7 @@ public class ChatController {
     @PostMapping("/{sessionId}/messages")
     public ChatTurnResponse send(@PathVariable Long projectId, @PathVariable Long sessionId,
                                  @Valid @RequestBody SendMessageRequest req, Authentication auth) {
-        ChatService.Turn turn = chat.begin(projectId, sessionId, caller(auth), req.content());
+        ChatService.Turn turn = chat.begin(projectId, sessionId, caller(auth), req.content(), req.images());
         return chat.complete(turn, event -> { });
     }
 
@@ -98,7 +98,20 @@ public class ChatController {
                                  @Valid @RequestBody SendMessageRequest req, Authentication auth) {
         // begin() runs HERE, on the request thread: a 403, 404 or 409 must be a
         // real HTTP status, not an error event inside a 200 stream.
-        return stream(chat.begin(projectId, sessionId, caller(auth), req.content()));
+        return stream(chat.begin(projectId, sessionId, caller(auth), req.content(), req.images()));
+    }
+
+    /** An image sent with a message. Browsers can't add a bearer header to <img>, so the page fetches it. */
+    @GetMapping("/{sessionId}/messages/{messageId}/attachments/{attachmentId}")
+    public ResponseEntity<byte[]> attachment(@PathVariable Long projectId, @PathVariable Long sessionId,
+                                             @PathVariable Long messageId, @PathVariable Long attachmentId,
+                                             Authentication auth) {
+        AttachmentStore.Stored img = chat.attachment(projectId, sessionId, messageId, attachmentId, caller(auth));
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(img.mimeType()))
+                .header("Cache-Control", "private, max-age=86400")
+                .header("X-Content-Type-Options", "nosniff")
+                .body(img.data());
     }
 
     /** Spec: "Retry if failed". */

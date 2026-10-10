@@ -11,12 +11,23 @@ import java.util.List;
  * Every provider needs some version of this, so the field belongs in the
  * abstraction rather than leaking Gemini into the loop.
  */
-public record LlmMessage(Role role, String text, String rawModelParts, List<ToolResult> toolResults) {
+public record LlmMessage(Role role, String text, String rawModelParts, List<ToolResult> toolResults,
+                         List<ImagePart> images) {
 
     public enum Role { USER, MODEL, TOOL_RESULTS }
 
+    /** Text-only turns - everything except a user message with pictures. */
+    public LlmMessage(Role role, String text, String rawModelParts, List<ToolResult> toolResults) {
+        this(role, text, rawModelParts, toolResults, List.of());
+    }
+
     public static LlmMessage user(String text) {
         return new LlmMessage(Role.USER, text, null, null);
+    }
+
+    /** A user message with images: a screenshot to copy, a sketch to build from. */
+    public static LlmMessage user(String text, List<ImagePart> images) {
+        return new LlmMessage(Role.USER, text, null, null, images == null ? List.of() : List.copyOf(images));
     }
 
     public static LlmMessage model(String rawParts) {

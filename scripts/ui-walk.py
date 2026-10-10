@@ -12,7 +12,7 @@ account is needed and every step is deterministic:
 
 Signs up, chats, opens the code, starts a preview, clicks inside the generated
 app and checks its console line arrives in Logs, searches, opens the version
-history and restores a version, downloads the zip,
+history and restores a version, sends a screenshot, downloads the zip,
 upgrades through the test checkout, shares with a viewer and checks the
 viewer is read-only, hits the project quota, and checks a phone-sized screen.
 """
@@ -192,6 +192,30 @@ with sync_playwright() as p:
     expect(page2.locator("#new-msg")).to_contain_text("allows 3 projects", timeout=10000)
     expect(page2.locator("#new-msg .linklike")).to_be_visible()
     shot(page2, "11-quota")
+
+    # 10b. screenshot to app: attach an image, it shows in the message, survives a reload
+    import struct, zlib, tempfile
+    def tiny_png(w=40, h=30):
+        raw = b"".join(b"\x00" + bytes([200, 80, 40]) * w for _ in range(h))
+        def chunk(t, d):
+            return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+        return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+    png = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    png.write(tiny_png()); png.close()
+    page.set_input_files("#attach-input", png.name)
+    expect(page.locator("#attach-list .attach")).to_have_count(1, timeout=10000)
+    page.fill("#prompt", "Build this from my sketch")
+    page.click("#btn-send")
+    expect(page.locator(".msg-user-wrap .msg-images img")).to_have_count(1, timeout=10000)
+    expect(page.locator("#attach-list")).to_be_hidden()
+    expect(page.locator(".msg-bot:not(.is-working)")).to_have_count(3, timeout=20000)
+    page.reload()
+    img = page.locator(".msg-user-wrap .msg-images img").first
+    expect(img).to_be_visible(timeout=10000)
+    page.wait_for_function("() => { const i = document.querySelector('.msg-images img'); return i && i.naturalWidth === 40; }",
+                           timeout=10000)                       # the real bytes, fetched with the token
+    shot(page, "10b-screenshot")
 
     # 11. narrow screen still usable
     page.set_viewport_size({"width": 390, "height": 844})

@@ -83,9 +83,13 @@
           <button id="btn-runtime-dismiss" type="button" class="btn btn-quiet btn-xs" aria-label="Dismiss">Dismiss</button>
         </div>
 
-        <div class="composer">
-          <textarea id="prompt" rows="2" placeholder="Describe what to build or change&hellip;" aria-label="Message"></textarea>
+        <div class="composer" id="composer">
+          <div id="attach-list" class="attach-list" hidden></div>
+          <textarea id="prompt" rows="2" placeholder="Describe what to build or change&hellip; or paste a screenshot" aria-label="Message"></textarea>
           <div class="composer-actions">
+            <input id="attach-input" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+            <button id="btn-attach" type="button" class="btn btn-quiet btn-sm" title="Attach a screenshot, mockup or sketch (or paste / drop one)">Attach image</button>
+            <span class="spacer"></span>
             <button id="btn-retry" type="button" class="btn btn-quiet btn-sm" hidden>Retry</button>
             <button id="btn-send" type="button" class="btn btn-primary">Send</button>
           </div>

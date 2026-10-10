@@ -306,6 +306,19 @@ paths:
         "402": { $ref: "#/components/responses/QuotaExceeded" }
         "409": { $ref: "#/components/responses/Problem" }
 
+  /api/v1/projects/{projectId}/chat/sessions/{sessionId}/messages/{messageId}/attachments/{attachmentId}:
+    parameters:
+      - { $ref: "#/components/parameters/projectId" }
+      - { $ref: "#/components/parameters/sessionId" }
+      - { name: messageId, in: path, required: true, schema: { type: integer, format: int64 } }
+      - { name: attachmentId, in: path, required: true, schema: { type: integer, format: int64 } }
+    get:
+      tags: [Chat]
+      summary: An image sent with a message (READ)
+      responses:
+        "200": { description: The image, content: { image/png: { schema: { type: string, format: binary } }, image/jpeg: { schema: { type: string, format: binary } }, image/webp: { schema: { type: string, format: binary } } } }
+        "404": { $ref: "#/components/responses/Problem" }
+
   /api/v1/projects/{projectId}/chat/sessions/{sessionId}/retry:
     parameters: [{ $ref: "#/components/parameters/projectId" }, { $ref: "#/components/parameters/sessionId" }]
     post:
@@ -604,7 +617,21 @@ components:
       required: true
       content:
         application/json:
-          schema: { type: object, required: [content], properties: { content: { type: string, maxLength: 4000 } } }
+          schema:
+            type: object
+            required: [content]
+            properties:
+              content: { type: string, maxLength: 4000 }
+              images:
+                type: array
+                maxItems: 3
+                description: "Screenshot to app: up to 3 images the agent builds from (PNG/JPEG/WebP, 4 MB each, checked by magic bytes)"
+                items:
+                  type: object
+                  required: [mimeType, data]
+                  properties:
+                    mimeType: { type: string, enum: [image/png, image/jpeg, image/webp] }
+                    data: { type: string, description: "base64, no data: prefix" }
 
   responses:
     Problem:
@@ -746,6 +773,10 @@ components:
         status: { type: string }
         runId: { type: integer, format: int64 }
         createdAt: { type: string, format: date-time }
+        images:
+          type: array
+          description: images sent with a user message; bytes at .../messages/{id}/attachments/{imageId}
+          items: { type: object, properties: { id: { type: integer, format: int64 }, mimeType: { type: string }, sizeBytes: { type: integer } } }
     ChatTurn:
       type: object
       properties:

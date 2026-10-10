@@ -13,6 +13,7 @@ import com.forgeflow.shared.events.EventBus;
 import com.forgeflow.shared.events.Topics;
 import com.forgeflow.shared.tracing.Tracer;
 import com.forgeflow.intelligence.dto.GenerateResponse;
+import com.forgeflow.shared.llm.ImagePart;
 import com.forgeflow.shared.llm.LlmClient;
 import com.forgeflow.shared.llm.LlmMessage;
 import com.forgeflow.shared.llm.LlmResponse;
@@ -117,12 +118,22 @@ public class AgentService {
     public GenerateResponse generate(Long projectId, Long userId, String prompt,
                                      List<LlmMessage> priorTurns, Long sessionId,
                                      Consumer<AgentEvent> listener) {
+        return generate(projectId, userId, prompt, List.of(), priorTurns, sessionId, listener);
+    }
+
+    /**
+     * @param images screenshots, mockups or sketches sent with the request -
+     *               the model sees them next to the words ("screenshot to app")
+     */
+    public GenerateResponse generate(Long projectId, Long userId, String prompt, List<ImagePart> images,
+                                     List<LlmMessage> priorTurns, Long sessionId,
+                                     Consumer<AgentEvent> listener) {
         // One span for the whole run; each model call and build inside it is
         // a child, so a slow run shows exactly which step was slow.
         try (Tracer.Span span = tracer.start("agent.run")) {
             span.tag("project.id", projectId).tag("session.id", sessionId);
             try {
-                GenerateResponse r = run(projectId, userId, prompt, priorTurns, sessionId, listener);
+                GenerateResponse r = run(projectId, userId, prompt, images, priorTurns, sessionId, listener);
                 span.tag("run.id", r.runId()).tag("run.status", r.status()).tag("run.stop_reason", r.stopReason())
                     .tag("run.tokens", r.totalTokens()).tag("run.repair_rounds", r.repairRounds());
                 return r;
@@ -133,7 +144,7 @@ public class AgentService {
         }
     }
 
-    private GenerateResponse run(Long projectId, Long userId, String prompt,
+    private GenerateResponse run(Long projectId, Long userId, String prompt, List<ImagePart> images,
                                  List<LlmMessage> priorTurns, Long sessionId,
                                  Consumer<AgentEvent> listener) {
 
@@ -185,7 +196,11 @@ public class AgentService {
                     + (runtime.size() == 1 ? "" : "s") + " from the preview"));
             request = request + "\n\n" + runtimeSection(runtime);
         }
-        history.add(LlmMessage.user(request));
+        if (images != null && !images.isEmpty()) {
+            emit(listener, AgentEvent.status("Looking at " + images.size() + " image" + (images.size() == 1 ? "" : "s")));
+            request = imageBrief(images.size()) + "\n\n" + request;
+        }
+        history.add(LlmMessage.user(request, images));
 
         Set<String> written = new LinkedHashSet<>();
         int toolCallCount = 0;
@@ -387,6 +402,19 @@ public class AgentService {
 
         emit(listener, AgentEvent.done(result));
         return result;
+    }
+
+    /**
+     * What to do with pictures. Said in the request rather than only the
+     * system prompt, because it applies to this request: "the user attached
+     * these; they are the spec".
+     */
+    static String imageBrief(int count) {
+        return "ATTACHED: " + count + " image" + (count == 1 ? "" : "s") + " - a screenshot, mockup or sketch of what "
+                + "the user wants. Treat it as the specification: reproduce its layout, sections, text, colours, "
+                + "spacing and components as closely as plain HTML, CSS and JavaScript allow. Use the visible text "
+                + "verbatim. Where the image is ambiguous, choose what a careful front-end developer would, and say "
+                + "so in your summary.";
     }
 
     /**

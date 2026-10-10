@@ -1942,7 +1942,52 @@ writes. Past 4 million comparisons the file is shown as replaced instead.
 
 ---
 
-## Chapter 25 — What's next
+## Chapter 25 — Showing instead of telling (screenshot to app)
+
+**Plain English.** Describing a page in words is hard ("a big header, kind
+of centred, with three cards underneath…"). Showing it is easy. Now you can
+paste a screenshot, a mockup or a photo of a sketch into the chat, and the
+contractor builds from the picture.
+
+### How a picture reaches the model
+
+Gemini is **multimodal**: one request can hold text *and* images. A message
+is a list of **parts** - first your words, then each image as an
+`inlineData` part (its type and its bytes in base64). Before your words,
+ForgeFlow adds a short brief: "this picture is the spec - copy the layout,
+the text, the colours".
+
+### Being careful with uploads
+
+- **Size:** the browser shrinks big screenshots before sending (a retina
+  screenshot can be 10 MB; the model is happy with 1600 pixels).
+- **Type:** only PNG, JPEG and WebP - and the server checks the file's first
+  bytes. Every PNG starts with the same 8 bytes; a `.exe` renamed to `.png`
+  doesn't, and is refused before anything is saved.
+- **Reading back:** an `<img>` tag can't send your login token, so the page
+  fetches the image itself and shows it from memory.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why not send every earlier image again on each turn?**
+Images are the most expensive part of a request. The model already acted on
+them; later turns just say "an image was attached here". If you want it to
+look again, attach it again.
+
+**Q: What happens on retry?**
+Retry asks exactly the same question - so the same images are loaded from the
+database and sent again.
+
+**Q: Why check the first bytes when the browser already says the type?**
+Because the browser's claim is just a label the client chose. The bytes are
+the truth - that's what "magic bytes" checking is.
+
+</details>
+
+---
+
+## Chapter 26 — What's next
 
 Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
 the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
@@ -1951,15 +1996,15 @@ roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
 (Chapter 18), **RAG** (Chapter 19), **tracing** (Chapter 20), the
 **workbench** (Chapter 21), `edit_file`, the runtime loop and prompt
 caching (Chapter 22), and the full topology - Kafka, MinIO, Qdrant, the
-gateway, Kubernetes (Chapter 23), and version history (Chapter 24). What's left:
+gateway, Kubernetes (Chapter 23), version history (Chapter 24), and screenshot to app (Chapter 25). What's left:
 
 - **Measure it** — re-run the evals against real Gemini and count how often
   edit requests now use `edit_file`.
 - **A headless browser in the build gate**, so runtime errors are caught
   without anyone opening the preview.
 - **"Forgot password?"** — needs an email sender to mail a reset link.
-- **Screenshot to app** and **the AI checking its own app** — Gemini reads
-  images; the preview runs in a real browser that can take the picture.
+- **The AI checking its own app** — the preview runs in a real browser that
+  can take the picture, and the model can now read pictures.
 - **React apps running in the browser** (WebContainers) — the diagram's
   "Code Execution Service: WebContainer" box.
 - **Preview state in Redis**, so the API can run more than one replica.

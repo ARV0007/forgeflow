@@ -16,6 +16,7 @@ const state = {
   logs: null,           // AbortController for the live log stream
   lastLogSeq: 0,
   checkpoint: null,     // the version open in the History tab
+  images: [],           // screenshots waiting to be sent: { mimeType, data (base64), url }
 };
 
 const $ = (id) => document.getElementById(id);
@@ -222,7 +223,8 @@ async function openProject(id, role) {
 function applyRole() {
   const w = canWrite();
   $('prompt').disabled = !w;
-  $('prompt').placeholder = w ? 'Describe what to build or change…' : 'You can view this project but not change it.';
+  $('prompt').placeholder = w ? 'Describe what to build or change… or paste a screenshot' : 'You can view this project but not change it.';
+  $('btn-attach').disabled = !w;
   $('btn-send').disabled = !w || state.busy;
   $('btn-new-chat').disabled = !w;
   $('btn-build').disabled = !w;
@@ -330,6 +332,26 @@ function appendMessage(m) {
   if (m.role === 'user') {
     el.className = 'msg-user';
     el.textContent = m.content;
+    const imgs = m.localImages || m.images || [];
+    if (imgs.length) {
+      const strip = document.createElement('div');
+      strip.className = 'msg-images';
+      for (const img of imgs) {
+        const tag = document.createElement('img');
+        tag.alt = 'Attached image';
+        if (img.url) tag.src = img.url;                    // just sent: we still have it
+        else loadAttachment(m, img).then((url) => { tag.src = url; }).catch(() => tag.remove());
+        tag.addEventListener('click', () => window.open(tag.src, '_blank'));
+        strip.appendChild(tag);
+      }
+      const wrap = document.createElement('div');
+      wrap.className = 'msg-user-wrap';
+      wrap.append(el, strip);
+      if (thread.querySelector('.empty')) thread.innerHTML = '';
+      thread.appendChild(wrap);
+      scrollThread();
+      return;
+    }
   } else {
     const failed = m.status && m.status !== 'SUCCEEDED';
     el.className = 'msg-bot' + (failed ? ' is-failed' : '');
@@ -408,6 +430,7 @@ async function send({ retry = false } = {}) {
   const content = $('prompt').value.trim();
   if (state.busy || !canWrite() || (!retry && !content)) return;
   setBusy(true);
+  let sentImages = [];
 
   try {
     if (!state.sessionId) {
@@ -415,16 +438,20 @@ async function send({ retry = false } = {}) {
       state.sessionId = s.id;
     }
     const base = `/api/v1/projects/${state.projectId}/chat/sessions/${state.sessionId}`;
+    const images = retry ? [] : state.images.map(({ mimeType, data }) => ({ mimeType, data }));
     if (!retry) {
-      appendMessage({ role: 'user', content });
+      sentImages = state.images;
+      appendMessage({ role: 'user', content, localImages: sentImages });
       $('prompt').value = '';
+      state.images = [];
+      renderAttachments();
     }
     $('btn-retry').hidden = true;
     const pending = pendingReply();
     let turn = null;
     try {
       await sse(retry ? `${base}/retry/stream` : `${base}/messages/stream`,
-        { body: retry ? undefined : { content } },
+        { body: retry ? undefined : (images.length ? { content, images } : { content }) },
         (event, data) => { if (event === 'message') turn = data; else pending.event(data); });
     } finally {
       pending.el.remove();
@@ -441,8 +468,11 @@ async function send({ retry = false } = {}) {
     // nothing, so put the text back where the user typed it.
     const bubbles = thread.querySelectorAll('.msg-user');
     if (!retry && err.status && bubbles.length) {
-      bubbles[bubbles.length - 1].remove();
+      const last = bubbles[bubbles.length - 1];
+      (last.closest('.msg-user-wrap') || last).remove();
       $('prompt').value = content;
+      state.images = sentImages;                     // and the pictures back in the tray
+      renderAttachments();
     }
     toast(err.message, { upgrade: err.upgrade });
     // A stream that broke mid-way (network, proxy) may still have finished
@@ -516,6 +546,78 @@ $('btn-download').addEventListener('click', async () => {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   } catch (err) { toast(err.message); }
+});
+
+// ── screenshot to app ───────────────────────────────────
+// Attach, paste or drop an image; it rides with the next message and the
+// model builds from it. Big screenshots are scaled down in the browser first
+// (the server takes 4 MB per image, and the model doesn't need retina pixels).
+
+const MAX_SIDE = 1600;
+const MAX_BYTES = 3.5 * 1024 * 1024;
+
+async function addImage(file) {
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) { toast('Images must be PNG, JPEG or WebP'); return; }
+  if (state.images.length >= 3) { toast('Up to 3 images per message'); return; }
+  let blob = file;
+  const bitmap = await createImageBitmap(file);
+  if (file.size > MAX_BYTES || bitmap.width > MAX_SIDE || bitmap.height > MAX_SIDE) {
+    const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+  }
+  const data = await new Promise((resolve) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1]);
+    r.readAsDataURL(blob);
+  });
+  state.images.push({ mimeType: blob.type, data, url: URL.createObjectURL(blob) });
+  renderAttachments();
+}
+
+function renderAttachments() {
+  const list = $('attach-list');
+  list.hidden = state.images.length === 0;
+  list.innerHTML = '';
+  state.images.forEach((img, i) => {
+    const div = document.createElement('div');
+    div.className = 'attach';
+    div.innerHTML = `<img alt="Image to send"><button type="button" aria-label="Remove image">&times;</button>`;
+    div.querySelector('img').src = img.url;
+    div.querySelector('button').addEventListener('click', () => { state.images.splice(i, 1); renderAttachments(); });
+    list.appendChild(div);
+  });
+}
+
+async function loadAttachment(m, img) {
+  const res = await fetch(`/api/v1/projects/${state.projectId}/chat/sessions/${m.sessionId}/messages/${m.id}/attachments/${img.id}`,
+    { headers: { Authorization: 'Bearer ' + state.token } });
+  if (!res.ok) throw new Error('image ' + res.status);
+  return URL.createObjectURL(await res.blob());
+}
+
+$('btn-attach').addEventListener('click', () => $('attach-input').click());
+$('attach-input').addEventListener('change', async (e) => {
+  for (const f of e.target.files) await addImage(f);
+  e.target.value = '';
+});
+$('prompt').addEventListener('paste', async (e) => {
+  const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
+  if (files.length) {
+    e.preventDefault();
+    for (const f of files) await addImage(f);
+  }
+});
+const composer = $('composer');
+composer.addEventListener('dragover', (e) => { e.preventDefault(); composer.classList.add('is-drop'); });
+composer.addEventListener('dragleave', () => composer.classList.remove('is-drop'));
+composer.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  composer.classList.remove('is-drop');
+  for (const f of e.dataTransfer.files) await addImage(f);
 });
 
 // ── history ─────────────────────────────────────────────

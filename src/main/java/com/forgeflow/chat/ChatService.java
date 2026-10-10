@@ -2,7 +2,9 @@ package com.forgeflow.chat;
 
 import com.forgeflow.billing.Entitlements;
 import com.forgeflow.billing.Quota;
+import com.forgeflow.chat.dto.AttachmentInfo;
 import com.forgeflow.chat.dto.ChatMessageResponse;
+import com.forgeflow.chat.dto.ImageAttachment;
 import com.forgeflow.chat.dto.ChatSessionResponse;
 import com.forgeflow.chat.dto.ChatTurnResponse;
 import com.forgeflow.chat.dto.ToolCallSummary;
@@ -10,11 +12,14 @@ import com.forgeflow.intelligence.AgentEvent;
 import com.forgeflow.intelligence.AgentService;
 import com.forgeflow.intelligence.dto.GenerateResponse;
 import com.forgeflow.shared.ResourceNotFoundException;
+import com.forgeflow.shared.llm.ImagePart;
 import com.forgeflow.shared.llm.LlmMessage;
 import com.forgeflow.workspace.ProjectService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
@@ -23,6 +28,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 /**
@@ -50,6 +56,7 @@ public class ChatService {
     private final AgentService agent;
     private final SessionLocks locks;
     private final Entitlements entitlements;
+    private final AttachmentStore attachments;
     private final ObjectMapper json = new ObjectMapper();
     private final int memoryMessages;
 
@@ -59,6 +66,7 @@ public class ChatService {
                        AgentService agent,
                        SessionLocks locks,
                        Entitlements entitlements,
+                       AttachmentStore attachments,
                        @Value("${forgeflow.chat.memory-messages:10}") int memoryMessages) {
         this.projects = projects;
         this.sessions = sessions;
@@ -66,6 +74,7 @@ public class ChatService {
         this.agent = agent;
         this.locks = locks;
         this.entitlements = entitlements;
+        this.attachments = attachments;
         this.memoryMessages = memoryMessages;
     }
 
@@ -109,18 +118,38 @@ public class ChatService {
     public List<ChatMessageResponse> history(Long projectId, Long sessionId, Long userId) {
         projects.getById(projectId, userId);
         load(projectId, sessionId);
-        return messages.findBySessionIdOrderByIdAsc(sessionId).stream().map(this::toResponse).toList();
+        List<ChatMessage> all = messages.findBySessionIdOrderByIdAsc(sessionId);
+        Map<Long, List<AttachmentInfo>> images = attachments.infoFor(all.stream().map(ChatMessage::getId).toList());
+        return all.stream().map(m -> toResponse(m, images.getOrDefault(m.getId(), List.of()))).toList();
     }
 
     // --------------------------------------------------------------- turns
 
     /** Everything complete() needs, captured while still on the request thread. */
-    public record Turn(Long projectId, Long sessionId, Long userId, String prompt,
+    public record Turn(Long projectId, Long sessionId, Long userId, String prompt, List<ImagePart> images,
                        ChatMessage userMessage, List<LlmMessage> memory) {
     }
 
-    /** Send a new message. Throws 404/403/409 here - never from inside a stream. */
     public Turn begin(Long projectId, Long sessionId, Long userId, String content) {
+        return begin(projectId, sessionId, userId, content, null);
+    }
+
+    /**
+     * Send a new message, optionally with images. Throws 400/403/404/409 here
+     * - never from inside a stream.
+     */
+    public Turn begin(Long projectId, Long sessionId, Long userId, String content, List<ImageAttachment> images) {
+        // Bad images are a 400 before anything is saved or locked.
+        List<byte[]> decoded = new ArrayList<>();
+        List<ImagePart> parts = new ArrayList<>();
+        for (ImageAttachment img : images == null ? List.<ImageAttachment>of() : images) {
+            try {
+                decoded.add(ImagePart.validate(img.mimeType(), img.data()));
+            } catch (IllegalArgumentException e) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+            }
+            parts.add(new ImagePart(img.mimeType(), img.data()));
+        }
         projects.requireWrite(projectId, userId);
         ChatSession session = load(projectId, sessionId);
         // Out of tokens is a 402 now, before the message is saved - not a
@@ -134,6 +163,9 @@ public class ChatService {
             userMessage.setContent(content.trim());
             userMessage.setAuthorId(userId);
             userMessage = messages.save(userMessage);
+            for (int i = 0; i < parts.size(); i++) {
+                attachments.save(userMessage.getId(), parts.get(i).mimeType(), decoded.get(i));
+            }
 
             if (session.getTitle() == null) {
                 session.setTitle(titleFrom(content));
@@ -141,7 +173,7 @@ public class ChatService {
             session.touch();
             sessions.save(session);
 
-            return new Turn(projectId, sessionId, userId, userMessage.getContent(), userMessage,
+            return new Turn(projectId, sessionId, userId, userMessage.getContent(), List.copyOf(parts), userMessage,
                     memoryBefore(sessionId, userMessage.getId()));
         } catch (RuntimeException e) {
             locks.release(sessionId);
@@ -171,8 +203,9 @@ public class ChatService {
 
             // Memory stops BEFORE the failed exchange: the model should see the
             // question fresh, not alongside its own failure notice.
-            return new Turn(projectId, sessionId, userId, question.getContent(), null,
-                    memoryBefore(sessionId, question.getId()));
+            // The question's images go again: a retry asks exactly what was asked.
+            return new Turn(projectId, sessionId, userId, question.getContent(), attachments.imagesOf(question.getId()),
+                    null, memoryBefore(sessionId, question.getId()));
         } catch (RuntimeException e) {
             locks.release(sessionId);
             throw e;
@@ -182,7 +215,7 @@ public class ChatService {
     /** Run the agent and record its reply. Always releases the session lock. */
     public ChatTurnResponse complete(Turn turn, Consumer<AgentEvent> listener) {
         try {
-            GenerateResponse run = agent.generate(turn.projectId(), turn.userId(), turn.prompt(),
+            GenerateResponse run = agent.generate(turn.projectId(), turn.userId(), turn.prompt(), turn.images(),
                     turn.memory(), turn.sessionId(), listener);
 
             ChatMessage reply = new ChatMessage();
@@ -200,9 +233,11 @@ public class ChatService {
                 sessions.save(s);
             });
 
+            List<AttachmentInfo> sent = turn.userMessage() == null ? List.of()
+                    : attachments.infoFor(List.of(turn.userMessage().getId())).getOrDefault(turn.userMessage().getId(), List.of());
             return new ChatTurnResponse(
-                    turn.userMessage() == null ? null : toResponse(turn.userMessage()),
-                    toResponse(reply), run);
+                    turn.userMessage() == null ? null : toResponse(turn.userMessage(), sent),
+                    toResponse(reply, List.of()), run);
         } finally {
             locks.release(turn.sessionId());
         }
@@ -236,9 +271,18 @@ public class ChatService {
             }
         }
 
+        // Past images aren't re-sent (they were acted on; re-sending every one
+        // would multiply the cost of each turn) - the model is told they existed.
+        Map<Long, List<AttachmentInfo>> images = attachments.infoFor(alternating.stream().map(ChatMessage::getId).toList());
         List<LlmMessage> out = new ArrayList<>();
         for (ChatMessage m : alternating) {
-            out.add(m.isUser() ? LlmMessage.user(m.getContent()) : LlmMessage.assistant(memoryText(m)));
+            if (m.isUser()) {
+                int n = images.getOrDefault(m.getId(), List.of()).size();
+                out.add(LlmMessage.user(n == 0 ? m.getContent()
+                        : m.getContent() + "\n[" + n + " image" + (n == 1 ? "" : "s") + " attached to this message]"));
+            } else {
+                out.add(LlmMessage.assistant(memoryText(m)));
+            }
         }
         return out;
     }
@@ -305,8 +349,22 @@ public class ChatService {
         return json.readValue(raw, TOOL_CALLS);
     }
 
-    private ChatMessageResponse toResponse(ChatMessage m) {
+    private ChatMessageResponse toResponse(ChatMessage m, List<AttachmentInfo> images) {
         return new ChatMessageResponse(m.getId(), m.getSessionId(), m.getRole(), m.getContent(), m.getAuthorId(),
-                parseToolCalls(m.getToolCalls()), m.getTokensUsed(), m.getStatus(), m.getRunId(), m.getCreatedAt());
+                parseToolCalls(m.getToolCalls()), m.getTokensUsed(), m.getStatus(), m.getRunId(), m.getCreatedAt(),
+                images);
+    }
+
+    /** One stored image's bytes - a read: anyone who can see the project. */
+    @Transactional(readOnly = true)
+    public AttachmentStore.Stored attachment(Long projectId, Long sessionId, Long messageId, Long attachmentId,
+                                             Long userId) {
+        projects.getById(projectId, userId);
+        load(projectId, sessionId);
+        ChatMessage m = messages.findById(messageId)
+                .filter(x -> x.getSessionId().equals(sessionId))
+                .orElseThrow(() -> new ResourceNotFoundException("Message not found"));
+        return attachments.load(m.getId(), attachmentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Attachment not found"));
     }
 }
