@@ -1325,14 +1325,42 @@ another project's checkpoint refused, deleted project dark. The browser walk
 publishes, opens the site signed out, edits, checks the site didn't change,
 republishes, rolls back. 213 tests.
 
+### Connect an agent: personal access tokens, and /mcp closed by default
+
+The oldest open item: `/mcp` ran every caller as one shared service account,
+and on a public deployment it was open unless someone remembered to set
+`FORGEFLOW_MCP_API_KEY`. Now each person makes their own tokens
+(**Connect an agent** in the top bar) and an MCP client acts **as them** -
+their projects, their plan, their quota:
+
+- `ff_pat_` + 32 random characters (~190 bits). Shown **once**; only the
+  SHA-256 is stored. A fast hash is right for random tokens (nothing to
+  brute-force) - passwords keep BCrypt.
+- The prefix makes a leaked token recognisable to you and to secret scanners.
+- A token works anywhere a sign-in does (REST and MCP), but it **can't
+  create or revoke tokens** - that needs a real sign-in, so a leaked token
+  can't entrench itself.
+- Last-used time is written at most once a minute per token.
+- **/mcp is closed by default**: no token and no shared key → 401, not even
+  the tool list. `FORGEFLOW_MCP_OPEN=true` re-opens it for a laptop. The
+  shared key still works for the service-account path.
+- The dialog prints the exact `claude mcp add ...` command and the
+  `mcpServers` JSON for Claude Desktop / Cursor, filled in.
+
+V15 (`api_tokens`). Tests: shown once, hashed at rest, works like a sign-in,
+can't mint tokens, revoked → 401; MCP creates the project in the token
+owner's list, generates on their quota, refuses someone else's project;
+closed by default. The browser walk creates a token, drives `/mcp` with
+it, revokes it. 216 tests.
+
+This retires the "set FORGEFLOW_MCP_API_KEY on Render" chore.
+
 
 ---
 
 ## Open items
 
 - The agent timeout counts time spent waiting out rate limits.
-- `/mcp` runs as one service account for every caller; set
-  `FORGEFLOW_MCP_API_KEY` on Render before advertising it.
 - Runtime errors and the visual check only happen if someone has the preview
   open - nothing exercises the app on its own (a server-side browser would).
 - Visual check isn't measured against real Gemini yet: how often does it

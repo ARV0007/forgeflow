@@ -32,6 +32,7 @@ public class McpController {
 
     private final McpToolExecutor tools;
     private final byte[] apiKey;
+    private final boolean allowAnonymous;
 
     /**
      * @param apiKey FORGEFLOW_MCP_API_KEY. Blank keeps /mcp open, which is fine
@@ -39,18 +40,31 @@ public class McpController {
      *               "Authorization: Bearer <key>" (what Claude Code's
      *               --header sends) or "X-API-Key: <key>".
      */
-    public McpController(McpToolExecutor tools, @Value("${forgeflow.mcp.api-key:}") String apiKey) {
+    public McpController(McpToolExecutor tools, @Value("${forgeflow.mcp.api-key:}") String apiKey,
+                         @Value("${forgeflow.mcp.allow-anonymous:false}") boolean allowAnonymous) {
         this.tools = tools;
         this.apiKey = apiKey.isBlank() ? null : apiKey.getBytes(StandardCharsets.UTF_8);
+        this.allowAnonymous = allowAnonymous;
     }
 
     @PostMapping
     public ResponseEntity<JsonRpc.Response> handle(@RequestBody JsonRpc.Request req,
                                                    @RequestHeader(value = "Authorization", required = false) String authorization,
-                                                   @RequestHeader(value = "X-API-Key", required = false) String xApiKey) {
+                                                   @RequestHeader(value = "X-API-Key", required = false) String xApiKey,
+                                                   org.springframework.security.core.Authentication auth) {
+        // Who is calling. A personal access token (Settings -> AI agents) makes
+        // every tool act as its owner - their projects, their plan, their
+        // quota. Without one, calls run as the shared MCP service account,
+        // guarded by FORGEFLOW_MCP_API_KEY when that is set.
+        Long caller = auth != null && auth.getPrincipal() instanceof Long id ? id : null;
+
         // Checked before anything else - including notifications - so an
         // unauthenticated caller learns nothing, not even which methods exist.
-        if (apiKey != null && !presented(authorization, xApiKey)) {
+        // Closed by default: a caller with neither a personal token nor the
+        // shared key gets nothing - not even the tool list. (Open /mcp on a
+        // public deployment would be free model calls for anyone.)
+        boolean shared = apiKey != null ? presented(authorization, xApiKey) : allowAnonymous;
+        if (caller == null && !shared) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .header(HttpHeaders.WWW_AUTHENTICATE, "Bearer realm=\"forgeflow-mcp\"")
                     .build();
@@ -68,7 +82,7 @@ public class McpController {
             case "tools/list" -> JsonRpc.Response.ok(req.id(), Map.of("tools", McpTools.all()));
             case "tools/call" -> JsonRpc.Response.ok(req.id(),
                     tools.call(req.params().path("name").asText(),
-                               req.params().path("arguments")));
+                               req.params().path("arguments"), caller));
             default -> JsonRpc.Response.fail(req.id(), -32601, "Method not found: " + req.method());
         };
 

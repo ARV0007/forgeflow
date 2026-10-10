@@ -1087,3 +1087,17 @@ Gotcha: the address is `/s/...` on the same domain as ForgeFlow. A custom
 domain per site would need a wildcard certificate and host routing (the
 gateway already routes by host for Kubernetes previews - same idea).
 
+## 27. Connect an AI agent (11 Oct)
+
+1. Top bar → **Connect an agent** → name it ("Claude Desktop") → **Create token**.
+2. Copy the token right away - it's never shown again.
+3. Claude Code: paste the `claude mcp add ...` line the dialog shows.
+   Claude Desktop / Cursor: paste the `mcpServers` JSON into their MCP config.
+4. Ask the agent "create a ForgeFlow project and build a tip calculator" -
+   it appears in *your* project list.
+5. Lost or leaked? **Revoke** it in the same dialog.
+
+Gotchas: `/mcp` now refuses callers with no token (401) unless
+`FORGEFLOW_MCP_API_KEY` is set and sent, or `FORGEFLOW_MCP_OPEN=true` (local
+only). A token can't create or revoke tokens - do that signed in.
+

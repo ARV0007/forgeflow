@@ -1174,3 +1174,18 @@ GET /s/{slug}/{path}  (public)            ─► sites JOIN projects (live, not 
 | security | public GET only; same CSP sandbox as previews; no console bridge; deleted projects 404 |
 | caching | `max-age=30` - the slug can move to another version at any time; `X-ForgeFlow-Version` names the checkpoint served |
 
+## 27. Personal access tokens (MCP as the user)
+
+```
+Connect an agent ─► POST /api/v1/me/tokens (signed-in session only) ─► ff_pat_<32> shown once; SHA-256 stored (V15)
+any request: Authorization: Bearer ff_pat_... ─► JwtAuthFilter ─► AccessTokens.userFor(sha256) ─► principal = owner, details = "personal-access-token"
+/mcp: principal present ─► tools act as that user;  none ─► shared key (if set) or allow-anonymous (default false) ─► service account / 401
+```
+
+| Concern | Decision |
+|---|---|
+| storage | SHA-256 only; random 190-bit tokens need no slow hash |
+| blast radius | a token can't create or revoke tokens; each agent gets its own, revocable alone |
+| module boundary | `AccessTokens` interface in shared (the filter), implemented in account (the table) |
+| /mcp default | closed: personal token or shared key; `FORGEFLOW_MCP_OPEN=true` for local use |
+

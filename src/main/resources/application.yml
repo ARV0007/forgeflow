@@ -38,6 +38,9 @@ forgeflow:
   mcp:
     # The identity MCP callers act as. Created on first use, never loginable.
     service-account-email: ${FORGEFLOW_MCP_SERVICE_EMAIL:mcp-service@forgeflow.internal}
+    # /mcp needs a personal access token (Connect an agent) or the shared key
+    # below. true = no credentials needed, as the service account - a laptop only.
+    allow-anonymous: ${FORGEFLOW_MCP_OPEN:false}
     # Blank = /mcp is open (fine locally). Set it on any public deployment;
     # clients then send "Authorization: Bearer <key>" or "X-API-Key: <key>".
     api-key: ${FORGEFLOW_MCP_API_KEY:}

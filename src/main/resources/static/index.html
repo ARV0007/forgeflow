@@ -48,6 +48,7 @@
     <button id="btn-publish" class="btn btn-quiet btn-sm" title="Give this app a public address">Publish</button>
     <span class="spacer"></span>
     <button id="btn-plan" class="plan-pill" title="Your plan and usage" hidden></button>
+    <button id="btn-agents" class="btn btn-quiet btn-sm" title="Let Claude, Cursor or a script use ForgeFlow as you (MCP)">Connect an agent</button>
     <span id="whoami" class="whoami"></span>
     <button id="btn-signout" class="btn btn-quiet btn-sm">Sign out</button>
   </header>
@@ -209,6 +210,28 @@
     <button class="btn btn-quiet btn-sm" data-close>Close</button>
     <button id="btn-do-publish" class="btn btn-primary btn-sm">Publish</button>
   </div>
+</dialog>
+
+<dialog id="dlg-agents" class="dlg dlg-wide">
+  <h2>Connect an AI agent</h2>
+  <p class="dlg-sub">ForgeFlow is an MCP server: Claude Desktop, Claude Code, Cursor or any MCP client can
+     create projects and build apps here - as you, on your projects and your plan. Give each one its own
+     token, so you can revoke one without touching the others.</p>
+  <div class="invite-row">
+    <input id="token-name" type="text" maxlength="80" placeholder="What will use it? e.g. Claude Desktop">
+    <button id="btn-token-create" class="btn btn-primary btn-sm">Create token</button>
+  </div>
+  <div id="token-new" class="token-new" hidden>
+    <p><b>Copy it now</b> - it won't be shown again.</p>
+    <div class="site-url"><code id="token-value"></code><button id="btn-token-copy" class="btn btn-quiet btn-xs" type="button">Copy</button></div>
+    <p class="token-how">Claude Code:</p>
+    <pre id="token-cli" class="token-snippet"></pre>
+    <p class="token-how">Claude Desktop / Cursor (<code>mcpServers</code> in their config):</p>
+    <pre id="token-json" class="token-snippet"></pre>
+  </div>
+  <ul id="token-list" class="member-list"></ul>
+  <p id="token-msg" class="msg"></p>
+  <div class="dlg-actions"><span class="spacer"></span><button class="btn btn-quiet btn-sm" data-close>Done</button></div>
 </dialog>
 
 <dialog id="dlg-plan" class="dlg dlg-wide">

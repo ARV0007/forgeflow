@@ -111,6 +111,36 @@ paths:
         "400": { $ref: "#/components/responses/Problem" }
 
   # -------------------------------------------------------------- projects
+  /api/v1/me/tokens:
+    get:
+      tags: [Account]
+      summary: My personal access tokens (never the secrets)
+      responses:
+        "200": { description: Tokens, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ApiToken" } } } } }
+    post:
+      tags: [Account]
+      summary: Create a personal access token - for MCP clients, scripts, CI. The secret is returned ONCE.
+      description: >
+        Send it as "Authorization: Bearer ff_pat_...". It works anywhere a sign-in
+        does, and on /mcp the tools act as you. Stored only as a SHA-256 hash.
+        Needs a signed-in session: a token can't create or revoke tokens.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string, maxLength: 80 } } } } }
+      responses:
+        "201": { description: Created - copy the token now, content: { application/json: { schema: { $ref: "#/components/schemas/ApiToken" } } } }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /api/v1/me/tokens/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    delete:
+      tags: [Account]
+      summary: Revoke a token (signed-in session only)
+      responses:
+        "204": { description: Revoked }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+
   /api/v1/projects:
     get:
       tags: [Projects]
@@ -800,6 +830,15 @@ components:
           description: Calls per tool name, e.g. {"edit_file":1,"finish":1,"read_file":1}
           additionalProperties: { type: integer }
         costUsd: { type: number, description: "the run's model calls at list price, USD (0 for a model with no known price)" }
+    ApiToken:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        prefix: { type: string, description: "ff_pat_ plus the first 4 characters" }
+        createdAt: { type: string, format: date-time }
+        lastUsedAt: { type: string, format: date-time, nullable: true }
+        token: { type: string, nullable: true, description: only in the response to creating it }
     Site:
       type: object
       properties:

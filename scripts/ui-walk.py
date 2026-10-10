@@ -195,6 +195,33 @@ with sync_playwright() as p:
     page.click("#dlg-publish [data-close]")
     visitor.context.close()
 
+    # 6d. connect an agent: a personal access token drives /mcp as this user
+    page.click("#btn-agents")
+    page.fill("#token-name", "walk-through agent")
+    page.click("#btn-token-create")
+    expect(page.locator("#token-new")).to_be_visible(timeout=10000)
+    token = page.locator("#token-value").inner_text()
+    assert token.startswith("ff_pat_"), token
+    expect(page.locator("#token-cli")).to_contain_text("claude mcp add --transport http forgeflow")
+    shot(page, "06d-agent-token")
+    made = page.evaluate("""async (t) => { const r = await fetch('/mcp', {method: 'POST',
+        headers: {'Content-Type': 'application/json', Authorization: 'Bearer ' + t},
+        body: JSON.stringify({jsonrpc: '2.0', id: 1, method: 'tools/call',
+                              params: {name: 'create_project', arguments: {name: 'made by an agent'}}})});
+        return (await r.json()).result.content[0].text; }""", token)
+    assert "Created project" in made, made
+    page.locator("#token-list .member button").first.click()             # revoke
+    expect(page.locator("#token-list")).to_contain_text("No tokens yet", timeout=10000)
+    page.click("#dlg-agents [data-close]")
+    page.reload()
+    agent_made = page.locator("#project-select option", has_text="made by an agent")
+    expect(agent_made).to_have_count(1, timeout=10000)                       # the agent's project is mine
+    page.evaluate("""async (id) => { await fetch('/api/v1/projects/' + id, {method: 'DELETE',
+        headers: {Authorization: 'Bearer ' + localStorage.getItem('ff_token')}}); }""", agent_made.get_attribute("value"))
+    page.reload()                                                             # (the steps below expect one project)
+    expect(page.locator("#project-select option")).to_have_count(1, timeout=10000)
+    expect(page.locator(".msg-bot").first).to_be_visible(timeout=10000)
+
     # 7. download the zip
     with page.expect_download() as dl:
         page.click("#btn-download")

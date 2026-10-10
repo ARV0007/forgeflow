@@ -1212,6 +1212,61 @@ async function publish(checkpointId) {
 }
 
 $('btn-publish').addEventListener('click', openPublish);
+
+// ── personal access tokens (MCP and scripts) ────────────
+
+async function openAgents() {
+  $('token-msg').textContent = '';
+  $('token-new').hidden = true;
+  $('token-name').value = '';
+  $('dlg-agents').showModal();
+  await loadTokens();
+}
+
+async function loadTokens() {
+  const list = $('token-list');
+  list.innerHTML = '';
+  let tokens = [];
+  try { tokens = await api('/api/v1/me/tokens'); } catch (err) { $('token-msg').textContent = err.message; return; }
+  if (!tokens.length) {
+    list.innerHTML = '<li class="member"><span class="m-who"><small>No tokens yet.</small></span></li>';
+    return;
+  }
+  for (const t of tokens) {
+    const li = document.createElement('li');
+    li.className = 'member';
+    li.innerHTML = `<span class="m-who"><b></b><small></small></span>
+      <button class="btn btn-quiet btn-xs" type="button">Revoke</button>`;
+    li.querySelector('b').textContent = t.name;
+    li.querySelector('small').textContent = `${t.prefix}… · created ${ago(t.createdAt)} · `
+      + (t.lastUsedAt ? `last used ${ago(t.lastUsedAt)}` : 'never used');
+    li.querySelector('button').addEventListener('click', async () => {
+      try { await api(`/api/v1/me/tokens/${t.id}`, { method: 'DELETE' }); await loadTokens(); }
+      catch (err) { $('token-msg').textContent = err.message; }
+    });
+    list.appendChild(li);
+  }
+}
+
+$('btn-agents').addEventListener('click', openAgents);
+$('btn-token-create').addEventListener('click', async () => {
+  const name = $('token-name').value.trim();
+  if (!name) { $('token-msg').textContent = 'Name it after what will use it.'; return; }
+  try {
+    const t = await api('/api/v1/me/tokens', { method: 'POST', body: { name } });
+    const url = location.origin + '/mcp';
+    $('token-value').textContent = t.token;
+    $('token-cli').textContent = `claude mcp add --transport http forgeflow ${url} --header "Authorization: Bearer ${t.token}"`;
+    $('token-json').textContent = JSON.stringify({ mcpServers: { forgeflow: {
+      type: 'http', url, headers: { Authorization: `Bearer ${t.token}` } } } }, null, 2);
+    $('token-new').hidden = false;
+    $('token-name').value = '';
+    await loadTokens();
+  } catch (err) { $('token-msg').textContent = err.message; }
+});
+$('btn-token-copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('token-value').textContent); toast('Token copied.'); } catch { /* select it by hand */ }
+});
 $('btn-do-publish').addEventListener('click', () => publish(null));
 $('btn-unpublish').addEventListener('click', async () => {
   try {

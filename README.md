@@ -39,7 +39,7 @@ live preview · file tree · every step streamed to the browser
 | **AI checks its own app** | after each change the preview photographs itself in the browser, a **vision model** scores it against the request, and major issues go back to the agent for **one automatic fix round** |
 | **Search (RAG)** | hybrid code search (pgvector or Qdrant + full-text, weighted rank fusion, optional LLM rerank); the agent has a `search_code` tool; big projects get relevant code attached to each request; **measured** by a 70-question retrieval benchmark |
 | **Plans** | FREE / PRO — projects, live previews, AI tokens per day; **Stripe** Checkout and a signed webhook |
-| **Platform** | a **stateless API** that scales out (chat locks, live logs and rate limits in **Redis**; the gateway load-balances with failover), Redis **rate limiting**, request **tracing** (W3C traceparent, optional Zipkin), an **MCP server** so other AI agents can drive it |
+| **Platform** | a **stateless API** that scales out (chat locks, live logs and rate limits in **Redis**; the gateway load-balances with failover), Redis **rate limiting**, request **tracing** (W3C traceparent, optional Zipkin), an **MCP server** so other AI agents can drive it - as *you*, with **personal access tokens** (hashed, shown once, revocable) |
 | **Architecture** | runs as one app (Render) **or** the full diagram: API gateway, Kafka + indexing worker, MinIO/S3, Qdrant, Kubernetes manifests |
 
 ## Architecture in one picture
@@ -129,7 +129,8 @@ FORGEFLOW_EMBEDDER=hashing FORGEFLOW_SANDBOX_PROVIDER=in-process \
 | `STRIPE_SECRET_KEY`, `STRIPE_PRO_PRICE_ID`, `STRIPE_WEBHOOK_SECRET`, `APP_BASE_URL` | — | Stripe — setup in `docs/notes.md` §14 |
 | `ZIPKIN_URL` | — | export traces, e.g. `http://localhost:9411` |
 | `FORGEFLOW_MCP_SERVICE_EMAIL` | `mcp-service@forgeflow.internal` | the account MCP calls act as |
-| `FORGEFLOW_MCP_API_KEY` | — | require this key on `/mcp` (set it on any public deployment) |
+| `FORGEFLOW_MCP_API_KEY` | — | optional shared key for `/mcp` as the service account; people normally use their own token (**Connect an agent**) |
+| `FORGEFLOW_MCP_OPEN` | `false` | `true` lets `/mcp` run with no credentials - local use only |
 
 ## Tests
 

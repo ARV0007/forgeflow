@@ -26,10 +26,15 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     /** Carries a renewed token back to the client. */
     public static final String RENEWED_TOKEN_HEADER = "X-Auth-Token";
 
-    private final JwtService jwtService;
+    /** Marks an authentication made with a personal access token rather than a sign-in. */
+    public static final String VIA_TOKEN = "personal-access-token";
 
-    public JwtAuthFilter(JwtService jwtService) {
+    private final JwtService jwtService;
+    private final org.springframework.beans.factory.ObjectProvider<AccessTokens> tokens;
+
+    public JwtAuthFilter(JwtService jwtService, org.springframework.beans.factory.ObjectProvider<AccessTokens> tokens) {
         this.jwtService = jwtService;
+        this.tokens = tokens;
     }
 
     @Override
@@ -40,7 +45,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String header = request.getHeader("Authorization");
 
         if (header != null && header.startsWith("Bearer ")) {
-            String token = header.substring(7);
+            String token = header.substring(7).trim();
+            // A personal access token: no expiry, no renewal - it lives until revoked.
+            if (token.startsWith(AccessTokens.PREFIX)) {
+                AccessTokens store = tokens.getIfAvailable();
+                (store == null ? java.util.Optional.<Long>empty() : store.userFor(token)).ifPresent(userId -> {
+                    var auth = new UsernamePasswordAuthenticationToken(userId, null, List.of());
+                    auth.setDetails(VIA_TOKEN);
+                    SecurityContextHolder.getContext().setAuthentication(auth);
+                });
+                chain.doFilter(request, response);
+                return;
+            }
             try {
                 Long userId = jwtService.extractUserId(token);
                 var auth = new UsernamePasswordAuthenticationToken(userId, null, List.of());

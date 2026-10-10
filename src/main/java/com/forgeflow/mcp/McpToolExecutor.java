@@ -78,11 +78,20 @@ public class McpToolExecutor {
     }
 
     public Map<String, Object> call(String name, JsonNode args) {
+        return call(name, args, null);
+    }
+
+    /**
+     * @param as the user to act as - the owner of the personal access token
+     *           the caller presented; null = the shared MCP service account
+     */
+    public Map<String, Object> call(String name, JsonNode args, Long as) {
         try {
+            Long who = as != null ? as : ownerId();
             return switch (name) {
-                case "create_project" -> createProject(args);
-                case "generate_app" -> generateApp(args);
-                case "list_project_files" -> listFiles(args);
+                case "create_project" -> createProject(args, who);
+                case "generate_app" -> generateApp(args, who);
+                case "list_project_files" -> listFiles(args, who);
                 default -> content("No such tool: " + name, true);
             };
         } catch (Exception e) {
@@ -96,23 +105,23 @@ public class McpToolExecutor {
         }
     }
 
-    private Map<String, Object> createProject(JsonNode args) {
+    private Map<String, Object> createProject(JsonNode args, Long who) {
         String name = args.path("name").asText();
         String desc = args.path("description").asText();
         Stack stack = "react".equalsIgnoreCase(args.path("stack").asText()) ? Stack.REACT : Stack.STATIC;
-        var p = projects.create(ownerId(), new CreateProjectRequest(name, desc, stack));
+        var p = projects.create(who, new CreateProjectRequest(name, desc, stack));
         return content("Created " + (stack == Stack.REACT ? "React " : "") + "project " + p.id() + " (\"" + p.name() + "\"). "
                 + "Use this project_id with generate_app.", false);
     }
 
-    private Map<String, Object> generateApp(JsonNode args) {
+    private Map<String, Object> generateApp(JsonNode args, Long who) {
         Long projectId = args.path("project_id").asLong();
         String prompt = args.path("prompt").asText();
         // AgentService does no access check of its own - AgentController does
         // it, and MCP does not go through AgentController. Without this line an
         // MCP caller could write into any project id it guessed.
-        projects.requireWrite(projectId, ownerId());
-        var run = agent.generate(projectId, ownerId(), prompt);
+        projects.requireWrite(projectId, who);
+        var run = agent.generate(projectId, who, prompt);
         String report = "runId=" + run.runId()
                 + " status=" + run.status()
                 + " stopReason=" + run.stopReason()
@@ -126,12 +135,12 @@ public class McpToolExecutor {
         return content(report, !"SUCCEEDED".equals(run.status()));
     }
 
-    private Map<String, Object> listFiles(JsonNode args) {
+    private Map<String, Object> listFiles(JsonNode args, Long who) {
         Long projectId = args.path("project_id").asLong();
         // Ownership check first: throws if the project is not the service
         // account's, which is what turns a wrong project_id into a readable
         // tool error instead of someone else's file list.
-        projects.getById(projectId, ownerId());
+        projects.getById(projectId, who);
         var found = files.list(projectId);
         if (found.isEmpty()) {
             return content("Project " + projectId + " has no files yet. "

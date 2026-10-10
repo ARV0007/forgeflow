@@ -2272,7 +2272,37 @@ origin, so it can't read ForgeFlow's cookies or storage.
 
 ---
 
-## Chapter 31 — What's next
+## Chapter 31 — Keys for robots (personal access tokens)
+
+**Plain English.** You don't give a delivery robot your house key - you give
+it its own key that opens one door and that you can cancel. A personal
+access token is that: a long random password made for one program (Claude
+Desktop, a script), which acts as you, and which you can revoke on its own.
+
+- ForgeFlow shows it **once** and keeps only a fingerprint of it, so even
+  someone who stole the database couldn't use it.
+- A token can do your work, but not make more tokens - so a leaked one
+  can't hide behind a fresh one.
+- The MCP door is now **locked by default**: no token, no entry.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Passwords use BCrypt (deliberately slow). Why is a plain SHA-256 fine for tokens?**
+Slow hashing protects *guessable* secrets: people pick passwords from a
+small space, so attackers try likely ones. A token is 190 random bits -
+there's no likely one to try - so a fast hash loses nothing and keeps every
+API call quick.
+
+**Q: Why can't a token create tokens?**
+Containment. If one leaks, revoking it must be the end of the story. A
+token that could mint a replacement would survive its own revocation.
+
+</details>
+
+---
+
+## Chapter 32 — What's next
 
 Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
 the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
@@ -2281,7 +2311,7 @@ roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
 (Chapter 18), **RAG** (Chapter 19), **tracing** (Chapter 20), the
 **workbench** (Chapter 21), `edit_file`, the runtime loop and prompt
 caching (Chapter 22), and the full topology - Kafka, MinIO, Qdrant, the
-gateway, Kubernetes (Chapter 23), version history (Chapter 24), screenshot to app (Chapter 25), the AI checking its own app (Chapter 26), React apps running in the browser (Chapter 27), a stateless API that scales out (Chapter 28), a Kubernetes pod per preview (Chapter 29), and Publish (Chapter 30). What's left:
+gateway, Kubernetes (Chapter 23), version history (Chapter 24), screenshot to app (Chapter 25), the AI checking its own app (Chapter 26), React apps running in the browser (Chapter 27), a stateless API that scales out (Chapter 28), a Kubernetes pod per preview (Chapter 29), Publish (Chapter 30), and personal access tokens for agents (Chapter 31). What's left:
 
 - **Measure it** — re-run the evals against real Gemini and count how often
   edit requests now use `edit_file`.

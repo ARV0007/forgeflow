@@ -2,6 +2,9 @@
 # instead of it - a file with the same name here would silently replace the
 # real config on the test classpath.
 forgeflow:
+  mcp:
+    # McpServerTest drives the anonymous service-account path; tokens are tested in ApiTokenTest.
+    allow-anonymous: true
   sandbox:
     # No Docker daemon in CI or on this build bench; the in-JVM provider is
     # what Render runs, so it is also what the tests should exercise.
