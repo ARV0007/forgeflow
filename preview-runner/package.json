@@ -1,0 +1,15 @@
+{
+  "name": "forgeflow-preview-runner",
+  "private": true,
+  "description": "Builds the files ForgeFlow's preview vendors: the in-browser React runner and the WebContainer client. Output goes to src/main/resources.",
+  "scripts": {
+    "build": "sh build.sh"
+  },
+  "devDependencies": {
+    "@webcontainer/api": "1.6.4",
+    "esbuild": "0.23.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "sucrase": "3.35.0"
+  }
+}

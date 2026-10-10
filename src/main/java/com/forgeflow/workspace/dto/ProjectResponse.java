@@ -2,6 +2,7 @@ package com.forgeflow.workspace.dto;
 
 import com.forgeflow.workspace.Project;
 import com.forgeflow.workspace.ProjectRole;
+import com.forgeflow.workspace.Stack;
 
 import java.time.Instant;
 
@@ -18,11 +19,12 @@ public record ProjectResponse(
         ProjectRole role,
         boolean isPublic,
         String thumbnailUrl,
+        Stack stack,
         Instant createdAt,
         Instant updatedAt) {
 
     public static ProjectResponse from(Project p, ProjectRole role) {
         return new ProjectResponse(p.getId(), p.getName(), p.getDescription(), p.getOwnerId(), role,
-                p.isPublic(), p.getThumbnailUrl(), p.getCreatedAt(), p.getUpdatedAt());
+                p.isPublic(), p.getThumbnailUrl(), p.getStack(), p.getCreatedAt(), p.getUpdatedAt());
     }
 }

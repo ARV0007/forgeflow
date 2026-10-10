@@ -29,6 +29,7 @@ public class ScriptedLlm implements LlmClient {
 
     private final ConcurrentLinkedDeque<LlmResponse> script = new ConcurrentLinkedDeque<>();
     private final List<List<LlmMessage>> seen = new CopyOnWriteArrayList<>();
+    private final List<String> systemPrompts = new CopyOnWriteArrayList<>();
 
     public ScriptedLlm then(LlmResponse response) {
         script.add(response);
@@ -38,6 +39,12 @@ public class ScriptedLlm implements LlmClient {
     public void reset() {
         script.clear();
         seen.clear();
+        systemPrompts.clear();
+    }
+
+    /** The system prompt passed on each call, in call order. */
+    public List<String> systemPrompts() {
+        return systemPrompts;
     }
 
     /** The history passed on each call, in call order. */
@@ -48,6 +55,7 @@ public class ScriptedLlm implements LlmClient {
     @Override
     public LlmResponse chat(String systemPrompt, List<LlmMessage> history, List<ToolSpec> tools) {
         seen.add(List.copyOf(history));
+        systemPrompts.add(systemPrompt);
         LlmResponse next = script.poll();
         if (next == null) {
             throw new LlmException("ScriptedLlm: nothing left in the script");

@@ -1056,3 +1056,36 @@ app.js  NEEDS_FIXES + major + this wasn't already a fix turn + composer empty �
 | storage | the verdict is kept, the screenshot isn't (the files are the record) |
 | docker sandbox | the bridge is injected by the in-process server only; with the docker sandbox there is no visual check yet |
 
+## 22. React projects in the browser (WebContainer + in-page compile)
+
+```
+New project: stack = STATIC | REACT  (V12, fixed for life)
+AgentService ── AgentPrompt.forStack(stack) ── same tools, loop, memory, RAG, checks
+build gate   ── package.json present? ModuleProjectCheck : static checks
+                 package.json valid, react + react-dom in dependencies
+                 index.html → <script type="module" src> exists
+                 relative imports resolve (.jsx .js .tsx .ts .mjs /index.*)
+                 bare imports declared in package.json
+                 StructuralJsCheck in JSX mode: {} balance, quote-after-letter = text
+preview      ── /p/{t}/index.html: module scripts → <script type="ff-module" data-src>, + /p/{t}/__runner.js
+                 runner: fetch __files.json + package.json → compile reachable files with Sucrase
+                         (jsx automatic, typescript, imports→CJS) → load React UMD from __vendor/
+                         → third-party: import map (react → shim of our React) + import(esm.sh/pkg?external=react,react-dom)
+                         → require(entry) via new Function(…, code + "//# sourceURL=" + path)
+                 errors: console.error → bridge → Logs Stream → runtime bar → agent; overlay in the page
+                 /p/** responses: Access-Control-Allow-Origin: * (the runner fetches from an opaque origin)
+Run with Node── /run.html#project=ID (COOP same-origin + COEP require-corp, CrossOriginIsolation filter)
+                 files via the API → WebContainer.boot() → mount → npm install → npm run dev → server-ready → iframe
+```
+
+| Concern | Decision |
+|---|---|
+| preview speed | compile in the page: no install, no server work; the WebContainer is opt-in |
+| module system | CommonJS + `new Function`: synchronous require, cycles like Node, file names in stack traces |
+| one React | React 18.3.1 UMD vendored (19 has no UMD); esm.sh packages built `?external=react,react-dom`, resolved through an import map to shims of the same React |
+| `import.meta.env` | rewritten to an object with Vite's DEV/PROD/MODE/BASE_URL |
+| what the server can't check | JSX syntax - no JS engine in the JVM; the browser compile is the parser, its errors take the runtime path |
+| isolation | only `/run.html`, `/run.js`, `/vendor/**` - `require-corp` everywhere would break the preview iframe |
+| docker sandbox | React projects get ModuleProjectCheck there too (the container's check can't read JSX, and has no network for npm) |
+| reproducibility | `preview-runner/` (runner source, package.json pinned, build.sh) regenerates every vendored file |
+

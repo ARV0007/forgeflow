@@ -1105,6 +1105,61 @@ review card, automatic fix turn, 9/10 re-check, exactly one round, verdicts
 still there after a reload, a viewer can read them but not act on them.
 186 tests.
 
+### React apps, running in the browser
+
+Stage 6, the diagram's "Code Execution Service: WebContainer" box. A project
+is now created as **HTML/CSS/JS** or **React + Vite** (V12, `projects.stack`).
+For React the agent gets a different target in its instructions - a real
+Vite layout: `package.json`, `vite.config.js`, `index.html`, `src/main.jsx`,
+`src/App.jsx`, components - and everything else (tools, loop, memory, RAG,
+version history, the visual check) is shared.
+
+Three places the same files run:
+
+| Where | How | Cost |
+|---|---|---|
+| **live preview** | the preview swaps `<script type="module">` for an inert tag and loads **ForgeFlow's runner**: Sucrase compiles each file (JSX, TS, ES imports → CommonJS), a 40-line loader runs them, React from a vendored 18.3.1 build, other packages from esm.sh against our React | instant, nothing on the server |
+| **Run with Node** | `/run.html` boots a **WebContainer** - Node.js in WebAssembly, in the tab - mounts the files, runs `npm install` and `npm run dev`, and shows Vite's server in a frame | real npm, real Vite; needs StackBlitz's runtime |
+| **your machine** | Download → `npm install && npm run dev` | it's a normal Vite project |
+
+The build gate learned React (`ModuleProjectCheck`): package.json valid and
+naming react/react-dom, index.html loads an entry that exists, every relative
+import lands on a file (trying Vite's extensions), every package import is
+declared, braces balance. The JSX itself is compiled in the browser - a
+compile error shows as an overlay in the preview, goes to the Logs Stream,
+and the "fix it" bar sends it back to the agent like any runtime error.
+
+Decisions:
+
+- **Why not WebContainers for the preview itself?** Booting downloads a
+  runtime and `npm install` takes 10-30 s every time; the preview should be
+  instant and work with no third party. So the preview compiles in the page,
+  and the WebContainer is one click away for "is it real?".
+- **Why CommonJS in the browser and not import maps + blob URLs?** `require()`
+  is synchronous and cycle-safe, `new Function` + `//# sourceURL` makes stack
+  traces name `src/App.jsx`, and there's no URL rewriting. Import maps are
+  used only for third-party packages from esm.sh, which must share our React.
+- **JSX vs the brace checker.** JSX text breaks a JavaScript tokenizer -
+  "Don't" opens no string, "https://" starts no comment, ":)" closes no paren.
+  JSX mode treats a quote after a letter and `//` after a colon as text and
+  balances only `{}` (a stray `{` in JSX text is illegal anyway).
+- **Cross-origin isolation only where it's needed.** A WebContainer needs
+  SharedArrayBuffer, so `/run.html` gets COOP/COEP; the workbench doesn't,
+  because `require-corp` would break its sandboxed preview iframe and Stripe's
+  redirect.
+- **Vendored, reproducible.** `preview-runner/` holds the runner source and a
+  build script (esbuild) that writes the runner, React and the WebContainer
+  client into resources.
+
+Verified in the browser walk: React project from the dialog, a real Vite
+layout written, the preview compiles it and `useState` counts clicks, the
+component's `console.log` reaches the Logs Stream, a broken component shows
+the error overlay and the runtime bar, and Run with Node opens isolated
+(`crossOriginIsolated === true`). The WebContainer's own boot needs
+stackblitz.com, which the build workspace can't reach - offline it fails
+with a reason after 45 s, as designed; the online check is on Render.
+195 tests.
+
 
 ---
 
@@ -1130,7 +1185,11 @@ still there after a reload, a viewer can read them but not act on them.
   the candidate list (pgvector 0.8's iterative scans fix this).
 - Embedding calls aren't counted against the token quota (rerank calls are).
 - Unreferenced blobs in object storage are never deleted (no sweep yet).
-- Kubernetes pods per preview (the spec's execution box) - not built; `SandboxProvider` is the seam.
+- Kubernetes pods per preview - not built; `SandboxProvider` is the seam. (The
+  diagram's other execution box, the WebContainer, is built: Run with Node.)
+- Run with Node hasn't been watched booting yet (needs stackblitz.com - check on Render).
+- React previews load non-React packages from esm.sh at view time; offline, only
+  react/react-dom work.
 - Real Stripe is built and tested against a local stub, but never run against
   Stripe itself — that needs Aman's test-mode keys (notes.md §14).
 - Two project creates racing can both pass the quota check and land one over.

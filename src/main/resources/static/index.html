@@ -42,6 +42,7 @@
     <span class="wordmark wordmark-sm">ForgeFlow</span>
     <select id="project-select" class="select" aria-label="Project"></select>
     <span id="role-badge" class="badge" title="Your role in this project"></span>
+    <span id="stack-badge" class="badge badge-stack" title="This project is a Vite + React app" hidden>React</span>
     <button id="btn-new-project" class="btn btn-quiet btn-sm">New project</button>
     <button id="btn-share" class="btn btn-quiet btn-sm">Share</button>
     <span class="spacer"></span>
@@ -117,6 +118,8 @@
         <div class="preview-bar">
           <span id="preview-status" class="preview-status">No preview running</span>
           <span class="spacer"></span>
+          <a id="btn-node" class="btn btn-quiet btn-xs" target="_blank" rel="noopener" hidden
+             title="Boot real Node.js in your browser (WebContainer): npm install, then the Vite dev server">Run with Node</a>
           <a id="preview-open" class="btn btn-quiet btn-xs" target="_blank" rel="noopener" hidden>Open in new tab</a>
           <button id="btn-preview-stop" class="btn btn-quiet btn-xs" hidden>Stop</button>
           <button id="btn-preview" class="btn btn-quiet btn-xs">Start preview</button>
@@ -206,6 +209,13 @@
 <dialog id="dlg-new" class="dlg">
   <h2>New project</h2>
   <label class="field"><span>Name</span><input id="new-name" type="text" maxlength="120"></label>
+  <label class="field"><span>Built with</span>
+    <select id="new-stack" class="select">
+      <option value="STATIC">HTML, CSS &amp; JavaScript</option>
+      <option value="REACT">React + Vite</option>
+    </select>
+  </label>
+  <p class="field-hint">React projects run in the browser: compiled on the fly for the preview, or under real Node with <b>Run with Node</b>.</p>
   <p id="new-msg" class="msg"></p>
   <div class="dlg-actions">
     <span class="spacer"></span>

@@ -1,6 +1,8 @@
 package com.forgeflow.workspace;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -45,6 +47,10 @@ public class Project {
     @Column(name = "thumbnail_url")
     private String thumbnailUrl;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private Stack stack = Stack.STATIC;
+
     @PrePersist
     void onCreate() {
         Instant now = Instant.now();
@@ -83,4 +89,7 @@ public class Project {
 
     public String getThumbnailUrl() { return thumbnailUrl; }
     public void setThumbnailUrl(String thumbnailUrl) { this.thumbnailUrl = thumbnailUrl; }
+
+    public Stack getStack() { return stack; }
+    public void setStack(Stack stack) { this.stack = stack; }
 }

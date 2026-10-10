@@ -8,6 +8,7 @@ import com.forgeflow.execution.BuildResult;
 import com.forgeflow.execution.ExecutionService;
 import com.forgeflow.intelligence.retrieval.CodeIndex;
 import com.forgeflow.workspace.CheckpointService;
+import com.forgeflow.workspace.ProjectService;
 import com.forgeflow.shared.events.CodeGenerated;
 import com.forgeflow.shared.events.EventBus;
 import com.forgeflow.shared.events.Topics;
@@ -61,6 +62,7 @@ public class AgentService {
     private final EventBus events;
     private final CheckpointService checkpoints;
     private final Tracer tracer;
+    private final ProjectService projects;
 
     private final int maxToolCalls;
     private final long timeoutSeconds;
@@ -77,6 +79,7 @@ public class AgentService {
                         EventBus events,
                         CheckpointService checkpoints,
                         Tracer tracer,
+                        ProjectService projects,
                         @Value("${forgeflow.agent.max-tool-calls}") int maxToolCalls,
                         @Value("${forgeflow.agent.timeout-seconds}") long timeoutSeconds,
                         @Value("${forgeflow.agent.max-input-tokens}") int maxInputTokens,
@@ -91,6 +94,7 @@ public class AgentService {
         this.events = events;
         this.checkpoints = checkpoints;
         this.tracer = tracer;
+        this.projects = projects;
         this.maxToolCalls = maxToolCalls;
         this.timeoutSeconds = timeoutSeconds;
         this.maxInputTokens = maxInputTokens;
@@ -174,6 +178,8 @@ public class AgentService {
         run.setTraceId(Tracer.currentTraceId());
         run = runs.save(run);
 
+        // The project's stack picks the instructions: same loop, different target.
+        String systemPrompt = AgentPrompt.forStack(projects.stackOf(projectId));
         List<LlmMessage> history = new ArrayList<>(priorTurns == null ? List.of() : priorTurns);
         // RAG: on a project too big to send whole, the request travels with
         // the excerpts most relevant to it. Retrieval failing is never fatal -
@@ -241,7 +247,7 @@ public class AgentService {
                 try (Tracer.Span call = tracer.start("llm.chat")) {
                     call.tag("llm.model", llm.modelName()).tag("agent.round", round);
                     try {
-                        response = llm.chat(AgentPrompt.SYSTEM, history, tools.specs());
+                        response = llm.chat(systemPrompt, history, tools.specs());
                     } catch (RuntimeException e) {
                         call.error(e);
                         throw e;

@@ -6,3 +6,6 @@ target/
 docs/
 *.md
 .DS_Store
+preview-runner/
+evals/
+scripts/

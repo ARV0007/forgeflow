@@ -952,3 +952,44 @@ Untick the box to turn it off (remembered in this browser).
   (or restart) after editing `app.js`.
 - **Docker sandbox:** the bridge is only injected by the in-process preview
   server, so there's no visual check with `FORGEFLOW_SANDBOX_PROVIDER=docker`.
+
+## 22. React projects (10 Oct)
+
+### Try it
+
+1. **New project** → *Built with* → **React + Vite** → Create. The header
+   shows a **REACT** badge.
+2. Ask for an app. The agent writes a Vite project (`package.json`,
+   `index.html`, `src/main.jsx`, `src/App.jsx`, components).
+3. **Start preview**: it compiles in the page - no waiting for npm.
+4. **Run with Node** (preview bar) opens a new tab that boots Node.js in your
+   browser, runs `npm install` and `npm run dev`, and shows Vite's server.
+   First boot takes ~20-40 s.
+5. **Download** gives a normal Vite project: `npm install && npm run dev`.
+
+### Rebuilding the vendored files
+
+```bash
+cd preview-runner
+npm ci
+npm run build      # writes src/main/resources/preview/* and static/vendor/webcontainer-api.js
+```
+
+Change `runner.js` here, never the minified output.
+
+### Gotchas
+
+- **Run with Node stuck on "Boot"** → the network blocks stackblitz.com (the
+  WebContainer runtime comes from there). It gives up after 45 s with that
+  reason. Corporate networks and some ad blockers do this.
+- **Safari**: cross-origin isolation works on recent versions; if it doesn't,
+  the page says so on step one.
+- **A package works with Run with Node but not in the preview** → the preview
+  gets non-React packages from esm.sh; offline or for odd packages that
+  fails, and the overlay names the package.
+- **"Invalid hook call"** in the preview means a package brought its own
+  React; it must be loaded with `?external=react,react-dom` (the runner does
+  this for top-level imports, not for deep subpath imports).
+- **Editing `app.js`, `run.js` or `run.html` locally** → `./mvnw process-resources`
+  or restart; the server serves `target/classes/static`.
+

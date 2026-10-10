@@ -31,6 +31,18 @@ final class StructuralJsCheck {
 
     /** @return one problem per line, empty when the file looks structurally sound. */
     static List<String> scan(String path, String src) {
+        return scan(path, src, false);
+    }
+
+    /**
+     * JSX mode, for .jsx/.tsx. JSX text is not JavaScript: "Don't" has an
+     * apostrophe that opens no string, "https://x" has a // that starts no
+     * comment, and "Smile :)" has a paren that closes nothing. So in JSX mode
+     * a quote straight after a letter or digit is text, a // straight after a
+     * colon is text, and only {} must balance - a stray { in JSX text is a
+     * syntax error anyway, so braces are the one delimiter both sides agree on.
+     */
+    static List<String> scan(String path, String src, boolean jsx) {
         List<String> problems = new ArrayList<>();
         Deque<int[]> open = new ArrayDeque<>();   // { character, line }
         int i = 0;
@@ -47,7 +59,7 @@ final class StructuralJsCheck {
             }
 
             // ---- comments ----
-            if (c == '/' && i + 1 < n) {
+            if (c == '/' && i + 1 < n && !(jsx && i > 0 && src.charAt(i - 1) == ':')) {
                 char next = src.charAt(i + 1);
                 if (next == '/') {
                     while (i < n && src.charAt(i) != '\n') {
@@ -68,7 +80,7 @@ final class StructuralJsCheck {
             }
 
             // ---- strings and template literals ----
-            if (c == '"' || c == '\'' || c == '`') {
+            if ((c == '"' || c == '\'' || c == '`') && !(jsx && i > 0 && Character.isLetterOrDigit(src.charAt(i - 1)))) {
                 int j = i + 1;
                 boolean closed = false;
                 while (j < n) {
@@ -99,6 +111,10 @@ final class StructuralJsCheck {
             }
 
             // ---- delimiters ----
+            if (jsx && c != '{' && c != '}') {
+                i++;
+                continue;
+            }
             if (c == '(' || c == '[' || c == '{') {
                 open.push(new int[]{c, line});
             } else if (CLOSES.containsKey(c)) {

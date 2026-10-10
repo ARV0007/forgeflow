@@ -13,7 +13,8 @@ account is needed and every step is deterministic:
 Signs up, chats, opens the code, starts a preview, clicks inside the generated
 app and checks its console line arrives in Logs, searches, opens the version
 history and restores a version, lets the AI check how its app looks (and fix
-it once), sends a screenshot, downloads the zip,
+it once), sends a screenshot, builds a React project that compiles and runs in
+the browser (and opens it under Node in a WebContainer), downloads the zip,
 upgrades through the test checkout, shares with a viewer and checks the
 viewer is read-only, hits the project quota, and checks a phone-sized screen.
 """
@@ -36,8 +37,10 @@ with sync_playwright() as p:
     # which the browser logs as a failed resource. Anything else is a real error.
     expected_404 = []
     page.on("response", lambda r: expected_404.append(r.url) if r.status == 404 and r.url.endswith("/preview") else None)
+    # Step 10c breaks a React component on purpose; its compile error is expected.
     page.on("console", lambda m: errors.append(f"console.{m.type}: {m.text}")
-            if m.type == "error" and "status of 404" not in m.text else None)
+            if m.type == "error" and "status of 404" not in m.text
+            and not m.text.startswith("Build error: src/components/Counter.jsx") else None)
     # Step 5b throws inside the generated app on purpose; anything else is real.
     page.on("pageerror", lambda e: errors.append(f"pageerror: {e}") if "total is undefined" not in str(e) else None)
 
@@ -246,6 +249,52 @@ with sync_playwright() as p:
     page.wait_for_function("() => { const i = document.querySelector('.msg-images img'); return i && i.naturalWidth === 40; }",
                            timeout=10000)                       # the real bytes, fetched with the token
     shot(page, "10b-screenshot")
+
+    # 10c. React: a Vite + React project, compiled and run in the browser by the preview's runner
+    page.click("#btn-new-project")
+    page.fill("#new-name", "react app")
+    page.select_option("#new-stack", "REACT")
+    page.click("#btn-create")
+    expect(page.locator("#stack-badge")).to_be_visible(timeout=10000)
+    expect(page.locator("#project-select option:checked")).to_have_text("react app")
+    page.fill("#prompt", "A habit tracker")
+    page.click("#btn-send")
+    expect(page.locator(".file-chip", has_text="src/components/Counter.jsx")).to_be_visible(timeout=20000)
+    page.click(".tab[data-tab=preview]")
+    page.click("#btn-preview")
+    rframe = page.frame_locator("#preview-frame")
+    expect(rframe.locator("h1")).to_have_text("A habit tracker", timeout=15000)
+    rframe.locator("#count").click()
+    rframe.locator("#count").click()
+    expect(rframe.locator("#count")).to_have_text("Clicked 2 times")          # useState: React is really running
+    page.click(".tab[data-tab=logs]")
+    expect(page.locator(".log", has_text="react button clicked 2").first).to_be_visible(timeout=10000)
+    page.click(".tab[data-tab=preview]")
+    shot(page, "10c-react")
+
+    #     a compile error in a component lands in the runtime bar (and so in the agent's next turn)
+    page.evaluate("""async () => { await fetch('/api/v1/projects/' + document.getElementById('project-select').value + '/files/content', {
+        method: 'PUT', headers: {'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('ff_token')},
+        body: JSON.stringify({path: 'src/components/Counter.jsx', content: 'export default function Counter() { return <button>oops</button>;'}) }); }""")
+    page.evaluate("() => { const f = document.getElementById('preview-frame'); f.src = f.src; }")
+    expect(rframe.locator("[data-forgeflow-error]")).to_contain_text("src/components/Counter.jsx", timeout=15000)
+    expect(page.locator("#runtime-bar")).to_be_visible(timeout=10000)
+    expect(page.locator("#runtime-text")).to_contain_text("Build error")
+    shot(page, "10d-react-compile-error")
+
+    #     "Run with Node" opens its own cross-origin-isolated tab for the WebContainer
+    with page.context.expect_page() as opened:
+        page.click("#btn-node")
+    node = opened.value
+    node.wait_for_load_state()
+    assert node.evaluate("crossOriginIsolated") is True, "run.html is not cross-origin isolated"
+    expect(node.locator('[data-step="isolate"]')).to_have_class("is-done", timeout=10000)
+    # Booting needs StackBlitz's servers. Offline (CI, this walk) it must end in a
+    # readable reason, not a spinner; online it gets to npm install.
+    expect(node.locator('.run-error, [data-step="install"].is-active, [data-step="install"].is-done').first
+           ).to_be_visible(timeout=60000)
+    shot(node, "10e-run-with-node")
+    node.close()
 
     # 11. narrow screen still usable
     page.set_viewport_size({"width": 390, "height": 844})

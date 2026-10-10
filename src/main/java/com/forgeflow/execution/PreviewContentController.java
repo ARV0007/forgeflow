@@ -1,6 +1,7 @@
 package com.forgeflow.execution;
 
 import com.forgeflow.workspace.ProjectFileService;
+import com.forgeflow.workspace.dto.FileEntry;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -16,6 +17,8 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -43,6 +46,18 @@ public class PreviewContentController {
 
     private static final String SANDBOX_CSP = "sandbox allow-scripts allow-forms allow-popups";
     private static final Pattern HEAD_OPEN = Pattern.compile("<head(\\s[^>]*)?>", Pattern.CASE_INSENSITIVE);
+    /** A whole <script ...>...</script> element, for swapping module entries out of a React page. */
+    private static final Pattern SCRIPT_ELEMENT =
+            Pattern.compile("<script\\b([^>]*)>\\s*</script>", Pattern.CASE_INSENSITIVE);
+    private static final Pattern TYPE_MODULE = Pattern.compile("\\btype\\s*=\\s*['\"]module['\"]", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SRC_ATTR = Pattern.compile("\\bsrc\\s*=\\s*['\"]([^'\"]+)['\"]", Pattern.CASE_INSENSITIVE);
+
+    /** Files the preview serves from the classpath, by the name the runner asks for. */
+    private static final Map<String, Resource> VENDOR = Map.of(
+            "__snapshot.js", new Resource("/preview/html-to-image.min.js"),
+            "__runner.js", new Resource("/preview/module-runner.js"),
+            "__vendor/react.js", new Resource("/preview/react.production.min.js"),
+            "__vendor/react-dom.js", new Resource("/preview/react-dom.production.min.js"));
 
     /**
      * Injected at the top of every HTML page the preview serves. It does two
@@ -121,12 +136,20 @@ public class PreviewContentController {
         logs.info(projectId, "http", "GET /" + path + " 200");
 
         MediaType type = contentTypeOf(path);
-        String content = MediaType.TEXT_HTML.equals(type)
-                ? withConsoleBridge(body.get(), "/p/" + token + "/__log")
-                : body.get();
+        String content = body.get();
+        if (MediaType.TEXT_HTML.equals(type)) {
+            if (files.read(projectId, "package.json").isPresent()) {
+                content = withModuleRunner(content, "/p/" + token + "/__runner.js");
+            }
+            content = withConsoleBridge(content, "/p/" + token + "/__log");
+        }
 
         return ResponseEntity.ok()
                 .header("Content-Security-Policy", SANDBOX_CSP)
+                // The React runner fetch()es the sources from the sandbox's opaque
+                // origin, which is cross-origin to us. Nothing here is secret
+                // from someone holding the token: they can already load it all.
+                .header("Access-Control-Allow-Origin", "*")
                 .header(HttpHeaders.CACHE_CONTROL, "no-store")
                 .header("X-Content-Type-Options", "nosniff")
                 .contentType(type)
@@ -163,35 +186,69 @@ public class PreviewContentController {
     }
 
     /**
-     * html-to-image 1.11.13 (MIT), vendored rather than loaded from a CDN: the
-     * preview must work offline and in locked-down networks, and a page we
-     * serve should not pull code from a third party to photograph itself.
-     * Read once, cached by the browser for a day.
+     * The preview's own scripts, from the classpath - vendored rather than
+     * loaded from a CDN, so a preview works offline and in locked-down
+     * networks, and a page we serve pulls no code from a third party:
+     *
+     *   __snapshot.js        html-to-image 1.11.13 (MIT) - the visual check's camera
+     *   __runner.js          the in-browser React runner (preview-runner/, Sucrase inside)
+     *   __vendor/react.js    React 18.3.1 UMD
+     *   __vendor/react-dom.js
+     *
+     * Rebuilt by preview-runner/build.sh. Cached by the browser for a day.
      */
-    @GetMapping("/p/{token}/__snapshot.js")
-    public ResponseEntity<byte[]> snapshotLibrary(@PathVariable String token) {
+    @GetMapping({"/p/{token}/__snapshot.js", "/p/{token}/__runner.js", "/p/{token}/__vendor/{name}"})
+    public ResponseEntity<byte[]> vendored(@PathVariable String token, HttpServletRequest request) {
         if (live(token).isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        String full = (String) request.getAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE);
+        Resource r = full == null ? null : VENDOR.get(full.substring(("/p/" + token + "/").length()));
+        if (r == null) {
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok()
                 .header(HttpHeaders.CACHE_CONTROL, "public, max-age=86400")
                 .header("X-Content-Type-Options", "nosniff")
+                .header("Access-Control-Allow-Origin", "*")
                 .contentType(MediaType.valueOf("text/javascript"))
-                .body(SnapshotLibrary.BYTES);
+                .body(r.bytes());
     }
 
-    /** Loaded on first use; a missing resource is a packaging bug, so it fails loudly. */
-    private static final class SnapshotLibrary {
-        static final byte[] BYTES;
-        static {
-            try (var in = PreviewContentController.class.getResourceAsStream("/preview/html-to-image.min.js")) {
-                if (in == null) {
-                    throw new IllegalStateException("preview/html-to-image.min.js missing from the classpath");
+    /** The project's file list, for the React runner to resolve './Card' to src/Card.jsx without guessing. */
+    @GetMapping("/p/{token}/__files.json")
+    public ResponseEntity<List<String>> fileList(@PathVariable String token) {
+        Preview preview = live(token).orElse(null);
+        if (preview == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .header("Access-Control-Allow-Origin", "*")
+                .body(files.list(preview.getProjectId()).stream().map(FileEntry::path).toList());
+    }
+
+    /** A classpath file, read on first use; a missing one is a packaging bug, so it fails loudly. */
+    private static final class Resource {
+        private final String name;
+        private volatile byte[] bytes;
+
+        Resource(String name) {
+            this.name = name;
+        }
+
+        byte[] bytes() {
+            if (bytes == null) {
+                try (var in = PreviewContentController.class.getResourceAsStream(name)) {
+                    if (in == null) {
+                        throw new IllegalStateException(name + " missing from the classpath - run preview-runner/build.sh");
+                    }
+                    bytes = in.readAllBytes();
+                } catch (java.io.IOException e) {
+                    throw new java.io.UncheckedIOException(e);
                 }
-                BYTES = in.readAllBytes();
-            } catch (java.io.IOException e) {
-                throw new java.io.UncheckedIOException(e);
             }
+            return bytes;
         }
     }
 
@@ -213,6 +270,34 @@ public class PreviewContentController {
             return html.substring(0, head.end()) + script + html.substring(head.end());
         }
         return script + html;
+    }
+
+    /**
+     * A React page: each <script type="module" src="..."> becomes an inert
+     * <script type="ff-module" data-src="...">, and the runner - which compiles
+     * and starts them - goes in at the top of the head. Left as type="module",
+     * the browser would fetch /src/main.jsx itself and choke on the JSX.
+     */
+    static String withModuleRunner(String html, String runnerUrl) {
+        Matcher m = SCRIPT_ELEMENT.matcher(html);
+        StringBuilder out = new StringBuilder();
+        while (m.find()) {
+            String attrs = m.group(1);
+            Matcher src = SRC_ATTR.matcher(attrs);
+            if (TYPE_MODULE.matcher(attrs).find() && src.find() && !src.group(1).matches("(?i)^([a-z]+:)?//.*")) {
+                m.appendReplacement(out, Matcher.quoteReplacement(
+                        "<script type=\"ff-module\" data-src=\"" + src.group(1).replace("\"", "&quot;") + "\"></script>"));
+            } else {
+                m.appendReplacement(out, Matcher.quoteReplacement(m.group()));
+            }
+        }
+        m.appendTail(out);
+        String page = out.toString();
+        String script = "<script src=\"" + runnerUrl + "\"></script>";
+        Matcher head = HEAD_OPEN.matcher(page);
+        return head.find()
+                ? page.substring(0, head.end()) + script + page.substring(head.end())
+                : script + page;
     }
 
     private MediaType contentTypeOf(String path) {

@@ -51,6 +51,7 @@ public class ProjectService {
         p.setOwnerId(ownerId);          // server-side, from the JWT
         p.setName(req.name());
         p.setDescription(req.description());
+        p.setStack(req.stack() == null ? Stack.STATIC : req.stack());
         Project saved = projects.save(p);
         usage.record(ownerId, saved.getId(), UsageKind.PROJECT_CREATED, 1, null);
         return ProjectResponse.from(saved, ProjectRole.OWNER);
@@ -79,6 +80,12 @@ public class ProjectService {
     public ProjectResponse requireWrite(Long id, Long userId) {
         ProjectAccess.Grant g = access.require(id, userId, Permission.WRITE);
         return ProjectResponse.from(g.project(), g.role());
+    }
+
+    /** For modules that already checked access: how this project is built. STATIC if it is gone. */
+    @Transactional(readOnly = true)
+    public Stack stackOf(Long id) {
+        return projects.findById(id).map(Project::getStack).orElse(Stack.STATIC);
     }
 
     public ProjectRole roleOf(Long id, Long userId) {

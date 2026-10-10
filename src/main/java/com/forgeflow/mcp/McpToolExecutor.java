@@ -5,6 +5,7 @@ import com.forgeflow.account.ServiceAccounts;
 import com.forgeflow.intelligence.AgentService;
 import com.forgeflow.workspace.ProjectFileService;
 import com.forgeflow.workspace.ProjectService;
+import com.forgeflow.workspace.Stack;
 import com.forgeflow.workspace.dto.CreateProjectRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -98,8 +99,9 @@ public class McpToolExecutor {
     private Map<String, Object> createProject(JsonNode args) {
         String name = args.path("name").asText();
         String desc = args.path("description").asText();
-        var p = projects.create(ownerId(), new CreateProjectRequest(name, desc));
-        return content("Created project " + p.id() + " (\"" + p.name() + "\"). "
+        Stack stack = "react".equalsIgnoreCase(args.path("stack").asText()) ? Stack.REACT : Stack.STATIC;
+        var p = projects.create(ownerId(), new CreateProjectRequest(name, desc, stack));
+        return content("Created " + (stack == Stack.REACT ? "React " : "") + "project " + p.id() + " (\"" + p.name() + "\"). "
                 + "Use this project_id with generate_app.", false);
     }
 

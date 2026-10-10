@@ -2055,7 +2055,73 @@ and there's a toggle.
 
 ---
 
-## Chapter 27 — What's next
+## Chapter 27 — React apps that run in your browser
+
+**Plain English.** Until now the contractor only built with bricks anyone
+can stack - HTML, CSS and plain JavaScript, which a browser opens as is.
+Most real front-ends are React apps built with a tool called Vite, and those
+normally need Node.js on a computer: `npm install` to fetch the parts,
+`npm run dev` to put them together. ForgeFlow now builds those too - and
+runs them without any computer of ours doing the work.
+
+### Two ways to run the same files
+
+**The preview: compile in the page.** When the preview serves a React
+project, it hides the page's `<script type="module">` (the browser can't
+read JSX) and adds ForgeFlow's runner. The runner fetches each file, turns
+JSX into plain JavaScript with a compiler called Sucrase, and runs the files
+with a tiny module system - the same idea as Node's `require()`. React itself
+comes from a copy ForgeFlow ships. Instant, and nothing runs on the server.
+
+**Run with Node: a whole computer in a tab.** A WebContainer (from
+StackBlitz) is Node.js compiled to WebAssembly. The "Run with Node" page
+starts one inside the browser tab, copies the project in, runs the real
+`npm install` and `npm run dev`, and shows the real Vite server. This is
+the diagram's "Code Execution Service: WebContainer" box.
+
+A third way is free: download the zip, and it's a normal Vite project.
+
+### Checking work it can't run
+
+The server has no JavaScript engine, so it can't compile JSX. Its build
+check proves what it can: `package.json` is valid and names React; the page
+loads an entry file that exists; every `import './Card'` lands on a real
+file; every package used is listed; braces balance. The real compile
+happens in the browser - and its errors take the same road as runtime
+errors: overlay in the preview, a line in Logs, the "fix it" bar, the agent.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why not use the WebContainer for the normal preview?**
+It downloads a runtime and runs `npm install` - 10 to 30 seconds every time,
+and it depends on StackBlitz being reachable. A preview should be instant.
+So the everyday preview compiles in the page, and real Node is one click
+away when you want proof.
+
+**Q: Why does the Run with Node page open in a new tab?**
+A WebContainer needs SharedArrayBuffer, and browsers only allow that on a
+"cross-origin isolated" page - one that promises not to embed anything
+from elsewhere without permission. The workbench embeds a sandboxed preview
+and redirects to Stripe; isolating it would break both. So isolation goes
+on one page only.
+
+**Q: How do you stop two copies of React ending up in one page?**
+Packages other than React come from esm.sh, built with React marked as
+"external". An import map points their `import 'react'` at a small shim of
+the same React the app uses. Two Reacts is the classic "invalid hook call".
+
+**Q: The server's check can't see a JSX syntax error. Isn't that a hole?**
+It's a split, not a hole: the server checks the project's shape, the browser
+compiles. A syntax error is caught the moment the preview loads, shown on
+screen, and fed back to the agent - the same loop that already fixes runtime
+errors.
+
+</details>
+
+---
+
+## Chapter 28 — What's next
 
 Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
 the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
@@ -2064,7 +2130,7 @@ roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
 (Chapter 18), **RAG** (Chapter 19), **tracing** (Chapter 20), the
 **workbench** (Chapter 21), `edit_file`, the runtime loop and prompt
 caching (Chapter 22), and the full topology - Kafka, MinIO, Qdrant, the
-gateway, Kubernetes (Chapter 23), version history (Chapter 24), screenshot to app (Chapter 25), and the AI checking its own app (Chapter 26). What's left:
+gateway, Kubernetes (Chapter 23), version history (Chapter 24), screenshot to app (Chapter 25), the AI checking its own app (Chapter 26), and React apps running in the browser (Chapter 27). What's left:
 
 - **Measure it** — re-run the evals against real Gemini and count how often
   edit requests now use `edit_file`.
@@ -2073,8 +2139,8 @@ gateway, Kubernetes (Chapter 23), version history (Chapter 24), screenshot to ap
 - **"Forgot password?"** — needs an email sender to mail a reset link.
 - **Measure the visual check** — how often it flags something real, and how
   often the fix round raises the score.
-- **React apps running in the browser** (WebContainers) — the diagram's
-  "Code Execution Service: WebContainer" box.
+- **Watch Run with Node boot on Render** — the WebContainer needs
+  stackblitz.com, which the build workspace can't reach.
 - **Preview state in Redis**, so the API can run more than one replica.
 
 <details>

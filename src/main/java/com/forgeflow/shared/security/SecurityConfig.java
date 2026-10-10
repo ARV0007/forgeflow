@@ -61,6 +61,8 @@ public class SecurityConfig {
                         // The workbench UI. Static files carry no data of their own; every
                         // call they make still needs a token.
                         .requestMatchers("/", "/index.html", "/styles.css", "/app.js", "/favicon.ico").permitAll()
+                        // "Run with Node": the WebContainer page and its client library.
+                        .requestMatchers("/run.html", "/run.js", "/vendor/**").permitAll()
                         // The API reference: the spec and the page that renders it.
                         .requestMatchers("/openapi.yaml", "/docs.html", "/docs").permitAll()
                         // Preview links are meant to be shareable. The token in the URL is the

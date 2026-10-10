@@ -37,7 +37,8 @@ public final class McpTools {
                                 + "other tool. Call this first unless you already have a project_id.",
                         schema(Map.of(
                                 "name", str("Short name for the project, e.g. 'landing page'"),
-                                "description", str("Optional one-line description of what it is for")
+                                "description", str("Optional one-line description of what it is for"),
+                                "stack", str("Optional: 'static' (HTML/CSS/JS, the default) or 'react' (a Vite + React project)")
                         ), List.of("name"))),
 
                 tool("generate_app",

@@ -132,6 +132,7 @@ paths:
               properties:
                 name: { type: string, maxLength: 120 }
                 description: { type: string }
+                stack: { type: string, enum: [STATIC, REACT], default: STATIC, description: fixed for the project's life }
       responses:
         "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
         "402": { $ref: "#/components/responses/QuotaExceeded" }
@@ -734,6 +735,7 @@ components:
         role: { $ref: "#/components/schemas/Role" }
         isPublic: { type: boolean }
         thumbnailUrl: { type: string }
+        stack: { type: string, enum: [STATIC, REACT], description: "STATIC = HTML/CSS/JS; REACT = a Vite + React project, compiled in the browser for the preview" }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     Member:

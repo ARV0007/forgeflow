@@ -34,6 +34,7 @@ live preview · file tree · every step streamed to the browser
 | **Files** | file tree, file content, save by hand, **download as zip**, who created / last changed each file |
 | **History** | a **version per AI run**, coloured diffs between versions, **one-click restore** (itself undoable) |
 | **Preview** | live preview link, start / stop, **logs stream** — builds, requests, 404s and the generated app's own `console` output |
+| **React apps** | create a project as **React + Vite**: the agent writes a real Vite project; the preview **compiles it in the browser** (Sucrase + a tiny module loader); **Run with Node** boots it under real Node.js in a **WebContainer** (`npm install`, `npm run dev`) |
 | **AI checks its own app** | after each change the preview photographs itself in the browser, a **vision model** scores it against the request, and major issues go back to the agent for **one automatic fix round** |
 | **Search (RAG)** | hybrid code search (pgvector or Qdrant + full-text, weighted rank fusion, optional LLM rerank); the agent has a `search_code` tool; big projects get relevant code attached to each request; **measured** by a 70-question retrieval benchmark |
 | **Plans** | FREE / PRO — projects, live previews, AI tokens per day; **Stripe** Checkout and a signed webhook |
@@ -167,12 +168,16 @@ python3 scripts/ui-walk.py
 | [`docs/WORKLOG.md`](docs/WORKLOG.md) | what was built when, including the mistakes |
 | [`docs/notes.md`](docs/notes.md) | practical notes and gotchas — setup, Stripe, Redis, tracing |
 
-## Not built (on purpose)
+## Not built yet
 
-The spec this follows draws a gateway, Kafka, Qdrant, MinIO and Kubernetes.
-At this scale each would add a system to keep consistent without adding a
-feature, so each has a **seam** instead — an interface or an event where it
-would plug in. The reasoning is in `docs/architecture.md` §17.6.
+- **A Kubernetes pod per preview** (the spec's execution box). Previews run
+  in-process, or in Docker locally; `SandboxProvider` is the seam.
+- **Preview state in Redis**, so the API can run more than one replica.
+- **A server-side browser** for the visual check and runtime errors, so they
+  happen without anyone opening the preview.
+
+Everything else in the spec's diagram - gateway, Kafka, MinIO, Qdrant,
+WebContainer - is built; see `docs/architecture.md` §17.6 and §18-22.
 
 ---
 

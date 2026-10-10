@@ -48,6 +48,17 @@ public class InProcessSandboxProvider implements SandboxProvider {
             return new BuildResult(false, -1, "The project has no files yet.", 0, false);
         }
 
+        if (ModuleProjectCheck.applies(files)) {
+            List<String> problems = ModuleProjectCheck.problems(files);
+            long took = System.currentTimeMillis() - started;
+            boolean passed = problems.isEmpty();
+            log.info("in-process module build project {} {} in {} ms", projectId, passed ? "PASSED" : "FAILED", took);
+            return new BuildResult(passed, passed ? 0 : 1, passed
+                    ? "OK - " + files.size() + " file(s) checked (React: imports resolve, packages declared, "
+                      + "braces balance; the JSX itself is compiled in the browser)"
+                    : String.join("\n", problems), took, false);
+        }
+
         List<String> problems = new ArrayList<>();
 
         if (!files.containsKey("index.html")) {

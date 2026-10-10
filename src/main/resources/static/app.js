@@ -194,21 +194,26 @@ async function loadProjects(selectId) {
     opt.value = p.id;
     opt.textContent = p.name + (p.role !== 'OWNER' ? `  (${p.role.toLowerCase()})` : '');
     opt.dataset.role = p.role;
+    opt.dataset.stack = p.stack || 'STATIC';
     select.appendChild(opt);
   }
   const pick = projects.find((p) => p.id === selectId) || projects.find((p) => p.id === state.projectId) || projects[0];
   select.value = pick.id;
-  await openProject(pick.id, pick.role);
+  await openProject(pick.id, pick.role, pick.stack);
 }
 
 $('project-select').addEventListener('change', (e) => {
   const opt = e.target.selectedOptions[0];
-  openProject(Number(opt.value), opt.dataset.role);
+  openProject(Number(opt.value), opt.dataset.role, opt.dataset.stack);
 });
 
-async function openProject(id, role) {
+async function openProject(id, role, stack = 'STATIC') {
   state.projectId = id;
   state.role = role;
+  state.stack = stack;
+  $('stack-badge').hidden = stack !== 'REACT';
+  $('btn-node').hidden = stack !== 'REACT';
+  $('btn-node').href = `/run.html#project=${id}`;
   state.sessionId = null;
   $('role-badge').textContent = role ? role.toLowerCase() : '';
   $('role-badge').hidden = role === 'OWNER';
@@ -237,6 +242,7 @@ function applyRole() {
 
 $('btn-new-project').addEventListener('click', () => {
   $('new-name').value = '';
+  $('new-stack').value = 'STATIC';
   $('new-msg').textContent = '';
   $('dlg-new').showModal();
   $('new-name').focus();
@@ -245,7 +251,7 @@ $('btn-create').addEventListener('click', async () => {
   const name = $('new-name').value.trim();
   if (!name) { $('new-msg').textContent = 'Give it a name.'; return; }
   try {
-    await createProject(name);
+    await createProject(name, $('new-stack').value);
     $('dlg-new').close();
   } catch (err) {
     $('new-msg').innerHTML = esc(err.message) +
@@ -254,8 +260,8 @@ $('btn-create').addEventListener('click', async () => {
 });
 $('new-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btn-create').click(); });
 
-async function createProject(name) {
-  const p = await api('/api/v1/projects', { method: 'POST', body: { name } });
+async function createProject(name, stack = 'STATIC') {
+  const p = await api('/api/v1/projects', { method: 'POST', body: { name, stack } });
   refreshPlanPill();
   await loadProjects(p.id);
 }

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run with Node · ForgeFlow</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body class="run-page">
+<header class="topbar">
+  <a class="wordmark wordmark-sm" href="/">ForgeFlow</a>
+  <span class="badge badge-stack">Node in your browser</span>
+  <span id="run-title" class="run-title"></span>
+  <span class="spacer"></span>
+  <a id="run-open" class="btn btn-quiet btn-sm" target="_blank" rel="noopener" hidden>Open app in new tab</a>
+  <a class="btn btn-quiet btn-sm" href="/">Back to the workbench</a>
+</header>
+<main class="run-main">
+  <section class="run-side">
+    <ol id="run-steps" class="run-steps">
+      <li data-step="isolate">Cross-origin isolation</li>
+      <li data-step="files">Load the project's files</li>
+      <li data-step="boot">Boot the WebContainer</li>
+      <li data-step="install">npm install</li>
+      <li data-step="dev">npm run dev</li>
+    </ol>
+    <pre id="run-term" class="run-term" aria-label="Terminal output"></pre>
+  </section>
+  <section class="run-view">
+    <div id="run-wait" class="empty"><p>Starting Node&hellip;</p>
+      <p class="empty-sub">A WebContainer is Node.js compiled to WebAssembly, running in this tab.
+        The project installs its real packages from npm and starts the Vite dev server -
+        nothing runs on ForgeFlow's server.</p></div>
+    <iframe id="run-frame" class="preview" title="The app, served by Vite inside the WebContainer" hidden></iframe>
+  </section>
+</main>
+<script type="module" src="/run.js"></script>
+</body>
+</html>

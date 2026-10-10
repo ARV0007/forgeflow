@@ -95,6 +95,16 @@ public class DockerSandboxProvider implements SandboxProvider {
             return new BuildResult(false, -1, "The project has no files yet.", 0, false);
         }
 
+        // The container's check runs vm.Script, which can't read JSX - and an
+        // npm install has no network in there. React projects get the same
+        // structural check as the in-process provider.
+        if (ModuleProjectCheck.applies(files)) {
+            List<String> problems = ModuleProjectCheck.problems(files);
+            return new BuildResult(problems.isEmpty(), problems.isEmpty() ? 0 : 1,
+                    problems.isEmpty() ? "OK - module project checked (structure)" : String.join("\n", problems),
+                    System.currentTimeMillis() - started, false);
+        }
+
         String name = "ff-build-" + projectId + "-" + UUID.randomUUID().toString().substring(0, 8);
         Path work = workRoot.resolve("builds").resolve(name);
 
