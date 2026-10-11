@@ -1444,6 +1444,34 @@ and judges which actually answers it - slower and more accurate. So you use
 both: cheap search narrows thousands of chunks to 15, the expensive judge
 orders those 15. It's a model call per search, so it's opt-in and metered.
 
+**Q: So what did weighting the keywords actually do?**
+Measured on 11 Oct, on the 70-question v2 set with real Gemini embeddings:
+
+| keyword weight | first place | top 3 | paraphrases, first place |
+|---|---|---|---|
+| 1.0 (equal, shipped until then) | 81% | 96% | 62% |
+| 0.5 | 87% | 96% | 77% |
+| 0.25 | 87% | 99% | 77% |
+| vector only | 87% | 100% | 88% |
+| keyword only | 63% | 79% | 31% |
+
+0.25 won, and it won on both halves of the set: the original 42 questions
+and the 28 decoy ones. So it's now the default (`keyword-weight: 0.25`),
+and a test pins it.
+
+**Q: But vector-only ties it. Why keep keywords at all?**
+Exact names. When the agent asks for `redeemGiftCard`, keyword search
+nails it every time: hybrid got 100% of the identifier questions first,
+vector-only 90%. Embeddings sometimes rank a "similar-sounding" file above the
+one with that exact name. Keeping a quarter-weight keyword vote costs almost
+nothing on paraphrases and fixes that.
+
+**Q: You tuned on the same questions you scored on. Isn't that cheating?**
+It's a real risk, and it's why I checked the two halves separately: 0.25 beat
+equal weights on both. The honest next step is a fresh set of questions the
+weights have never seen. Until then, "87% top-1" is a tuned number, and I say
+so.
+
 **Q: Why did you make the questions harder instead of celebrating 100%?**
 Because a test everyone passes can't tell two methods apart. The v2 decoy
 files share vocabulary with the right answers (gift cards next to promo

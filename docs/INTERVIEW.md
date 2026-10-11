@@ -33,16 +33,19 @@ the line says so, with a placeholder.
 > And I measured it. Twenty test prompts against the real model: 20 out of
 > 20 build, about 11 seconds, 7,500 tokens and a third of a cent each.
 > When I ask for a small change afterwards, it edits the file instead of
-> rewriting it: five out of five. Code search finds the
-> right file in the top three 97.6% of the time on a 42-question benchmark I
-> wrote. There are 218 tests, all against real databases.
+> rewriting it: five out of five. I also wrote a 70-question benchmark for
+> code search, with decoy files built to confuse it. Search finds the right
+> file in the top three 99% of the time, after I used the benchmark to retune
+> how the two halves of the search are weighted. There are 219 tests, all
+> against real databases.
 
 Shorter, for "tell me about a project" in 30 seconds:
 
 > An AI app builder in Java where the model has to pass a build check before
 > it's done, then checks a screenshot of its own app. Event-driven backend
 > with Kafka, S3, a vector database and a pod per preview. 20 out of 20 on
-> my eval set, and 98% top-3 accuracy on a code-search benchmark I built.
+> my eval set, and 99% top-3 accuracy on a 70-question code-search benchmark
+> I built and used to tune it.
 
 ---
 
@@ -132,14 +135,24 @@ argue with itself forever. The trade-off: it only runs while someone has the
 preview open.
 
 **Why hybrid search and not just vectors?**
-Because I measured it. On my benchmark, keyword search is perfect on exact
-identifiers like `applyPromoCode` but weak on paraphrases ("how much does it
-cost to bring the groceries to my house"). Vectors are the opposite.
-Reciprocal rank fusion merges the two ranked lists. On paraphrased questions,
-hybrid got the right file first 57% of the time against 29% for keyword
-alone. I'll also say what didn't work: on the first question set, vector-only
-slightly beat hybrid, which is why I built a harder second set with decoy
-files and made the fusion weights tunable.
+Honestly, it was close, and the benchmark is what showed that. Keyword search
+is strong on exact names like `applyPromoCode` but weak on paraphrases ("how
+much does it cost to bring the groceries to my house"). Vectors are the
+opposite. Reciprocal rank fusion merges the two ranked lists.
+
+With the two weighted equally, vector-only actually beat the hybrid. The
+keyword list's noise pushed right answers down on paraphrased questions. So I
+built a harder set: 70 questions, with 11 decoy files that borrow the real
+files' vocabulary. Then I swept the keyword weight. At 0.25:
+- the hybrid finds the right file first 87% of the time, up from 81%;
+- it finds it in the top 3 99% of the time, up from 96%;
+- it improved on both the original questions and the new decoy ones, so it
+  isn't just fitted to one half.
+
+It ties vector-only overall (87% top-1, MRR 0.92 against 0.93). Where it
+earns its place is exact names: 100% against vector's 90%, and that's the
+kind of question the agent's `search_code` tool asks most. So 0.25 is now the
+default, and a test pins it.
 
 **How did you make the API stateless?**
 Three things lived in memory, and all three moved to Redis:
@@ -274,10 +287,9 @@ run; fill it in from that output.
   fix round. Found and fixed a latency-only bug by reproducing a 400 ms
   network in CI.
 - Designed hybrid code search (pgvector/Qdrant + full-text, weighted
-  reciprocal rank fusion, optional LLM rerank) and a labelled retrieval
-  benchmark; **97.6% top-3 accuracy** on 42 questions, and **2× keyword
-  search's** top-1 accuracy on paraphrased questions [harder 70-question
-  set with decoy files: …].
+  reciprocal rank fusion, optional LLM rerank) and a 70-question retrieval
+  benchmark with decoy files; used it to retune the fusion weights, raising
+  top-1 accuracy from **81% to 87%** and top-3 from **96% to 99%**.
 - Built an event-driven backend from the system design: gateway with
   failover, a stateless API running as two replicas (Redis locks and
   pub/sub), Kafka-driven indexing and preview redeploys, content-addressed
@@ -285,7 +297,7 @@ run; fill it in from that output.
 - Shipped immutable version history and one-click publish and rollback
   (a site is a pointer to a version), plus an MCP server with hashed
   personal access tokens so other AI agents act as the user.
-- 218 tests against real Postgres, Redis, Qdrant and S3 in CI, and a
+- 219 tests against real Postgres, Redis, Qdrant and S3 in CI, and a
   Playwright walk-through of the whole product.
 
 ---
@@ -298,5 +310,7 @@ Say these before someone else does:
 - The visual check only runs while someone has the preview open.
 - The live deployment runs one process; the multi-service topology runs from
   `docker-compose.full.yml` and `deploy/k8s`.
-- On the first retrieval set, vector-only slightly beat the hybrid that
-  ships. That's why the second, harder set exists.
+- Overall, the tuned hybrid only ties vector-only search. Its edge is on
+  exact names, not across the board. And the weights were tuned on the same
+  70 questions they're scored on. They improved on both halves, but a fresh,
+  held-out set would be the real test.

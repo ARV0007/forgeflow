@@ -58,8 +58,9 @@ public class SearchController {
         // eval sweeps them without a restart. Out of range is a client error.
         CodeIndex.Fusion fusion = null;
         if (vectorWeight != null || keywordWeight != null) {
-            double vw = vectorWeight == null ? 1.0 : vectorWeight;
-            double kw = keywordWeight == null ? 1.0 : keywordWeight;
+            // A weight left out keeps the configured one, not 1.0.
+            double vw = vectorWeight == null ? index.fusion().vectorWeight() : vectorWeight;
+            double kw = keywordWeight == null ? index.fusion().keywordWeight() : keywordWeight;
             if (vw < 0 || kw < 0 || vw > 10 || kw > 10) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "weights must be between 0 and 10");
             }

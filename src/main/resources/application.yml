@@ -139,8 +139,11 @@ forgeflow:
       url: ${QDRANT_URL:http://localhost:6333}
       collection: forgeflow_chunks
       api-key: ${QDRANT_API_KEY:}
+    # Measured, not guessed: on the 70-question retrieval eval (11 Oct, Gemini
+    # embeddings) keyword 0.25 beat equal weights on recall@1 (87% vs 81%) and
+    # recall@3 (99% vs 96%), on both the original and the decoy questions.
     vector-weight: ${FORGEFLOW_RAG_VECTOR_WEIGHT:1.0}
-    keyword-weight: ${FORGEFLOW_RAG_KEYWORD_WEIGHT:1.0}
+    keyword-weight: ${FORGEFLOW_RAG_KEYWORD_WEIGHT:0.25}
     # gemini (needs GOOGLE_API_KEY) | hashing (offline, keyword-level)
     embedder: ${FORGEFLOW_EMBEDDER:gemini}
     embedding-model: gemini-embedding-001

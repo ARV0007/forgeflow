@@ -54,14 +54,16 @@ SETS = {
 KINDS = ["identifier", "described", "paraphrase"]
 
 # What gets compared. Each is a name and the search parameters it sends.
-# keyword / vector / hybrid are the three methods; the weighted hybrids are
-# the tuning sweep (how much should the keyword list count?).
+# keyword / vector / hybrid are the three methods - "hybrid" is whatever the
+# server ships (keyword weight 0.25 since 11 Oct). The weighted hybrids pin
+# their weights explicitly, so a run stays comparable when the default moves:
+# kw1.0 is the old equal weighting, the one shipped until 11 Oct.
 CONFIGS = [
     ("keyword", {"mode": "keyword"}),
     ("vector", {"mode": "vector"}),
     ("hybrid", {"mode": "hybrid"}),
-    ("hybrid kw0.5", {"mode": "hybrid", "keywordWeight": 0.5}),
-    ("hybrid kw0.25", {"mode": "hybrid", "keywordWeight": 0.25}),
+    ("hybrid kw1.0", {"mode": "hybrid", "vectorWeight": 1.0, "keywordWeight": 1.0}),
+    ("hybrid kw0.5", {"mode": "hybrid", "vectorWeight": 1.0, "keywordWeight": 0.5}),
 ]
 RERANK_CONFIG = ("hybrid+rerank", {"mode": "hybrid", "rerank": "true"})
 DEPTH = 20            # chunks asked for per query; the server's maximum

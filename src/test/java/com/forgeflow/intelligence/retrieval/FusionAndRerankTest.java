@@ -24,6 +24,8 @@ class FusionAndRerankTest extends ApiTestSupport {
     ProjectFileService files;
     @Autowired
     UsageMeter usage;
+    @Autowired
+    CodeIndex index;
 
     private long project(Account a) {
         long id = createProject(a, "knobs");
@@ -35,6 +37,12 @@ class FusionAndRerankTest extends ApiTestSupport {
 
     private String search(long id, Account a, String params) {
         return "/api/v1/projects/" + id + "/search?" + params;
+    }
+
+    /** The shipped weights are a measured result (WORKLOG, 11 Oct) - changing them should be a decision. */
+    @Test
+    void theShippedFusionGivesKeywordsAQuarterOfTheWeight() {
+        assertThat(index.fusion()).isEqualTo(new CodeIndex.Fusion(1.0, 0.25));
     }
 
     @Test

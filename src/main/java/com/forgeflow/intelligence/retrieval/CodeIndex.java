@@ -95,7 +95,7 @@ public class CodeIndex {
                      @Value("${forgeflow.retrieval.whole-project-threshold:15}") int wholeProjectThreshold,
                      @Value("${forgeflow.retrieval.top-k:8}") int topK,
                      @Value("${forgeflow.retrieval.vector-weight:1.0}") double vectorWeight,
-                     @Value("${forgeflow.retrieval.keyword-weight:1.0}") double keywordWeight) {
+                     @Value("${forgeflow.retrieval.keyword-weight:0.25}") double keywordWeight) {
         this.vectors = vectors;
         this.fusion = new Fusion(vectorWeight, keywordWeight);
         this.tracer = tracer;
@@ -367,6 +367,11 @@ public class CodeIndex {
      * Weights for the two halves of hybrid search. {@code (1, 1)} is plain
      * RRF. The retrieval eval decides the shipped default.
      */
+    /** The weights a search uses when it doesn't name its own. */
+    public Fusion fusion() {
+        return fusion;
+    }
+
     public record Fusion(double vectorWeight, double keywordWeight) {
         public static final Fusion EQUAL = new Fusion(1.0, 1.0);
     }

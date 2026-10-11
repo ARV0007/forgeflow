@@ -783,7 +783,7 @@ CI with the hashing embedder.
 
 **Fusion and rerank (tuning).** Each half returns a ranked list of chunk ids
 (top 30); `CodeIndex.fuse` applies weighted RRF in Java
-(`w_v/(60+r_v) + w_k/(60+r_k)`, defaults 1/1, per-search override via
+(`w_v/(60+r_v) + w_k/(60+r_k)`, defaults 1 / 0.25 since 11 Oct (measured; WORKLOG), per-search override via
 `vectorWeight` / `keywordWeight`). `?rerank=true` sends the top 15 to the chat
 model (`LlmReranker`) and returns its order - metered against the caller's
 AI-token quota, `X-Rerank-Failed` on failure. Query embeddings are cached

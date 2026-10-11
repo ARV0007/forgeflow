@@ -1422,6 +1422,44 @@ five, and says what it left out, both on screen and in the results file
 allowance was already spent: the rerank was dropped on question 1, and all 42
 questions were scored in the other five modes.
 
+### Retrieval v2 measured live, and the fusion weights retuned from it
+
+Aman ran v2 without the rerank (11 Oct, 72.8 min, Gemini embeddings on
+Render): 70 questions over 40 files, 11 of them decoys.
+
+| | recall@1 | recall@3 | recall@5 | MRR | paraphrase recall@1 |
+|---|---|---|---|---|---|
+| keyword | 63% | 79% | 91% | 0.73 | 31% |
+| vector | 87% | 100% | 100% | 0.93 | 88% |
+| hybrid, equal weights (shipped) | 81% | 96% | 97% | 0.89 | 62% |
+| hybrid, keyword 0.5 | 87% | 96% | 97% | 0.92 | 77% |
+| hybrid, keyword 0.25 | **87%** | **99%** | **99%** | **0.92** | 77% |
+
+Split by half, from the results file:
+
+| recall@1 / recall@3 | original 42 | decoy 28 |
+|---|---|---|
+| equal weights | 83% / 95% | 79% / 96% |
+| keyword 0.25 | 86% / 98% | 89% / 100% |
+| vector only | 81% / 100% | 96% / 100% |
+
+**Decision: keyword weight 0.25 is now the default.** It beats equal weights
+on both halves, so it isn't fitted to the decoys. It moved 8 questions:
+7 better, 1 slightly worse ("sort products by price", 1st → 2nd). Vector-only
+ties it overall, but hybrid keeps exact identifiers at 100% (vector: 90%).
+Those are what `search_code` mostly asks for.
+
+- `application.yml`: `keyword-weight: 0.25`, with the measurement in a comment.
+- `SearchController`: a search that sets only one weight now keeps the
+  *configured* other one, not 1.0.
+- The eval's weighted configs pin both weights, and `hybrid kw1.0` is the
+  old default. So "hybrid" (whatever ships) can move without breaking
+  comparisons with earlier runs.
+- `FusionAndRerankTest` pins the shipped weights. 219 tests.
+
+Caveat, written down so it isn't forgotten: the weights were tuned on the
+questions they're scored on. A held-out question set is the real test.
+
 
 ---
 
