@@ -1408,6 +1408,20 @@ Not run yet: the retrieval v2 benchmark. The command was pasted with a stray
 `retr` in front, so zsh refused it; the table on screen was v1's from
 yesterday.
 
+**Then the retrieval run hit the daily allowance.** Aman ran v2 with
+`--rerank` right after. On question 5 the server answered 402: the eval
+account had used 202,460 of its 200,000 AI tokens for the day (the app evals
+had spent ~180k), and the runner crashed with a traceback.
+
+Only the rerank spends AI tokens. Keyword, vector and hybrid search don't call
+the chat model, and embeddings aren't metered. So the runner now treats a 402
+on the rerank as "drop that configuration and carry on". It removes the
+rerank from every row so far, so the rows stay comparable, scores the other
+five, and says what it left out, both on screen and in the results file
+(`dropped`). Checked against a local server with a test account whose
+allowance was already spent: the rerank was dropped on question 1, and all 42
+questions were scored in the other five modes.
+
 
 ---
 

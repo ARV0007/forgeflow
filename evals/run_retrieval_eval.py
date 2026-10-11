@@ -72,6 +72,10 @@ class Unfair(Exception):
     """The server couldn't embed, so this result wouldn't measure what it claims to."""
 
 
+class OutOfTokens(Exception):
+    """402: the account's daily AI tokens are spent. Only the rerank spends them."""
+
+
 def search(base, pid, query, params, token, pause):
     mode = params.get("mode", "hybrid")
     url = f"{base}/api/v1/projects/{pid}/search?" + urllib.parse.urlencode(
@@ -89,6 +93,8 @@ def search(base, pid, query, params, token, pause):
             if e.code == 429:
                 time.sleep(int(e.headers.get("Retry-After") or 5))
                 continue
+            if e.code == 402:
+                raise OutOfTokens(e.read().decode()[:300])
             raise RuntimeError(f"search -> {e.code}: {e.read().decode()[:300]}")
 
         if rerank_failed:
@@ -179,6 +185,7 @@ def main():
     pid = call(args.base, "/api/v1/projects", "POST", {"name": PROJECT_NAME}, token)["id"]
 
     started = time.time()
+    dropped = []
     try:
         n_files = load_fixture(args.base, pid, token, chosen["fixtures"])
         print(f"Retrieval eval [{args.set}] - {len(queries)} questions over {n_files} files, "
@@ -194,8 +201,24 @@ def main():
         for i, q in enumerate(queries, 1):
             print(f"[{i:>2}/{len(queries)}] {q['kind']:<10} {q['q'][:46]:<46}", end=" ", flush=True)
             row = {"q": q["q"], "kind": q["kind"], "expect": q["expect"], "ranks": {}, "top": {}}
-            for name, params in configs:
-                files = ranked_files(search(args.base, pid, q["q"], params, token, args.pause))
+            for name, params in list(configs):
+                try:
+                    files = ranked_files(search(args.base, pid, q["q"], params, token, args.pause))
+                except OutOfTokens as e:
+                    if name != RERANK_CONFIG[0]:
+                        raise RuntimeError(f"{name} search refused for quota - unexpected: {e}")
+                    # The rerank is the only configuration that spends AI tokens.
+                    # Drop it (from every row, so all rows stay comparable) and
+                    # carry on: the other five are still worth a full run.
+                    print(f"\n  out of today's AI tokens - dropping '{name}' and continuing "
+                          f"(run --rerank again after midnight UTC)", flush=True)
+                    configs.remove((name, params))
+                    names.remove(name)
+                    dropped.append(name)
+                    for r in rows:
+                        r["ranks"].pop(name, None)
+                        r["top"].pop(name, None)
+                    continue
                 row["ranks"][name] = rank_of(files, q)
                 row["top"][name] = files[:3]
             rows.append(row)
@@ -217,7 +240,7 @@ def main():
     out = os.path.join(out_dir, f"retrieval-{stamp}.json")
     with open(out, "w") as f:
         json.dump({"base": args.base, "ranAt": stamp, "set": args.set, "files": n_files,
-                   "questions": len(rows), "configs": dict(configs), "summary": summary, "rows": rows}, f, indent=2)
+                   "questions": len(rows), "configs": dict(configs), "dropped": dropped, "summary": summary, "rows": rows}, f, indent=2)
 
     print("\n" + "=" * 72)
     print(f"  [{args.set}] {len(rows)} questions, {n_files} files")
@@ -234,6 +257,8 @@ def main():
         print("\n  hybrid misses (right file not in top 5):")
         for r in misses:
             print(f"    - {r['q']}  -> wanted {r['expect']}, got {', '.join(r['top']['hybrid'])}")
+    if dropped:
+        print(f"\n  not scored (ran out of AI tokens): {', '.join(dropped)}")
     print("=" * 72)
     print(f"\nwritten to {os.path.relpath(out, os.getcwd())}  ({(time.time() - started) / 60:.1f} min)")
 
