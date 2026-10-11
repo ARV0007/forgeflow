@@ -8,19 +8,46 @@ The part that makes it more than a wrapper around a model: **the agent isn't
 allowed to finish until the code it wrote passes a build.** When the build
 fails, the errors go back to the agent, it fixes them, and tries again.
 
+![ForgeFlow: chat on the left, the live app on the right, the AI's own visual check of its work in the chat](docs/images/workbench.png)
+
 ```
 "build me a recipe site with search"
       │
       ▼
-agent plans → writes files → calls finish → build check
-      │                                        │
-      │                              fails? ◄──┘  errors go back to the agent,
-      │                                           it fixes them, finish again
+agent plans → writes files → calls finish → build check → preview → visual check
+      │                                        │                          │
+      │                              fails? ◄──┘                 issues? ◄┘
+      │                     errors go back to the agent;  a vision model scores a
+      │                     it fixes them, finish again   screenshot; one fix round
       ▼
-live preview · file tree · every step streamed to the browser
+live preview · file tree · version history · every step streamed to the browser
 ```
 
 **Live:** https://forgeflow-7m08.onrender.com · **API reference:** `/docs.html`
+
+## Measured
+
+| | |
+|---|---|
+| **App evals** (20 prompts, real Gemini) | **20 / 20** build and pass the gate · ~**9 s** and ~**7.6k tokens** per app · 0 repair rounds needed |
+| **Code search** (42 questions with known answers) | hybrid search finds the right file in the top 3 **97.6%** of the time (MRR 0.90) |
+| **Search on paraphrased questions** | top-1 hit rate **57%** hybrid vs **29%** keyword-only - why the vector half is worth having |
+| **Tests** | 218 tests against a real Postgres, Redis, Qdrant and S3 API on every push |
+
+How each number is produced: `evals/` and [`docs/WORKLOG.md`](docs/WORKLOG.md).
+
+<table>
+<tr>
+<td width="33%"><img src="docs/images/history.png" alt="Version history with a diff and one-click restore"></td>
+<td width="33%"><img src="docs/images/publish.png" alt="Publishing a frozen version to a public address"></td>
+<td width="33%"><img src="docs/images/react.png" alt="A React + Vite project compiled in the browser"></td>
+</tr>
+<tr>
+<td align="center">a version per AI run, diffs, restore</td>
+<td align="center">publish a frozen version, roll back</td>
+<td align="center">React + Vite, compiled in the browser</td>
+</tr>
+</table>
 
 ---
 
@@ -44,24 +71,33 @@ live preview · file tree · every step streamed to the browser
 
 ## Architecture in one picture
 
-One deployable, split into modules along the lines a service split would
-follow. Modules talk only through each other's service classes — a test fails
-the build if one reaches into another's tables.
+```mermaid
+flowchart LR
+    B["Browser<br/>chat · preview · history"] -->|REST + SSE| G["Gateway<br/>edge JWT · rate limit<br/>failover"]
+    A2["Other AI agents"] -->|MCP + personal token| G
+    G --> API1["api"]
+    G --> API2["api-2"]
+    subgraph API ["API (stateless, same image)"]
+      API1
+      API2
+    end
+    API --> PG[("Postgres + pgvector<br/>projects · chats · versions")]
+    API --> R[("Redis<br/>locks · live logs · limits")]
+    API --> S3[("MinIO / S3<br/>file blobs")]
+    API --> Q[("Qdrant<br/>code vectors")]
+    API -->|code.generated| K{{"Kafka"}}
+    K --> W["Indexer worker<br/>chunks + embeds"]
+    W --> Q
+    K --> EX["Execution<br/>redeploy preview"]
+    EX --> POD["Kubernetes<br/>namespace + pod per preview"]
+    B -.->|Run with Node| WC["WebContainer<br/>npm install · vite"]
+    API --> LLM["Gemini<br/>agent · vision · embeddings"]
+```
 
-```
-                         ┌─────────────── browser (static/app.js) ───────────────┐
-                         │  chat · preview · code · logs · search · share · plan │
-                         └──────────────┬──────────────────────────┬─────────────┘
-                                        │ REST + SSE (JWT)          │ /mcp (JSON-RPC)
-  TracingFilter → JwtAuthFilter → RateLimitFilter (Redis) → controllers
-        │
-  ┌─────┴────────┬────────────┬─────────────┬──────────────┬────────────┬─────────┐
-  account      workspace     chat       intelligence     execution    billing     mcp
-  users, /me   projects,     sessions,  agent loop,      build gate,  plans,      tools for
-               members,      messages,  tools, RAG,      preview,     quotas,     other agents
-               files         memory     code.generated   logs stream  Stripe
-        └──────────────── PostgreSQL 16 + pgvector ─────────────────┘     Gemini API
-```
+Inside the API it is one deployable split into modules along the lines a
+service split would follow - `account`, `workspace`, `chat`, `intelligence`,
+`execution`, `billing`, `mcp`. Modules talk only through each other's service
+classes; a test fails the build if one reaches into another's tables.
 
 Details, decisions and trade-offs: [`docs/architecture.md`](docs/architecture.md).
 
@@ -138,7 +174,9 @@ FORGEFLOW_EMBEDDER=hashing FORGEFLOW_SANDBOX_PROVIDER=in-process \
 ./mvnw verify          # needs Postgres; Redis tests run if Redis is up, skip if not
 ```
 
-Every test runs against a real Postgres — no mocked repositories. The model is
+Every test runs against a real Postgres — no mocked repositories. Qdrant and
+S3 tests run when `QDRANT_TEST_URL` / `S3_TEST_ENDPOINT` point at a server
+(CI starts both), Kafka tests when a broker is up. The model is
 replaced by a **scripted** one that plays back tool calls, which is how the
 self-healing loop is tested on every push. Each feature's test was checked by
 breaking the feature on purpose and watching it go red.
@@ -150,7 +188,8 @@ Two evals against real Gemini:
 
 ```bash
 python3 evals/run_evals.py --base <url>            # 20 prompts: does the app build? (+5 follow-up edits)
-python3 evals/run_retrieval_eval.py --base <url>   # 42 questions: does search find the right file?
+python3 evals/run_retrieval_eval.py --base <url>   # 70 questions (v2, with decoy files): does search find the right file?
+                                                   # --set v1 = the original 42; --rerank adds the LLM rerank
 ```
 
 Browser walk-through (sign up → chat → preview → logs → visual check and
@@ -169,6 +208,7 @@ python3 scripts/ui-walk.py
 | [`docs/architecture.md`](docs/architecture.md) | the design, the spec mapped onto the code, every deliberate deviation |
 | [`docs/WORKLOG.md`](docs/WORKLOG.md) | what was built when, including the mistakes |
 | [`docs/notes.md`](docs/notes.md) | practical notes and gotchas — setup, Stripe, Redis, tracing |
+| [`docs/INTERVIEW.md`](docs/INTERVIEW.md) | the 2-minute pitch, the walk-through, likely questions, and the bugs worth telling |
 
 ## Not built yet
 

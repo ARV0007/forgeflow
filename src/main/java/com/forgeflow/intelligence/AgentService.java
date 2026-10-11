@@ -14,6 +14,7 @@ import com.forgeflow.shared.events.EventBus;
 import com.forgeflow.shared.events.Topics;
 import com.forgeflow.shared.tracing.Tracer;
 import com.forgeflow.intelligence.dto.GenerateResponse;
+import com.forgeflow.shared.llm.BackoffClock;
 import com.forgeflow.shared.llm.ImagePart;
 import com.forgeflow.shared.llm.LlmClient;
 import com.forgeflow.shared.llm.LlmMessage;
@@ -251,12 +252,19 @@ public class AgentService {
                 try (Tracer.Span call = tracer.start("llm.chat")) {
                     call.tag("llm.model", llm.modelName()).tag("agent.round", round);
                     try {
+                        BackoffClock.drain();
                         response = llm.chat(systemPrompt, history, tools.specs());
                     } catch (RuntimeException e) {
                         call.error(e);
                         throw e;
                     }
                     call.tag("llm.total_tokens", response.totalTokens()).tag("llm.cached_tokens", response.cachedTokens());
+                    // Time spent obeying the provider's rate limit doesn't count against the run.
+                    long waited = BackoffClock.drain();
+                    if (waited > 0) {
+                        deadline += waited;
+                        call.tag("llm.backoff_ms", waited);
+                    }
                 }
 
                 promptTokens += response.promptTokens();

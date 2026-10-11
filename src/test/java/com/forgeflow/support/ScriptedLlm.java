@@ -27,12 +27,21 @@ import java.util.concurrent.CopyOnWriteArrayList;
  */
 public class ScriptedLlm implements LlmClient {
 
-    private final ConcurrentLinkedDeque<LlmResponse> script = new ConcurrentLinkedDeque<>();
+    private record Step(LlmResponse response, long backoffMillis) {
+    }
+
+    private final ConcurrentLinkedDeque<Step> script = new ConcurrentLinkedDeque<>();
     private final List<List<LlmMessage>> seen = new CopyOnWriteArrayList<>();
     private final List<String> systemPrompts = new CopyOnWriteArrayList<>();
 
     public ScriptedLlm then(LlmResponse response) {
-        script.add(response);
+        script.add(new Step(response, 0));
+        return this;
+    }
+
+    /** This answer comes only after waiting out a (simulated) rate limit, as GeminiClient would. */
+    public ScriptedLlm thenAfterRateLimit(long waitMillis, LlmResponse response) {
+        script.add(new Step(response, waitMillis));
         return this;
     }
 
@@ -56,11 +65,14 @@ public class ScriptedLlm implements LlmClient {
     public LlmResponse chat(String systemPrompt, List<LlmMessage> history, List<ToolSpec> tools) {
         seen.add(List.copyOf(history));
         systemPrompts.add(systemPrompt);
-        LlmResponse next = script.poll();
+        Step next = script.poll();
         if (next == null) {
             throw new LlmException("ScriptedLlm: nothing left in the script");
         }
-        return next;
+        if (next.backoffMillis() > 0) {
+            com.forgeflow.shared.llm.Backoffs.simulate(next.backoffMillis());
+        }
+        return next.response();
     }
 
     @Override

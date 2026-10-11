@@ -378,6 +378,20 @@ identically.
 Wall-clock time. The Day 6 demo took 114 seconds, mostly waiting on the limit. On a
 paid key it's about 20. I raised the run timeout from 90 to 240 seconds for it.
 
+**Q: Raising the timeout was a patch. What's the real fix?**
+Don't count the waiting at all. The client records each backoff it sleeps
+through (`BackoffClock`, one counter per thread, because a run makes its model
+calls one after another on one thread). After every call, the agent loop reads
+the counter and moves its deadline back by that much. So the budget measures
+the agent's own work, not the provider's queue. `RateLimitWaitTest` gives a run
+a 1-second budget and two calls that each wait 1.2 s. It still finishes.
+
+**Q: Why a ThreadLocal and not a field on the client?**
+The client is a singleton shared by every run at once. A field would add
+everyone's waits together. A ThreadLocal keeps each run's waits its own. The
+loop also clears the counter *before* each call, in case a pooled thread
+carries a leftover from earlier work.
+
 </details>
 
 ---

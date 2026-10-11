@@ -403,10 +403,10 @@ others' resources; identical login failures; `ownerId` never read from requests;
 
 ## 12. Known gaps
 
-- `cost_usd` always 0 (no per-model price table)
-- The timeout includes time spent waiting out rate limits
-- `/mcp` open unless `FORGEFLOW_MCP_API_KEY` is set (runs as a service account, with real access checks)
-- Session locks and preview logs are per-instance memory
+- ~~`cost_usd` always 0~~ - fixed: `LlmPricing`, §25
+- ~~The timeout includes time spent waiting out rate limits~~ - fixed: `BackoffClock` moves the deadline by each wait (11 Oct)
+- ~~`/mcp` open unless `FORGEFLOW_MCP_API_KEY` is set~~ - fixed: closed by default, personal access tokens, §27
+- ~~Session locks and preview logs are per-instance memory~~ - fixed: Redis when `REDIS_URL` is set, §23
 - Real Stripe untested against Stripe itself (stub-tested only)
 
 Closed since 0.2: the module-boundary exceptions (`AgentTools`,

@@ -145,6 +145,7 @@ public class GeminiClient implements LlmClient {
             log.warn("Gemini {} on attempt {}/{} - backing off {} ms",
                     status, attempt + 1, maxRetries, waitMillis);
             Thread.sleep(waitMillis);
+            BackoffClock.waited(waitMillis);       // not the run's fault - see BackoffClock
         }
 
         throw last;

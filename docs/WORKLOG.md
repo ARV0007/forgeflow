@@ -1355,12 +1355,36 @@ it, revokes it. 216 tests.
 
 This retires the "set FORGEFLOW_MCP_API_KEY on Render" chore.
 
+### Rate-limit waits stop counting against the agent, and a README worth opening
+
+**The agent's clock.** Each run has a time budget. On Gemini's free tier, a
+429 saying "retry in 7 s" is routine, and the client obeys it, but those
+seconds were counted against the run. A run could time out while doing
+nothing but waiting politely. Now `GeminiClient` records each backoff in
+`BackoffClock` (a ThreadLocal; a run makes its model calls one after another
+on one thread). After every call, the agent loop drains it and moves its
+deadline by that much, and tags the trace span with `llm.backoff_ms`. The
+loop drains once *before* each call too, so a wait left over from something
+else on a pooled thread can't leak into this run. Test
+(`RateLimitWaitTest`): a 1-second budget and two model calls that each wait
+1.2 s behind a simulated 429; the run still finishes. Sabotage-checked:
+without the extension it stops with TIMEOUT. Retires the oldest open item.
+218 tests.
+
+**README and an interview guide.** The README now opens with a screenshot of
+the live workbench (Aman's recipe app with its 10/10 visual check, his email
+covered), the measured numbers, three screenshots from the browser walk
+(history, publish, React), and a mermaid diagram GitHub renders.
+`docs/INTERVIEW.md` is the pitch, the whiteboard walk-through, twelve likely
+questions with answers, six bugs worth telling, resume lines, and a list of
+things not to overclaim. Its resume lines leave placeholders for the two
+numbers still to measure: retrieval v2 and cost per app.
+
 
 ---
 
 ## Open items
 
-- The agent timeout counts time spent waiting out rate limits.
 - Runtime errors and the visual check only happen if someone has the preview
   open - nothing exercises the app on its own (a server-side browser would).
 - Visual check isn't measured against real Gemini yet: how often does it
