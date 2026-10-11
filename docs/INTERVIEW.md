@@ -31,7 +31,9 @@ the line says so, with a placeholder.
 > full topology from config.
 >
 > And I measured it. Twenty test prompts against the real model: 20 out of
-> 20 build, about 9 seconds and 7,600 tokens each. Code search finds the
+> 20 build, about 11 seconds, 7,500 tokens and a third of a cent each.
+> When I ask for a small change afterwards, it edits the file instead of
+> rewriting it: five out of five. Code search finds the
 > right file in the top three 97.6% of the time on a 42-question benchmark I
 > wrote. There are 218 tests, all against real databases.
 
@@ -260,21 +262,22 @@ hit its limit. The test profile now caps each pool at 4.
 
 ## 5. Resume lines
 
-Pick three or four. The bracketed ones need the evals Aman runs; fill them
-in from the eval output.
+Pick three or four. The one bracketed number still needs the retrieval v2
+run; fill it in from that output.
 
 - Built an AI app builder (Java 21, Spring Boot) whose agent must pass a
   build check before finishing; **20/20** generated apps build on a golden
-  eval set, averaging **~9 s and ~7.6k tokens** per app [**$X per app** at
-  list price].
+  eval set, averaging **~11 s, ~7.5k tokens and $0.003** per app at list
+  price; **5/5** follow-up changes applied as targeted edits, not rewrites.
 - Added a vision-model self-review: the preview screenshots itself
   in-browser, gets scored against the request, and triggers one automatic
   fix round. Found and fixed a latency-only bug by reproducing a 400 ms
   network in CI.
 - Designed hybrid code search (pgvector/Qdrant + full-text, weighted
-  reciprocal rank fusion, optional LLM rerank) and a 70-question retrieval
-  benchmark with decoy files; **97.6% top-3 accuracy**, and **2× keyword
-  search's** top-1 accuracy on paraphrased questions [v2 numbers: …].
+  reciprocal rank fusion, optional LLM rerank) and a labelled retrieval
+  benchmark; **97.6% top-3 accuracy** on 42 questions, and **2× keyword
+  search's** top-1 accuracy on paraphrased questions [harder 70-question
+  set with decoy files: …].
 - Built an event-driven backend from the system design: gateway with
   failover, a stateless API running as two replicas (Redis locks and
   pub/sub), Kafka-driven indexing and preview redeploys, content-addressed

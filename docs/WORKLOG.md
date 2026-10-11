@@ -1380,6 +1380,34 @@ questions with answers, six bugs worth telling, resume lines, and a list of
 things not to overclaim. Its resume lines leave placeholders for the two
 numbers still to measure: retrieval v2 and cost per app.
 
+### Live eval, 11 Oct 15:20 IST: 20/20, the first cost per app, and five edits
+
+Aman ran the full eval against Render with real Gemini. It's the first run
+with cost tracking and the five follow-up changes.
+
+| | 27 Sep | 10 Oct | 11 Oct |
+|---|---|---|---|
+| pass rate | 20/20 | 20/20 | 20/20 |
+| repair rounds | 0 | 0 | 0 |
+| mean tokens per app | 5,236 | 7,565 | 7,459 |
+| mean time per app | 13.4 s | 9.1 s | 11.5 s |
+| cost per app (list price) | - | - | **$0.0029** ($0.058 for all 20) |
+
+**Follow-ups: 5/5 still build, and all five were edits.** Every one went
+`list_files` → `read_file` → `edit_file` → `finish`. That's exactly the
+pattern the prompt asks for: look before you touch, then change the lines
+that need it. So `edit_file` gets used when it should be.
+
+A follow-up costs 6,036 tokens on average (about $0.0017), only ~20% less
+than building the app from scratch. The saving is smaller than you'd guess,
+because `read_file` sends the whole file back into the conversation, and the
+system prompt and tool definitions are re-sent every round. A smaller saving
+than hoped, but an honest one.
+
+Not run yet: the retrieval v2 benchmark. The command was pasted with a stray
+`retr` in front, so zsh refused it; the table on screen was v1's from
+yesterday.
+
 
 ---
 
@@ -1412,14 +1440,10 @@ numbers still to measure: retrieval v2 and cost per app.
 
 ## Still to build
 
-1. Run the eval suite against real Gemini with `edit_file` and the runtime
-   loop in place, and compare with Day 9's 20/20
-2. A headless browser in the build gate, so runtime errors are caught without
+1. A headless browser in the build gate, so runtime errors are caught without
    anyone opening the preview (needs a host that can run Chromium)
-3. "Forgot password?" — needs an email sender (a reset link mailed to the
+2. "Forgot password?" — needs an email sender (a reset link mailed to the
    user); until then a lost password means a new account
-4. Run the evals (after 05:30 IST) and read the follow-up line: how many of
-   the five small changes were edits, not rewrites
 
 ## Done since the original plan
 

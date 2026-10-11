@@ -29,7 +29,8 @@ live preview · file tree · version history · every step streamed to the brows
 
 | | |
 |---|---|
-| **App evals** (20 prompts, real Gemini) | **20 / 20** build and pass the gate · ~**9 s** and ~**7.6k tokens** per app · 0 repair rounds needed |
+| **App evals** (20 prompts, real Gemini) | **20 / 20** build and pass the gate, in three runs out of three · ~**11 s**, ~**7.5k tokens** and **$0.003** per app · 0 repair rounds needed |
+| **Follow-up changes** ("make the button green") | **5 / 5** still build, and all 5 were targeted **edits**, not rewrites of the file |
 | **Code search** (42 questions with known answers) | hybrid search finds the right file in the top 3 **97.6%** of the time (MRR 0.90) |
 | **Search on paraphrased questions** | top-1 hit rate **57%** hybrid vs **29%** keyword-only - why the vector half is worth having |
 | **Tests** | 218 tests against a real Postgres, Redis, Qdrant and S3 API on every push |
