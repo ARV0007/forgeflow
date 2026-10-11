@@ -2327,8 +2327,6 @@ roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
 caching (Chapter 22), and the full topology - Kafka, MinIO, Qdrant, the
 gateway, Kubernetes (Chapter 23), version history (Chapter 24), screenshot to app (Chapter 25), the AI checking its own app (Chapter 26), React apps running in the browser (Chapter 27), a stateless API that scales out (Chapter 28), a Kubernetes pod per preview (Chapter 29), Publish (Chapter 30), and personal access tokens for agents (Chapter 31). What's left:
 
-- **Measure it** — re-run the evals against real Gemini and count how often
-  edit requests now use `edit_file`.
 - **A headless browser in the build gate**, so runtime errors are caught
   without anyone opening the preview.
 - **"Forgot password?"** — needs an email sender to mail a reset link.
@@ -2340,11 +2338,20 @@ gateway, Kubernetes (Chapter 23), version history (Chapter 24), screenshot to ap
 <details>
 <summary><b>Counter-questions</b></summary>
 
+**Q: Did `edit_file` actually get used once real Gemini had it?**
+Yes, measured on 11 Oct. All five follow-up changes in the eval ("make the
+Calculate button green") went `list_files` → `read_file` → `edit_file` →
+`finish`, and all five still built. The surprise was the cost: a small edit
+used about 6,000 tokens against 7,500 for building the whole app. That's
+because `read_file` puts the entire file into the conversation, and the
+system prompt and tools are re-sent every round. Cheaper edits would mean
+reading only part of a file.
+
 **Q: If you only had time for one of these, which?**
-Proving it live. Every feature since Day 10 is tested against a scripted or
-demo model. The eval suite against real Gemini is what says whether
-`edit_file` and the runtime loop actually make the agent better — and a
-measurement beats a belief.
+The headless browser. Right now the visual check and runtime errors only
+happen while someone has the preview open; with a browser on the server,
+every run would be checked, and the visual check could finally be measured
+like everything else.
 
 **Q: RAG is built now. Is it doing anything for today's projects?**
 Mostly not, and that's by design. Generated sites are usually under fifteen
