@@ -90,6 +90,12 @@ forgeflow:
   chat:
     # Spec: "past 10 chat messages (session history)" - the model's memory window.
     memory-messages: 10
+  # Importing a repo or zip into a project (ProjectImporter).
+  import:
+    github-base: ${FORGEFLOW_IMPORT_GITHUB_BASE:https://github.com}
+    max-zip-mb: 20
+    max-total-mb: 30
+    max-files: 1500
   agent:
     max-tool-calls: 25
     max-repair-rounds: 3

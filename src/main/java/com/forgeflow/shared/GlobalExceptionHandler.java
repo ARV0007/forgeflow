@@ -20,6 +20,11 @@ public class GlobalExceptionHandler {
         return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, e.getMessage());
     }
 
+    @ExceptionHandler(BadRequestException.class)
+    ProblemDetail badRequest(BadRequestException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
     @ExceptionHandler(BadCredentialsException.class)
     ProblemDetail badCredentials(BadCredentialsException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, e.getMessage());

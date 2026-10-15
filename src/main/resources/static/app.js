@@ -236,6 +236,7 @@ function applyRole() {
   $('btn-send').disabled = !w || state.busy;
   $('btn-new-chat').disabled = !w;
   $('btn-build').disabled = !w;
+  $('btn-import').disabled = !w;
   $('btn-preview').disabled = !w;
   $('btn-preview-stop').disabled = !w;
 }
@@ -1128,6 +1129,57 @@ async function search() {
     }
   } catch (err) {
     out.innerHTML = `<li class="search-none">${esc(err.message)}</li>`;
+  }
+}
+
+// ── import: a GitHub repo or a zip replaces the files ────
+
+$('btn-import').addEventListener('click', () => {
+  $('import-msg').textContent = '';
+  $('dlg-import').showModal();
+  $('import-url').focus();
+});
+$('btn-import-github').addEventListener('click', () => {
+  const url = $('import-url').value.trim();
+  if (url) runImport(() => api(`/api/v1/projects/${state.projectId}/import/github`, { method: 'POST', body: { url } }));
+});
+$('import-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btn-import-github').click(); });
+$('btn-import-zip').addEventListener('click', () => {
+  const file = $('import-file').files[0];
+  if (!file) { $('import-msg').textContent = 'Choose a .zip first.'; return; }
+  runImport(async () => {
+    // The zip is the raw body - api() sends JSON, so this one is a plain fetch.
+    const res = await fetch(`/api/v1/projects/${state.projectId}/import/zip?name=${encodeURIComponent(file.name)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/zip', Authorization: 'Bearer ' + state.token }, body: file });
+    adoptRenewedToken(res);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw explain(new ApiError(res.status, data));
+    return data;
+  });
+});
+
+const SKIP_WORDS = { IGNORED_FOLDER: 'in folders like node_modules', BINARY: 'binary', TOO_LARGE: 'over 200 KB',
+  UNSAFE_PATH: 'with unsafe paths', OVER_FILE_LIMIT: 'past the 1,500-file limit' };
+
+async function runImport(go) {
+  const msg = $('import-msg');
+  msg.className = 'msg is-busy';
+  msg.textContent = 'Importing… big repos take a few seconds.';
+  ['btn-import-github', 'btn-import-zip'].forEach((id) => { $(id).disabled = true; });
+  try {
+    const r = await go();
+    const skipped = Object.entries(r.skipped || {}).map(([k, n]) => `${n} ${SKIP_WORDS[k] || k}`).join(', ');
+    msg.className = 'msg is-ok';
+    msg.textContent = `${r.imported} file${r.imported === 1 ? '' : 's'} imported` + (skipped ? ` · skipped ${skipped}` : '')
+      + '. Search and Ask are indexing it now.';
+    await loadFiles();
+    if (typeof loadHistory === 'function') loadHistory();
+    toast(r.source);
+  } catch (err) {
+    msg.className = 'msg';
+    msg.textContent = err.message;
+  } finally {
+    ['btn-import-github', 'btn-import-zip'].forEach((id) => { $(id).disabled = false; });
   }
 }
 

@@ -392,6 +392,38 @@ with sync_playwright() as p:
     shot(node, "10e-run-with-node")
     node.close()
 
+    # 10f. import a zip into a fresh project; skipped things are reported; Ask answers over it
+    import io, zipfile, tempfile as _tf
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("shop-main/index.html", "<!doctype html><html><body><h1>Shop</h1><script src='src/cart.js'></script></body></html>")
+        z.writestr("shop-main/src/cart.js", "// Cart\nfunction cartTotal(items) {\n  return items.reduce((s, i) => s + i.price, 0);\n}\n")
+        for n in range(20):
+            z.writestr(f"shop-main/src/util{n}.js", f"export const helper{n} = () => {n};\n")
+        z.writestr("shop-main/node_modules/x/index.js", "module.exports = 1;")
+        z.writestr("shop-main/logo.png", b"\x89PNG\x00\x00")
+    zf = _tf.NamedTemporaryFile(suffix=".zip", delete=False)
+    zf.write(buf.getvalue()); zf.close()
+    page.click("#btn-new-project")
+    page.fill("#new-name", "imported shop")
+    page.click("#btn-create")
+    expect(page.locator("#project-select option:checked")).to_have_text("imported shop", timeout=10000)
+    page.click("#btn-import")
+    page.set_input_files("#import-file", zf.name)
+    page.click("#btn-import-zip")
+    expect(page.locator("#import-msg")).to_contain_text("22 files imported", timeout=20000)
+    expect(page.locator("#import-msg")).to_contain_text("1 in folders like node_modules")
+    expect(page.locator("#import-msg")).to_contain_text("1 binary")
+    shot(page, "10f-import")
+    page.locator("#dlg-import [data-close]").click()
+    page.click(".tab[data-tab=code]")
+    expect(page.locator(".file", has_text="src/cart.js")).to_be_visible(timeout=10000)
+    page.click(".tab[data-tab=search]")
+    page.fill("#search-q", "where is the cart total computed?")
+    page.click("#btn-ask")
+    expect(page.locator(".answer .answer-sources code").first).to_have_text("src/cart.js", timeout=20000)
+    shot(page, "10g-ask-imported")
+
     # 11. narrow screen still usable
     page.set_viewport_size({"width": 390, "height": 844})
     page.reload()

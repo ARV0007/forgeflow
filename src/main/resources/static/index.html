@@ -113,6 +113,7 @@
         <button class="tab" data-tab="history" role="tab">History</button>
         <span class="spacer"></span>
         <button id="btn-build" class="btn btn-quiet btn-sm">Run build</button>
+        <button id="btn-import" class="btn btn-quiet btn-sm" title="Bring in a GitHub repo or a zip">Import</button>
         <button id="btn-download" class="btn btn-quiet btn-sm" title="Download every file as a zip">Download</button>
       </div>
 
@@ -196,6 +197,26 @@
   </div>
   <p id="share-msg" class="msg"></p>
   <div class="dlg-actions"><button class="btn btn-quiet btn-sm" data-close>Done</button></div>
+</dialog>
+
+<dialog id="dlg-import" class="dlg">
+  <h2>Import code</h2>
+  <p class="dlg-sub">Bring in an existing codebase, then ask about it or have the agent change it. This
+     replaces the project's files; what's here now stays in History.</p>
+  <label class="field-label" for="import-url">A public GitHub repo</label>
+  <div class="invite-row">
+    <input id="import-url" type="text" placeholder="https://github.com/owner/repo" autocapitalize="none" spellcheck="false">
+    <button id="btn-import-github" class="btn btn-primary btn-sm">Import</button>
+  </div>
+  <p class="dlg-sub dlg-or">or a .zip from your computer</p>
+  <div class="invite-row">
+    <input id="import-file" type="file" accept=".zip,application/zip">
+    <button id="btn-import-zip" class="btn btn-quiet btn-sm">Upload</button>
+  </div>
+  <p class="dlg-sub">Skipped automatically: node_modules, .git, build output, images and other binaries,
+     and files over 200 KB. Up to 1,500 files.</p>
+  <p id="import-msg" class="msg"></p>
+  <div class="dlg-actions"><button class="btn btn-quiet btn-sm" data-close>Close</button></div>
 </dialog>
 
 <dialog id="dlg-publish" class="dlg">

@@ -103,6 +103,8 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--e
 
 .gate-actions { display: flex; gap: 10px; margin-top: 4px; }
 .msg { min-height: 1.4em; margin: 0; font-size: 13px; color: var(--rust); }
+.msg.is-ok, .msg.is-busy { color: var(--ash); }
+.msg.is-ok { color: var(--verdigris); }
 
 /* ── shell ────────────────────────────────────────────── */
 
@@ -499,3 +501,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--e
 .token-how { color: var(--ash); margin-top: 10px !important; }
 .token-snippet { margin: 0; padding: 8px 10px; background: var(--ink); border: var(--rail); border-radius: 6px;
   font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.field-label { display: block; margin: 14px 0 6px; font-size: 12px; color: var(--ash); }
+.dlg-or { margin: 14px 0 6px; }
+#import-file { flex: 1; color: var(--ash); font-size: 12px; }

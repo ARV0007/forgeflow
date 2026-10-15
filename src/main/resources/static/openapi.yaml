@@ -615,6 +615,39 @@ paths:
       responses:
         "200": { description: Hits, best first, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/SearchHit" } } } } }
 
+  /api/v1/projects/{projectId}/import/zip:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    post:
+      tags: [Files]
+      summary: Replace the project's files with a zip's (WRITE). Skips node_modules, .git, binaries and files over 200 KB; the old files stay in History
+      parameters:
+        - { name: name, in: query, description: "The zip's file name, for the History label", schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/zip: { schema: { type: string, format: binary } }
+      responses:
+        "200": { description: What was imported and skipped, content: { application/json: { schema: { $ref: "#/components/schemas/ImportReport" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /api/v1/projects/{projectId}/import/github:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    post:
+      tags: [Files]
+      summary: Replace the project's files with a public GitHub repo's (WRITE); /tree/<branch>/<folder> imports one folder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [url], properties: { url: { type: string, example: "https://github.com/owner/repo" } } }
+      responses:
+        "200": { description: What was imported and skipped, content: { application/json: { schema: { $ref: "#/components/schemas/ImportReport" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+
   /api/v1/projects/{projectId}/ask:
     parameters: [{ $ref: "#/components/parameters/projectId" }]
     post:
@@ -974,6 +1007,15 @@ components:
         endLine: { type: integer }
         score: { type: number }
         content: { type: string }
+    ImportReport:
+      type: object
+      properties:
+        source: { type: string, example: "Imported from github.com/owner/repo" }
+        imported: { type: integer }
+        removed: { type: integer, description: Files that were in the project and aren't in the import }
+        skipped: { type: object, additionalProperties: { type: integer }, description: "Count per reason: IGNORED_FOLDER, BINARY, TOO_LARGE, UNSAFE_PATH, OVER_FILE_LIMIT" }
+        bytes: { type: integer }
+        checkpointId: { type: integer }
     AskAnswer:
       type: object
       properties:
