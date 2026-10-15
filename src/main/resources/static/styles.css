@@ -331,6 +331,17 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--e
 .hit-lines { color: var(--ash); }
 .hit-body { margin: 6px 0 0; font-family: var(--mono); font-size: 12px; color: var(--ash); white-space: pre-wrap; max-height: 9.5em; overflow: hidden; }
 .search-none { padding: 14px; color: var(--ash); font-size: 13px; }
+.answer { padding: 14px; border-bottom: var(--rail); }
+.answer-body { font-size: 14px; line-height: 1.6; color: var(--bone); white-space: pre-wrap; }
+.answer-none .answer-body { color: var(--ash); }
+.cite { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; margin: 0 2px;
+        padding: 0 4px; border: 1px solid var(--ember, #e8763a); border-radius: 9px; background: none;
+        color: var(--ember, #e8763a); font: 600 11px/1 var(--mono); cursor: pointer; vertical-align: 1px; }
+.answer-sources { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 4px; }
+.answer-sources li { display: flex; gap: 8px; align-items: baseline; font-size: 12px; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+.answer-sources li:hover { background: var(--ink-2); }
+.answer-sources code { color: var(--bone); }
+.answer-meta { margin: 10px 0 0; font-size: 12px; color: var(--ash); }
 
 /* ── empty states ─────────────────────────────────────── */
 

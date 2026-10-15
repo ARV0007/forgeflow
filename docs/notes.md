@@ -743,6 +743,11 @@ pip install playwright && playwright install chromium
 python3 scripts/ui-walk.py          # screenshots in ui-walk-shots/
 ```
 
+Start the demo server with `FORGEFLOW_RATELIMIT_AI_PER_MINUTE=60`. The walk
+makes more model calls in a minute than the 6 one real user may; at the
+default it fails with "Slow down" partway through (found when Ask added one
+more call, 16 Oct).
+
 It prints `UI walk passed`, or the first step that failed and why.
 
 ### Gotchas

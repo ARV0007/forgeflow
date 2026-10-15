@@ -6,6 +6,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
@@ -15,6 +17,7 @@ import java.util.Locale;
 
 /**
  * Code search over one project - the same search the agent's search_code tool runs. A read.
+ * And /ask: a question answered from that search, with citations.
  * {@code mode} picks vector-only or keyword-only instead of hybrid; the retrieval eval uses it.
  */
 @RestController
@@ -31,11 +34,32 @@ public class SearchController {
     private final CodeIndex index;
     private final ProjectService projects;
     private final LlmReranker reranker;
+    private final ProjectQa qa;
 
-    public SearchController(CodeIndex index, ProjectService projects, LlmReranker reranker) {
+    public SearchController(CodeIndex index, ProjectService projects, LlmReranker reranker, ProjectQa qa) {
         this.index = index;
         this.projects = projects;
         this.reranker = reranker;
+        this.qa = qa;
+    }
+
+    public record AskRequest(String question) {
+    }
+
+    /**
+     * Ask a question about the project's code; the answer comes only from the
+     * code, with the files and lines it used. Read access is enough - nothing
+     * is written - and the model call is charged to the asker.
+     */
+    @PostMapping("/api/v1/projects/{projectId}/ask")
+    public ProjectQa.Answer ask(@PathVariable Long projectId, @RequestBody AskRequest body, Authentication auth) {
+        Long userId = (Long) auth.getPrincipal();
+        projects.getById(projectId, userId);
+        String q = body == null || body.question() == null ? "" : body.question().strip();
+        if (q.isEmpty() || q.length() > 1000) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "question must be 1 to 1000 characters");
+        }
+        return qa.ask(userId, projectId, q);
     }
 
     @GetMapping("/api/v1/projects/{projectId}/search")

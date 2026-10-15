@@ -1131,6 +1131,71 @@ async function search() {
   }
 }
 
+// ── ask: an answer from the code, with its sources ──────
+
+$('btn-ask').addEventListener('click', askProject);
+
+async function askProject() {
+  const q = $('search-q').value.trim();
+  const out = $('search-results');
+  if (!q) return;
+  out.innerHTML = '<li class="search-none">Reading the code…</li>';
+  try {
+    const r = await api(`/api/v1/projects/${state.projectId}/ask`, { method: 'POST', body: { question: q } });
+    out.innerHTML = '';
+    const li = document.createElement('li');
+    li.className = 'answer' + (r.found ? '' : ' answer-none');
+    const body = document.createElement('div');
+    body.className = 'answer-body';
+    // [2] or [1, 3] become chips that open those lines; everything else is text.
+    const bySource = new Map(r.citations.map((c) => [c.n, c]));
+    let last = 0;
+    for (const m of r.answer.matchAll(/\[(\d+(?:\s*,\s*\d+)*)\]/g)) {
+      body.append(document.createTextNode(r.answer.slice(last, m.index)));
+      for (const n of m[1].split(',').map((x) => Number(x.trim()))) {
+        const c = bySource.get(n);
+        if (!c) continue;
+        const chip = document.createElement('button');
+        chip.className = 'cite';
+        chip.textContent = n;
+        chip.title = `${c.path}, lines ${c.startLine}–${c.endLine}`;
+        chip.addEventListener('click', () => showCode(c.path, [c.startLine, c.endLine]));
+        body.append(chip);
+      }
+      last = m.index + m[0].length;
+    }
+    body.append(document.createTextNode(r.answer.slice(last)));
+    li.append(body);
+    if (r.citations.length) {
+      const src = document.createElement('ol');
+      src.className = 'answer-sources';
+      for (const c of r.citations) {
+        const s = document.createElement('li');
+        s.innerHTML = '<span class="cite"></span><code></code><span class="hit-lines"></span>';
+        s.querySelector('.cite').textContent = c.n;
+        s.querySelector('code').textContent = c.path;
+        s.querySelector('.hit-lines').textContent = `lines ${c.startLine}–${c.endLine}`;
+        s.addEventListener('click', () => showCode(c.path, [c.startLine, c.endLine]));
+        src.append(s);
+      }
+      li.append(src);
+    } else if (r.found) {
+      const warn = document.createElement('p');
+      warn.className = 'answer-meta';
+      warn.textContent = 'No sources cited - treat this answer with care.';
+      li.append(warn);
+    }
+    const meta = document.createElement('p');
+    meta.className = 'answer-meta';
+    meta.textContent = `From ${r.sources} source${r.sources === 1 ? '' : 's'} in this project · ${r.tokens.toLocaleString()} tokens`
+      + (r.costUsd > 0 ? ` · $${Number(r.costUsd).toFixed(4)}` : '');
+    li.append(meta);
+    out.append(li);
+  } catch (err) {
+    out.innerHTML = `<li class="search-none">${esc(err.message)}</li>`;
+  }
+}
+
 // ── sharing ─────────────────────────────────────────────
 
 document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));

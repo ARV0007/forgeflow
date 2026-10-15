@@ -5,7 +5,11 @@ account is needed and every step is deterministic:
 
     FORGEFLOW_LLM_PROVIDER=demo FORGEFLOW_BILLING_PROVIDER=fake \
     FORGEFLOW_EMBEDDER=hashing FORGEFLOW_SANDBOX_PROVIDER=in-process \
-    ./mvnw spring-boot:run
+    FORGEFLOW_RATELIMIT_AI_PER_MINUTE=60 ./mvnw spring-boot:run
+
+The raised AI limit matters: the walk makes more model calls in a minute than
+the product's 6-a-minute limit allows one person (that limit has its own test,
+RateLimitTest). This is a test of the features, not of the limit.
 
     pip install playwright && playwright install chromium
     python3 scripts/ui-walk.py            # screenshots land in ./ui-walk-shots/
@@ -147,6 +151,20 @@ with sync_playwright() as p:
     expect(page.locator("#code-name")).to_have_text("app.js")
     expect(page.locator("#code-body .ln.hl").first).to_be_visible()
     shot(page, "06-search")
+
+    # 6a. ask: an answer from the code, a citation chip opens the cited lines
+    page.click(".tab[data-tab=search]")
+    page.fill("#search-q", "what happens when the button is clicked?")
+    page.click("#btn-ask")
+    expect(page.locator(".answer").first).to_be_visible(timeout=15000)
+    expect(page.locator(".answer .answer-sources li").first).to_be_visible()
+    expect(page.locator(".answer .answer-meta").last).to_contain_text("source")
+    cited = page.locator(".answer .answer-sources code").first.inner_text()
+    page.locator(".answer-body .cite").first.click()
+    expect(page.locator("#code-name")).to_have_text(cited)
+    # (NOT_FOUND is covered by AskProjectTest: one model call here, so the walk
+    # stays inside the 6-a-minute AI limit it shares with every other step)
+    shot(page, "06a-ask")
 
     # 6b. history: every AI run is a version; its diff renders; restore needs two clicks
     page.click(".tab[data-tab=history]")

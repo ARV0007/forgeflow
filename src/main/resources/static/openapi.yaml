@@ -615,6 +615,22 @@ paths:
       responses:
         "200": { description: Hits, best first, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/SearchHit" } } } } }
 
+  /api/v1/projects/{projectId}/ask:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    post:
+      tags: [Search]
+      summary: Ask a question about this project's code - answered only from the code, with cited files and lines (READ; uses the asker's AI tokens)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [question], properties: { question: { type: string, maxLength: 1000, example: "Where is the dark mode toggle handled?" } } }
+      responses:
+        "200": { description: The answer, content: { application/json: { schema: { $ref: "#/components/schemas/AskAnswer" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "402": { $ref: "#/components/responses/QuotaExceeded" }
+        "404": { $ref: "#/components/responses/Problem" }
+
   # --------------------------------------------------------------- billing
   /api/v1/billing/plans:
     get:
@@ -958,6 +974,17 @@ components:
         endLine: { type: integer }
         score: { type: number }
         content: { type: string }
+    AskAnswer:
+      type: object
+      properties:
+        answer: { type: string, description: "Cites sources as [1] or [2, 3]" }
+        found: { type: boolean, description: "false when the code doesn't hold the answer" }
+        citations:
+          type: array
+          items: { type: object, properties: { n: { type: integer }, path: { type: string }, startLine: { type: integer }, endLine: { type: integer } } }
+        sources: { type: integer, description: How many excerpts the model was shown }
+        tokens: { type: integer }
+        costUsd: { type: number }
     Plan:
       type: object
       properties:

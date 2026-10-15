@@ -3,6 +3,7 @@ package com.forgeflow.mcp;
 import com.forgeflow.billing.BillingService;
 import com.forgeflow.account.ServiceAccounts;
 import com.forgeflow.intelligence.AgentService;
+import com.forgeflow.intelligence.retrieval.ProjectQa;
 import com.forgeflow.workspace.ProjectFileService;
 import com.forgeflow.workspace.ProjectService;
 import com.forgeflow.workspace.Stack;
@@ -30,6 +31,7 @@ public class McpToolExecutor {
     private final ProjectFileService files;
     private final ServiceAccounts serviceAccounts;
     private final BillingService billing;
+    private final ProjectQa qa;
     private final String serviceAccountEmail;
 
     /** Resolved on first use, then fixed for the life of the process. */
@@ -40,12 +42,14 @@ public class McpToolExecutor {
                            ProjectFileService files,
                            ServiceAccounts serviceAccounts,
                            BillingService billing,
+                           ProjectQa qa,
                            @Value("${forgeflow.mcp.service-account-email}") String serviceAccountEmail) {
         this.projects = projects;
         this.agent = agent;
         this.files = files;
         this.serviceAccounts = serviceAccounts;
         this.billing = billing;
+        this.qa = qa;
         this.serviceAccountEmail = serviceAccountEmail;
     }
 
@@ -92,6 +96,7 @@ public class McpToolExecutor {
                 case "create_project" -> createProject(args, who);
                 case "generate_app" -> generateApp(args, who);
                 case "list_project_files" -> listFiles(args, who);
+                case "ask_project" -> askProject(args, who);
                 default -> content("No such tool: " + name, true);
             };
         } catch (Exception e) {
@@ -150,5 +155,24 @@ public class McpToolExecutor {
                 .map(f -> f.path() + "  " + f.sizeBytes() + " bytes")
                 .collect(Collectors.joining("\n"));
         return content(found.size() + " file(s) in project " + projectId + ":\n" + listing, false);
+    }
+
+    private Map<String, Object> askProject(JsonNode args, Long who) {
+        Long projectId = args.path("project_id").asLong();
+        String question = args.path("question").asText("").strip();
+        if (question.isEmpty()) {
+            return content("question is required - what do you want to know about the code?", true);
+        }
+        projects.getById(projectId, who);
+        ProjectQa.Answer a = qa.ask(who, projectId, question);
+        StringBuilder sb = new StringBuilder(a.answer());
+        if (!a.citations().isEmpty()) {
+            sb.append("\n\nSources:");
+            for (ProjectQa.Source c : a.citations()) {
+                sb.append("\n[").append(c.n()).append("] ").append(c.path())
+                  .append(" lines ").append(c.startLine()).append('-').append(c.endLine());
+            }
+        }
+        return content(sb.toString(), false);
     }
 }

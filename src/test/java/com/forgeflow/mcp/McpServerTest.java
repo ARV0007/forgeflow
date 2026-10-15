@@ -49,7 +49,7 @@ class McpServerTest extends ApiTestSupport {
     @Test
     void toolListDeclaresProjectIdAsAnInteger() {
         JsonNode tools = rpc(2, "tools/list", null).path("result").path("tools");
-        assertThat(tools).hasSize(3);
+        assertThat(tools).hasSize(4);
         for (JsonNode t : tools) {
             JsonNode pid = t.path("inputSchema").path("properties").path("project_id");
             if (!pid.isMissingNode()) {
@@ -95,6 +95,25 @@ class McpServerTest extends ApiTestSupport {
         long id = Long.parseLong(text.replaceAll("^Created project (\\d+).*$", "$1").split("\\s")[0]);
         JsonNode listed = toolCall("list_project_files", Map.of("project_id", id));
         assertThat(listed.path("content").get(0).path("text").asText()).contains("no files yet");
+    }
+
+    @Test
+    void askProjectAnswersFromTheCodeWithSources() {
+        JsonNode created = toolCall("create_project", Map.of("name", "ask-via-mcp"));
+        long id = Long.parseLong(created.path("content").get(0).path("text").asText()
+                .replaceAll("^Created project (\\d+).*$", "$1").split("\\s")[0]);
+        llm.then(com.forgeflow.support.ScriptedLlm.calls(com.forgeflow.support.ScriptedLlm.write("app.js",
+                        "function total(items) { return items.length; }")))
+           .then(com.forgeflow.support.ScriptedLlm.calls(com.forgeflow.support.ScriptedLlm.finish("ok")));
+        toolCall("generate_app", Map.of("project_id", id, "prompt", "a counter"));
+
+        llm.then(com.forgeflow.support.ScriptedLlm.text("total() counts the items [1]."));
+        JsonNode r = toolCall("ask_project", Map.of("project_id", id, "question", "what does total do?"));
+
+        assertThat(r.path("isError").asBoolean()).isFalse();
+        assertThat(r.path("content").get(0).path("text").asText())
+                .contains("total() counts the items [1]").contains("Sources:").contains("[1] app.js lines 1-1");
+        assertThat(toolCall("ask_project", Map.of("project_id", id)).path("isError").asBoolean()).isTrue();
     }
 
     @Test

@@ -52,6 +52,16 @@ public final class McpTools {
                                 "prompt", str("What to build, in plain language")
                         ), List.of("project_id", "prompt"))),
 
+                tool("ask_project",
+                        "Answer a question about the code in a ForgeFlow project - where something "
+                                + "lives, how it works - using only that project's files. The answer cites "
+                                + "sources as [1], [2] and lists each cited file with its line range. Says "
+                                + "plainly when the code does not contain the answer. Changes nothing.",
+                        schema(Map.of(
+                                "project_id", integer("The project to ask about"),
+                                "question", str("The question, in plain language, e.g. 'where is the cart total computed?'")
+                        ), List.of("project_id", "question"))),
+
                 tool("list_project_files",
                         "List the files in a ForgeFlow project with their sizes. Use after "
                                 + "generate_app to see what was produced.",

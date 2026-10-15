@@ -395,7 +395,7 @@ public class CodeIndex {
      * request instead. That is the retrieval half of RAG.
      */
     public Optional<RetrievedContext> contextFor(Long projectId, String prompt) {
-        if (files.list(projectId).size() <= wholeProjectThreshold) {
+        if (fitsWhole(projectId)) {
             return Optional.empty();
         }
         List<SearchHit> hits = search(projectId, prompt, topK);
@@ -410,6 +410,11 @@ public class CodeIndex {
               .append('-').append(h.endLine()).append(" ---\n").append(h.content()).append('\n');
         }
         return Optional.of(new RetrievedContext(sb.toString(), hits.size(), sources));
+    }
+
+    /** Small enough to hand over whole: every file beats any retrieval. */
+    public boolean fitsWhole(Long projectId) {
+        return files.list(projectId).size() <= wholeProjectThreshold;
     }
 
     /**

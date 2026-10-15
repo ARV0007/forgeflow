@@ -18,7 +18,7 @@ public class RateLimitRules {
     }
 
     private static final Pattern AI = Pattern.compile(
-            "^/api/v1/projects/\\d+/(generate(/stream)?|chat/sessions/\\d+/(messages(/stream)?|retry(/stream)?))$");
+            "^/api/v1/projects/\\d+/(generate(/stream)?|ask|chat/sessions/\\d+/(messages(/stream)?|retry(/stream)?))$");
     private static final Pattern INVITE = Pattern.compile("^/api/v1/projects/\\d+/members$");
 
     private final Limit auth;

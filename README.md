@@ -194,8 +194,9 @@ python3 evals/run_retrieval_eval.py --base <url>   # 70 questions (v2, with deco
 ```
 
 Browser walk-through (sign up → chat → preview → logs → visual check and
-auto-fix → search → history → upgrade → share → screenshot → quota), against
-a demo-mode server:
+auto-fix → search → ask → history → upgrade → share → screenshot → quota),
+against a demo-mode server started with `FORGEFLOW_RATELIMIT_AI_PER_MINUTE=60`
+(the walk makes more model calls a minute than one real user may):
 
 ```bash
 python3 scripts/ui-walk.py

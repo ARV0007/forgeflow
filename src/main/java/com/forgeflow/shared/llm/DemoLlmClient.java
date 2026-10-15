@@ -45,6 +45,13 @@ public class DemoLlmClient implements LlmClient {
             return new LlmResponse(review, List.of(), "[]", estimate(history) + 258, 60, estimate(history) + 318);
         }
 
+        // Ask your project (no tools, numbered sources). The demo can't reason
+        // about code, so it does what keyword search would: cite the first
+        // source that mentions a word of the question, or say NOT_FOUND.
+        if (systemPrompt != null && systemPrompt.startsWith("You answer questions about one software project")) {
+            return new LlmResponse(demoAnswer(last.text()), List.of(), "[]", estimate(history) + 200, 40, estimate(history) + 240);
+        }
+
         // A fresh request: write the files. Anything else (our own tool
         // results coming back): we're done.
         if (last.role() == LlmMessage.Role.USER && systemPrompt != null && systemPrompt.contains("You produce a React")) {
@@ -208,5 +215,35 @@ public class DemoLlmClient implements LlmClient {
             chars += m.text() == null ? 0 : m.text().length();
         }
         return 800 + chars / 4;
+    }
+
+    /** Sources look like "[2] theme.js (lines 1-5)" followed by numbered lines; the question comes last. */
+    static String demoAnswer(String prompt) {
+        if (prompt == null || !prompt.contains("\nQUESTION\n")) {
+            return "NOT_FOUND: the demo model got no question.";
+        }
+        String question = prompt.substring(prompt.lastIndexOf("\nQUESTION\n") + 10).toLowerCase(java.util.Locale.ROOT);
+        String sources = prompt.substring(0, prompt.lastIndexOf("\nQUESTION\n"));
+        java.util.regex.Matcher head = java.util.regex.Pattern.compile("(?m)^\\[(\\d+)\\] (\\S+) \\(lines").matcher(sources);
+        List<int[]> starts = new java.util.ArrayList<>();
+        List<String> paths = new java.util.ArrayList<>();
+        while (head.find()) {
+            starts.add(new int[]{Integer.parseInt(head.group(1)), head.start()});
+            paths.add(head.group(2));
+        }
+        for (String word : question.split("[^a-z0-9_]+")) {
+            if (word.length() < 4) {
+                continue;
+            }
+            for (int i = 0; i < starts.size(); i++) {
+                int from = starts.get(i)[1];
+                int to = i + 1 < starts.size() ? starts.get(i + 1)[1] : sources.length();
+                if (sources.substring(from, to).toLowerCase(java.util.Locale.ROOT).contains(word)) {
+                    return "Demo answer (the demo model matches words, it doesn't reason): \"" + word + "\" appears in "
+                            + paths.get(i) + " [" + starts.get(i)[0] + "]. Set GOOGLE_API_KEY for a real answer.";
+                }
+            }
+        }
+        return "NOT_FOUND: no file in this project mentions those words.";
     }
 }
