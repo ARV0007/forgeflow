@@ -85,7 +85,7 @@ class ChatTest extends ApiTestSupport {
         assertThat(seen.get(1).role()).isEqualTo(LlmMessage.Role.MODEL);
         assertThat(seen.get(1).text()).startsWith("Built a landing page with a blue header.")
                 .contains("[Files written: index.html, styles.css, app.js]");
-        assertThat(seen.get(2).text()).isEqualTo("make the header red");
+        assertThat(seen.get(2).text()).startsWith("make the header red");   // + any reference notes
     }
 
     @Test
@@ -141,7 +141,7 @@ class ChatTest extends ApiTestSupport {
         // The retry saw the question fresh - not its own failure notice.
         List<LlmMessage> seen = llm.seen().get(0);
         assertThat(seen).hasSize(1);
-        assertThat(seen.get(0).text()).isEqualTo("build a todo app");
+        assertThat(seen.get(0).text()).startsWith("build a todo app");   // + any reference notes
 
         // Nothing failed any more, so there is nothing to retry.
         post(sessions(id) + "/" + sid + "/retry", a, null, 409);

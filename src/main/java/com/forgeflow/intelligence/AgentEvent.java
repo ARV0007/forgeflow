@@ -21,6 +21,11 @@ public record AgentEvent(String type, String message, String path, Object data) 
                 + " from " + files.size() + " file" + (files.size() == 1 ? "" : "s"), null, files);
     }
 
+    public static AgentEvent recalled(int messages) {
+        return new AgentEvent("recalled", "Remembered " + messages + " earlier message" + (messages == 1 ? "" : "s")
+                + " from this chat", null, null);
+    }
+
     public static AgentEvent notes(List<String> sources) {
         return new AgentEvent("notes", "Used " + sources.size() + " reference note" + (sources.size() == 1 ? "" : "s"),
                 null, sources);

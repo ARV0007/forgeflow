@@ -377,7 +377,7 @@ public class CodeIndex {
     }
 
     /** Reciprocal Rank Fusion over two ranked id lists (best first). Ranks start at 1. */
-    static Map<Long, Double> fuse(List<Long> byMeaning, List<Long> byWords, Fusion w) {
+    public static Map<Long, Double> fuse(List<Long> byMeaning, List<Long> byWords, Fusion w) {
         Map<Long, Double> scores = new HashMap<>();
         for (int i = 0; i < byMeaning.size(); i++) {
             scores.merge(byMeaning.get(i), w.vectorWeight() / (RRF_K + i + 1), Double::sum);
@@ -431,7 +431,7 @@ public class CodeIndex {
      * strict whitelist of characters, so nothing the user typed can be read as
      * tsquery syntax.
      */
-    static String keywordQuery(String query) {
+    public static String keywordQuery(String query) {
         Set<String> words = new LinkedHashSet<>();
         Matcher m = QUERY_WORD.matcher(query);
         while (m.find() && words.size() < 16) {
@@ -441,7 +441,7 @@ public class CodeIndex {
     }
 
     /** pgvector's text form: [0.1,0.2,...] */
-    static String literal(float[] v) {
+    public static String literal(float[] v) {
         StringBuilder sb = new StringBuilder(v.length * 10).append('[');
         for (int i = 0; i < v.length; i++) {
             if (i > 0) {

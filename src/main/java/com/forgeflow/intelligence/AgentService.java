@@ -141,12 +141,22 @@ public class AgentService {
     public GenerateResponse generate(Long projectId, Long userId, String prompt, List<ImagePart> images,
                                      List<LlmMessage> priorTurns, Long sessionId,
                                      Consumer<AgentEvent> listener) {
+        return generate(projectId, userId, prompt, images, priorTurns, null, sessionId, listener);
+    }
+
+    /**
+     * @param recalled older parts of this chat that look relevant to the
+     *                 request (long memory, beyond priorTurns), or null
+     */
+    public GenerateResponse generate(Long projectId, Long userId, String prompt, List<ImagePart> images,
+                                     List<LlmMessage> priorTurns, RecalledContext recalled, Long sessionId,
+                                     Consumer<AgentEvent> listener) {
         // One span for the whole run; each model call and build inside it is
         // a child, so a slow run shows exactly which step was slow.
         try (Tracer.Span span = tracer.start("agent.run")) {
             span.tag("project.id", projectId).tag("session.id", sessionId);
             try {
-                GenerateResponse r = run(projectId, userId, prompt, images, priorTurns, sessionId, listener);
+                GenerateResponse r = run(projectId, userId, prompt, images, priorTurns, recalled, sessionId, listener);
                 span.tag("run.id", r.runId()).tag("run.status", r.status()).tag("run.stop_reason", r.stopReason())
                     .tag("run.tokens", r.totalTokens()).tag("run.repair_rounds", r.repairRounds());
                 return r;
@@ -158,7 +168,7 @@ public class AgentService {
     }
 
     private GenerateResponse run(Long projectId, Long userId, String prompt, List<ImagePart> images,
-                                 List<LlmMessage> priorTurns, Long sessionId,
+                                 List<LlmMessage> priorTurns, RecalledContext recalled, Long sessionId,
                                  Consumer<AgentEvent> listener) {
 
         // Before anything is spent. A soft limit: a run that starts under the
@@ -202,6 +212,12 @@ public class AgentService {
             }
         } catch (RuntimeException e) {
             log.warn("retrieval for project {} failed, continuing without it: {}", projectId, e.toString());
+        }
+        // Long chat memory: older messages of this conversation that the
+        // recent window no longer shows but this request seems to refer to.
+        if (recalled != null && recalled.messages() > 0) {
+            request = request + "\n\n" + recalled.text();
+            emit(listener, AgentEvent.recalled(recalled.messages()));
         }
         // RAG over the knowledge base: the few reference notes most relevant
         // to this request, for this project's stack. Never fatal either.

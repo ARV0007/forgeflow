@@ -11,6 +11,7 @@ import com.forgeflow.chat.dto.ToolCallSummary;
 import com.forgeflow.chat.dto.VisualReviewResponse;
 import com.forgeflow.intelligence.AgentEvent;
 import com.forgeflow.intelligence.AgentService;
+import com.forgeflow.intelligence.RecalledContext;
 import com.forgeflow.intelligence.VisualReviewer;
 import com.forgeflow.intelligence.dto.GenerateResponse;
 import com.forgeflow.shared.ResourceNotFoundException;
@@ -64,6 +65,8 @@ public class ChatService {
     private final VisualReviewer reviewer;
     private final ObjectMapper json = new ObjectMapper();
     private final int memoryMessages;
+    private final ChatRecall recall;
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ChatService.class);
 
     public ChatService(ProjectService projects,
                        ChatSessionRepository sessions,
@@ -74,6 +77,7 @@ public class ChatService {
                        AttachmentStore attachments,
                        ReviewStore reviews,
                        VisualReviewer reviewer,
+                       ChatRecall recall,
                        @Value("${forgeflow.chat.memory-messages:10}") int memoryMessages) {
         this.projects = projects;
         this.sessions = sessions;
@@ -85,6 +89,7 @@ public class ChatService {
         this.reviews = reviews;
         this.reviewer = reviewer;
         this.memoryMessages = memoryMessages;
+        this.recall = recall;
     }
 
     // ------------------------------------------------------------ sessions
@@ -138,8 +143,9 @@ public class ChatService {
     // --------------------------------------------------------------- turns
 
     /** Everything complete() needs, captured while still on the request thread. */
+    /** {@code windowStart}: the oldest message in {@code memory} - anything before it is for recall. */
     public record Turn(Long projectId, Long sessionId, Long userId, String prompt, List<ImagePart> images,
-                       ChatMessage userMessage, List<LlmMessage> memory) {
+                       ChatMessage userMessage, List<LlmMessage> memory, Long windowStart) {
     }
 
     public Turn begin(Long projectId, Long sessionId, Long userId, String content) {
@@ -186,7 +192,7 @@ public class ChatService {
             sessions.save(session);
 
             return new Turn(projectId, sessionId, userId, userMessage.getContent(), List.copyOf(parts), userMessage,
-                    memoryBefore(sessionId, userMessage.getId()));
+                    memoryBefore(sessionId, userMessage.getId()), windowStart(sessionId, userMessage.getId()));
         } catch (RuntimeException e) {
             locks.release(sessionId);
             throw e;
@@ -217,7 +223,7 @@ public class ChatService {
             // question fresh, not alongside its own failure notice.
             // The question's images go again: a retry asks exactly what was asked.
             return new Turn(projectId, sessionId, userId, question.getContent(), attachments.imagesOf(question.getId()),
-                    null, memoryBefore(sessionId, question.getId()));
+                    null, memoryBefore(sessionId, question.getId()), windowStart(sessionId, question.getId()));
         } catch (RuntimeException e) {
             locks.release(sessionId);
             throw e;
@@ -227,8 +233,15 @@ public class ChatService {
     /** Run the agent and record its reply. Always releases the session lock. */
     public ChatTurnResponse complete(Turn turn, Consumer<AgentEvent> listener) {
         try {
+            // Long memory: searched here, off the request thread - it may embed.
+            RecalledContext recalled = null;
+            try {
+                recalled = recall.recall(turn.sessionId(), turn.windowStart(), turn.prompt()).orElse(null);
+            } catch (RuntimeException e) {
+                log.warn("recall for session {} failed, continuing with the recent window: {}", turn.sessionId(), e.toString());
+            }
             GenerateResponse run = agent.generate(turn.projectId(), turn.userId(), turn.prompt(), turn.images(),
-                    turn.memory(), turn.sessionId(), listener);
+                    turn.memory(), recalled, turn.sessionId(), listener);
 
             ChatMessage reply = new ChatMessage();
             reply.setSessionId(turn.sessionId());
@@ -267,6 +280,13 @@ public class ChatService {
      *  - a window that starts mid-exchange drops its leading assistant reply;
      *  - consecutive replies (a failure, then its retry) collapse to the newest.
      */
+    /** The oldest message the window holds, or null when there is nothing before the anchor. */
+    Long windowStart(Long sessionId, Long beforeMessageId) {
+        List<ChatMessage> window = messages.findBySessionIdAndIdLessThanOrderByIdDesc(
+                sessionId, beforeMessageId, PageRequest.of(0, memoryMessages));
+        return window.isEmpty() ? null : window.get(window.size() - 1).getId();
+    }
+
     List<LlmMessage> memoryBefore(Long sessionId, Long beforeMessageId) {
         List<ChatMessage> window = new ArrayList<>(messages.findBySessionIdAndIdLessThanOrderByIdDesc(
                 sessionId, beforeMessageId, PageRequest.of(0, memoryMessages)));

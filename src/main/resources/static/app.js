@@ -415,6 +415,7 @@ function pendingReply() {
           step('st st-rag', `${esc(ev.message.split(' from ')[0].toLowerCase())} from ${shown}${files.length > 4 ? ` +${files.length - 4} more` : ''}`);
           break;
         }
+        case 'recalled': step('st st-rag', esc(ev.message.toLowerCase())); break;
         case 'notes': {
           // RAG over the knowledge base: which reference notes went with the request.
           const notes = Array.isArray(ev.data) ? ev.data : [];
