@@ -664,6 +664,24 @@ paths:
         "402": { $ref: "#/components/responses/QuotaExceeded" }
         "404": { $ref: "#/components/responses/Problem" }
 
+  /api/v1/knowledge:
+    get:
+      tags: [Search]
+      summary: The knowledge base - ForgeFlow's reference notes the agent retrieves from
+      responses:
+        "200": { description: One row per note, content: { application/json: { schema: { type: array, items: { type: object, properties: { doc: { type: string }, title: { type: string }, stacks: { type: string }, sections: { type: integer } } } } } } }
+
+  /api/v1/knowledge/search:
+    get:
+      tags: [Search]
+      summary: Search the reference notes - the search the agent's search_docs tool runs
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string }, example: useEffect cleanup interval }
+        - { name: k, in: query, schema: { type: integer, default: 5, maximum: 10 } }
+        - { name: stack, in: query, description: "only notes for this stack", schema: { type: string, enum: [static, react] } }
+      responses:
+        "200": { description: Sections, best first, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/KnowledgeHit" } } } } }
+
   # --------------------------------------------------------------- billing
   /api/v1/billing/plans:
     get:
@@ -1016,6 +1034,15 @@ components:
         skipped: { type: object, additionalProperties: { type: integer }, description: "Count per reason: IGNORED_FOLDER, BINARY, TOO_LARGE, UNSAFE_PATH, OVER_FILE_LIMIT" }
         bytes: { type: integer }
         checkpointId: { type: integer }
+    KnowledgeHit:
+      type: object
+      properties:
+        doc: { type: string, example: react-state-and-effects }
+        title: { type: string }
+        section: { type: string }
+        score: { type: number }
+        content: { type: string }
+        source: { type: string, example: "react-state-and-effects › Cleaning up" }
     AskAnswer:
       type: object
       properties:

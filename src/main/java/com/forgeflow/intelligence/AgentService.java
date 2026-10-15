@@ -7,6 +7,7 @@ import com.forgeflow.billing.UsageMeter;
 import com.forgeflow.execution.BuildResult;
 import com.forgeflow.execution.ExecutionService;
 import com.forgeflow.intelligence.retrieval.CodeIndex;
+import com.forgeflow.intelligence.retrieval.KnowledgeBase;
 import com.forgeflow.workspace.CheckpointService;
 import com.forgeflow.workspace.ProjectService;
 import com.forgeflow.shared.events.CodeGenerated;
@@ -61,6 +62,7 @@ public class AgentService {
     private final Entitlements entitlements;
     private final UsageMeter usage;
     private final CodeIndex index;
+    private final KnowledgeBase knowledge;
     private final EventBus events;
     private final CheckpointService checkpoints;
     private final Tracer tracer;
@@ -79,6 +81,7 @@ public class AgentService {
                         Entitlements entitlements,
                         UsageMeter usage,
                         CodeIndex index,
+                        KnowledgeBase knowledge,
                         EventBus events,
                         CheckpointService checkpoints,
                         Tracer tracer,
@@ -95,6 +98,7 @@ public class AgentService {
         this.entitlements = entitlements;
         this.usage = usage;
         this.index = index;
+        this.knowledge = knowledge;
         this.events = events;
         this.checkpoints = checkpoints;
         this.tracer = tracer;
@@ -198,6 +202,17 @@ public class AgentService {
             }
         } catch (RuntimeException e) {
             log.warn("retrieval for project {} failed, continuing without it: {}", projectId, e.toString());
+        }
+        // RAG over the knowledge base: the few reference notes most relevant
+        // to this request, for this project's stack. Never fatal either.
+        try {
+            Optional<KnowledgeBase.Notes> notes = knowledge.notesFor(prompt, projects.stackOf(projectId));
+            if (notes.isPresent()) {
+                request = request + "\n\n" + notes.get().text();
+                emit(listener, AgentEvent.notes(notes.get().hits().stream().map(KnowledgeBase.Hit::source).toList()));
+            }
+        } catch (RuntimeException e) {
+            log.warn("knowledge notes for project {} failed, continuing without them: {}", projectId, e.toString());
         }
         // The runtime half of self-healing: what the app actually did in a
         // browser since the last build, which the build gate can't see.

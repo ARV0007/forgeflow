@@ -415,6 +415,12 @@ function pendingReply() {
           step('st st-rag', `${esc(ev.message.split(' from ')[0].toLowerCase())} from ${shown}${files.length > 4 ? ` +${files.length - 4} more` : ''}`);
           break;
         }
+        case 'notes': {
+          // RAG over the knowledge base: which reference notes went with the request.
+          const notes = Array.isArray(ev.data) ? ev.data : [];
+          step('st st-rag', `read notes: ${notes.slice(0, 3).map(n => `<code>${esc(n)}</code>`).join(', ')}`);
+          break;
+        }
         case 'tool':
           if (ev.message !== 'write_file') step('st', `${esc(ev.message.replace('_', ' '))} <code>${esc(ev.path || '')}</code>`);
           break;

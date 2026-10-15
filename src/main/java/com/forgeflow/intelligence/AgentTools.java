@@ -4,6 +4,7 @@ import com.forgeflow.shared.llm.ToolCall;
 import com.forgeflow.shared.llm.ToolResult;
 import com.forgeflow.shared.llm.ToolSpec;
 import com.forgeflow.intelligence.retrieval.CodeIndex;
+import com.forgeflow.intelligence.retrieval.KnowledgeBase;
 import com.forgeflow.workspace.ProjectFileService;
 import com.forgeflow.workspace.dto.FileEntry;
 import org.slf4j.Logger;
@@ -30,10 +31,12 @@ public class AgentTools {
 
     private final ProjectFileService files;
     private final CodeIndex index;
+    private final KnowledgeBase knowledge;
 
-    public AgentTools(ProjectFileService files, CodeIndex index) {
+    public AgentTools(ProjectFileService files, CodeIndex index, KnowledgeBase knowledge) {
         this.files = files;
         this.index = index;
+        this.knowledge = knowledge;
     }
 
     public List<ToolSpec> specs() {
@@ -53,6 +56,15 @@ public class AgentTools {
                                 + "larger project, then read_file the file before changing it.",
                         schema(Map.of("query", prop("string",
                                         "What you are looking for, e.g. 'dark mode toggle' or 'renderTodos'")),
+                               List.of("query"))),
+
+                new ToolSpec("search_docs",
+                        "Search ForgeFlow's reference notes on building web apps well: React state and "
+                                + "effects, list keys, Vite project setup, forms, CSS layout, responsive design, "
+                                + "dark mode, accessibility, DOM events, localStorage, fetch, animation, timers, "
+                                + "money and dates. Use it when unsure how to do something correctly.",
+                        schema(Map.of("query", prop("string",
+                                        "What you want to know, e.g. 'useEffect cleanup interval' or 'center a div'")),
                                List.of("query"))),
 
                 new ToolSpec("edit_file",
@@ -108,6 +120,7 @@ public class AgentTools {
                 case "list_files" -> listFiles(projectId);
                 case "read_file" -> readFile(projectId, str(call, "path"));
                 case "search_code" -> searchCode(projectId, str(call, "query"));
+                case "search_docs" -> searchDocs(str(call, "query"));
                 case "edit_file" -> editFile(projectId, userId, str(call, "path"),
                         str(call, "old_text"), str(call, "new_text"));
                 case "write_file" -> writeFile(projectId, userId, str(call, "path"), str(call, "content"));
@@ -142,6 +155,22 @@ public class AgentTools {
         return files.read(projectId, path)
                 .map(content -> ToolResult.ok("read_file", content))
                 .orElseGet(() -> ToolResult.failed("read_file", "No such file: " + path));
+    }
+
+    private ToolResult searchDocs(String query) {
+        if (query == null || query.isBlank()) {
+            throw new ToolException("query is required");
+        }
+        List<KnowledgeBase.Hit> hits = knowledge.search(query, 3, null);
+        if (hits.isEmpty()) {
+            return ToolResult.ok("search_docs", "No notes match. Rely on what you know, and keep it simple.");
+        }
+        StringBuilder sb = new StringBuilder();
+        for (KnowledgeBase.Hit h : hits) {
+            sb.append("--- ").append(h.title()).append(" \u203a ").append(h.section()).append(" ---\n")
+              .append(h.content()).append("\n\n");
+        }
+        return ToolResult.ok("search_docs", sb.toString().strip());
     }
 
     private ToolResult searchCode(Long projectId, String query) {
