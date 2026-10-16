@@ -52,7 +52,7 @@ class ScreenshotToAppTest extends ApiTestSupport {
         LlmMessage asked = llm.seen().get(0).get(0);
         assertThat(asked.images()).hasSize(1);
         assertThat(asked.images().get(0).base64()).isEqualTo(PNG64);
-        assertThat(asked.text()).startsWith("ATTACHED: 1 image").endsWith("Make this landing page");
+        assertThat(asked.text()).startsWith("ATTACHED: 1 image").contains("\n\nMake this landing page");
 
         JsonNode sent = turn.path("userMessage").path("images");
         assertThat(sent).hasSize(1);

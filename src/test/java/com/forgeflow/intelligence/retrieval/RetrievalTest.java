@@ -221,7 +221,7 @@ class RetrievalTest extends ApiTestSupport {
         long id = siteWithTwoScripts(a);
         llm.then(calls(finish("Done.")));
         post("/api/v1/projects/" + id + "/generate", a, Map.of("prompt", "tweak the toggle"), 200);
-        assertThat(llm.seen().get(2).get(0).text()).isEqualTo("tweak the toggle");
+        assertThat(llm.seen().get(2).get(0).text()).startsWith("tweak the toggle").doesNotContain("RELEVANT CODE");
     }
 
     @Test

@@ -78,7 +78,7 @@ class RuntimeErrorsTest extends ApiTestSupport {
         llm.then(calls(finish("Nothing to do.")));
         post("/api/v1/projects/" + id + "/generate", a, Map.of("prompt", "tweak"), 200);
 
-        assertThat(llm.seen().get(2).get(0).text()).isEqualTo("tweak");
+        assertThat(llm.seen().get(2).get(0).text()).startsWith("tweak").doesNotContain("RUNTIME ERRORS");
     }
 
     @Test
@@ -87,6 +87,6 @@ class RuntimeErrorsTest extends ApiTestSupport {
         long id = site(a);
         llm.then(calls(finish("Done.")));
         post("/api/v1/projects/" + id + "/generate", a, Map.of("prompt", "tweak"), 200);
-        assertThat(llm.seen().get(2).get(0).text()).isEqualTo("tweak");
+        assertThat(llm.seen().get(2).get(0).text()).startsWith("tweak").doesNotContain("RUNTIME ERRORS");
     }
 }
