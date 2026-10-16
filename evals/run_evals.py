@@ -134,12 +134,20 @@ def main():
                     help="seconds between cases. The free tier allows 5 requests\n"
                          "per minute and one run makes 4-6, so anything less than\n"
                          "about a minute starts the next case inside a spent quota.")
+    # RAG A/B: run the same cases with retrieval switched differently and
+    # compare. Leave both out for the product's defaults.
+    ap.add_argument("--code-context", choices=["auto", "always", "off"],
+                    help="retrieved code per run: auto (product default), always, off")
+    ap.add_argument("--notes", type=int, choices=range(0, 6), metavar="0-5",
+                    help="reference notes per run (product default 3; 0 = none)")
     args = ap.parse_args()
+    args.rag = {k: v for k, v in (("codeContext", args.code_context), ("notes", args.notes)) if v is not None}
 
     golden = json.load(open(os.path.join(HERE, "golden.json")))
     cases = golden["cases"][: args.limit] if args.limit else golden["cases"]
 
-    print(f"ForgeFlow evals - {len(cases)} case(s) against {args.base}\n")
+    print(f"ForgeFlow evals - {len(cases)} case(s) against {args.base}"
+          + (f"  [rag: {', '.join(f'{k}={v}' for k, v in args.rag.items())}]" if args.rag else "") + "\n")
     token = sign_in(args.base, args.email, args.password)
     clean_up_earlier_runs(args.base, token)
 
@@ -157,7 +165,7 @@ def main():
         ok_now = sum(1 for r in results if r.get("passed"))
         tmp = out + ".tmp"
         with open(tmp, "w") as f:
-            json.dump({"base": args.base, "ranAt": stamp, "finished": finished,
+            json.dump({"base": args.base, "ranAt": stamp, "finished": finished, "rag": args.rag or "defaults",
                        "casesPlanned": len(cases), "casesRun": len(results),
                        "passRate": 100.0 * ok_now / len(results) if results else 0.0,
                        "results": results}, f, indent=2)
@@ -202,11 +210,12 @@ def run_followup(args, case, pid, token):
     """
     time.sleep(min(args.pause, 30))     # the build just used a chunk of the model's per-minute quota
     run = call(args.base, f"/api/v1/projects/{pid}/generate", "POST",
-               {"prompt": case["followup"]}, token)
+               {"prompt": case["followup"], **args.rag}, token)
     usage = run.get("toolUsage")
     return {"prompt": case["followup"], "buildPassed": run.get("buildPassed") is True,
             "style": edit_style(usage), "toolUsage": usage,
-            "totalTokens": run.get("totalTokens"), "costUsd": run.get("costUsd"), "durationMs": run.get("durationMs")}
+            "totalTokens": run.get("totalTokens"), "costUsd": run.get("costUsd"), "durationMs": run.get("durationMs"),
+            "rag": run.get("rag")}
 
 
 def run_cases(args, cases, results, save):
@@ -230,7 +239,7 @@ def run_cases(args, cases, results, save):
             follow = None
             try:
                 run = call(args.base, f"/api/v1/projects/{pid}/generate", "POST",
-                           {"prompt": case["prompt"]}, token)
+                           {"prompt": case["prompt"], **args.rag}, token)
                 files = call(args.base, f"/api/v1/projects/{pid}/files", token=token)
                 if case.get("followup") and run.get("buildPassed"):
                     follow = run_followup(args, case, pid, token)
@@ -249,6 +258,7 @@ def run_cases(args, cases, results, save):
                 "costUsd": run.get("costUsd"),
                 "durationMs": run.get("durationMs"),
                 "toolUsage": run.get("toolUsage"),
+                "rag": run.get("rag"),
             })
             if follow:
                 results[-1]["followup"] = follow
@@ -293,6 +303,10 @@ def report(results, started):
         print(f"  cost per app     ${spent/len(done):.4f} mean  (${spent:.4f} for {len(done)}, at list price)")
     print(f"  mean duration    {avg('durationMs')/1000:.1f}s")
     print(f"  mean repairs     {avg('repairRounds'):.2f}")
+    rag = [r.get("rag") or {} for r in done]
+    if any(rag):
+        print(f"  retrieval used   {sum(x.get('codeExcerpts', 0) for x in rag)/len(rag):.1f} code excerpts, "
+              f"{sum(x.get('notes', 0) for x in rag)/len(rag):.1f} notes per app (mean)")
     print(f"  wall clock       {(time.time()-started)/60:.1f} min")
 
     for name in ["build_passed", "has_index", "no_empty_files", "js_when_needed"]:
@@ -307,6 +321,10 @@ def report(results, started):
         print(f"  follow-ups       {sum(f['buildPassed'] for f in follows)}/{len(follows)} still build")
         print(f"  how they changed " + ", ".join(f"{k} {v}" for k, v in sorted(styles.items())))
         print(f"  follow-up tokens {sum(f['totalTokens'] or 0 for f in follows)/len(follows):.0f} mean")
+        frag = [f.get("rag") or {} for f in follows]
+        if any(frag):
+            print(f"  follow-up rag    {sum(x.get('codeExcerpts', 0) for x in frag)/len(frag):.1f} code excerpts, "
+                  f"{sum(x.get('notes', 0) for x in frag)/len(frag):.1f} notes (mean)")
     print("=" * 62)
 
 

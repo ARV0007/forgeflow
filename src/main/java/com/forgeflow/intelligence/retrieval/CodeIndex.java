@@ -395,7 +395,12 @@ public class CodeIndex {
      * request instead. That is the retrieval half of RAG.
      */
     public Optional<RetrievedContext> contextFor(Long projectId, String prompt) {
-        if (fitsWhole(projectId)) {
+        return contextFor(projectId, prompt, false);
+    }
+
+    /** @param evenIfSmall retrieve even when the project fits whole - for measuring what retrieval adds */
+    public Optional<RetrievedContext> contextFor(Long projectId, String prompt, boolean evenIfSmall) {
+        if (!evenIfSmall && fitsWhole(projectId)) {
             return Optional.empty();
         }
         List<SearchHit> hits = search(projectId, prompt, topK);

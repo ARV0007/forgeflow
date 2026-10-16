@@ -29,7 +29,8 @@ public class KnowledgeController {
     @GetMapping("/api/v1/knowledge/search")
     public List<KnowledgeBase.Hit> search(@RequestParam("q") String q,
                                          @RequestParam(defaultValue = "5") int k,
-                                         @RequestParam(required = false) String stack) {
+                                         @RequestParam(required = false) String stack,
+                                         @RequestParam(defaultValue = "hybrid") String mode) {
         Stack s = null;
         if (stack != null && !stack.isBlank()) {
             try {
@@ -38,6 +39,12 @@ public class KnowledgeController {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "stack must be static or react");
             }
         }
-        return knowledge.search(q, k, s);
+        CodeIndex.Mode m;
+        try {
+            m = CodeIndex.Mode.valueOf(mode.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "mode must be hybrid, vector or keyword");
+        }
+        return knowledge.search(q, k, s, m);
     }
 }

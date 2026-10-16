@@ -679,6 +679,7 @@ paths:
         - { name: q, in: query, required: true, schema: { type: string }, example: useEffect cleanup interval }
         - { name: k, in: query, schema: { type: integer, default: 5, maximum: 10 } }
         - { name: stack, in: query, description: "only notes for this stack", schema: { type: string, enum: [static, react] } }
+        - { name: mode, in: query, description: "hybrid (default), or vector / keyword alone - for measuring each half", schema: { type: string, enum: [hybrid, vector, keyword], default: hybrid } }
       responses:
         "200": { description: Sections, best first, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/KnowledgeHit" } } } } }
 
@@ -780,7 +781,13 @@ components:
       required: true
       content:
         application/json:
-          schema: { type: object, required: [prompt], properties: { prompt: { type: string, maxLength: 4000 } } }
+          schema:
+            type: object
+            required: [prompt]
+            properties:
+              prompt: { type: string, maxLength: 4000 }
+              codeContext: { type: string, enum: [auto, always, off], description: "retrieved code for this run: auto (only past 15 files, the default), always, or off - for measuring RAG" }
+              notes: { type: integer, minimum: 0, maximum: 5, description: "reference notes to attach (default: the configured 3; 0 = none)" }
     Message:
       required: true
       content:
@@ -897,6 +904,10 @@ components:
           description: Calls per tool name, e.g. {"edit_file":1,"finish":1,"read_file":1}
           additionalProperties: { type: integer }
         costUsd: { type: number, description: "the run's model calls at list price, USD (0 for a model with no known price)" }
+        rag:
+          type: object
+          description: "What retrieval added to the request: codeExcerpts, notes, recalled (earlier chat messages)"
+          additionalProperties: { type: integer }
     ApiToken:
       type: object
       properties:

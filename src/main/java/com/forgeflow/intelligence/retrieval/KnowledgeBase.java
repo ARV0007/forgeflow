@@ -244,13 +244,18 @@ public class KnowledgeBase {
 
     /** @param stack null = every note; otherwise only notes that apply to it */
     public List<Hit> search(String query, int k, Stack stack) {
+        return search(query, k, stack, CodeIndex.Mode.HYBRID);
+    }
+
+    /** @param mode one half alone (VECTOR, KEYWORD) is for measuring what each contributes */
+    public List<Hit> search(String query, int k, Stack stack, CodeIndex.Mode mode) {
         if (query == null || query.isBlank()) {
             return List.of();
         }
         ensureLoaded();
         String stackFilter = stack == null ? "%" : "%" + stack.name().toLowerCase(Locale.ROOT) + "%";
         List<Long> byMeaning = List.of();
-        try {
+        if (mode != CodeIndex.Mode.KEYWORD) try {
             float[] v = embedder.embed(List.of(query), Embedder.Kind.QUERY).get(0);
             byMeaning = jdbc.queryForList("""
                     SELECT id FROM knowledge_chunks
@@ -260,7 +265,7 @@ public class KnowledgeBase {
         } catch (RuntimeException e) {
             log.warn("knowledge query embedding failed, keywords only: {}", e.getMessage());
         }
-        String keywords = CodeIndex.keywordQuery(query);
+        String keywords = mode == CodeIndex.Mode.VECTOR ? null : CodeIndex.keywordQuery(query);
         List<Long> byWords = keywords == null ? List.of() : jdbc.queryForList("""
                 SELECT id FROM knowledge_chunks, to_tsquery('english', ?) q
                 WHERE tsv @@ q AND stacks LIKE ?

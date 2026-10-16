@@ -151,12 +151,25 @@ public class AgentService {
     public GenerateResponse generate(Long projectId, Long userId, String prompt, List<ImagePart> images,
                                      List<LlmMessage> priorTurns, RecalledContext recalled, Long sessionId,
                                      Consumer<AgentEvent> listener) {
+        return generate(projectId, userId, prompt, images, priorTurns, recalled, RagOptions.DEFAULT, sessionId, listener);
+    }
+
+    /** A one-off generate with its own retrieval settings - how the evals measure RAG. */
+    public GenerateResponse generate(Long projectId, Long userId, String prompt, RagOptions rag,
+                                     Consumer<AgentEvent> listener) {
+        return generate(projectId, userId, prompt, List.of(), null, null, rag, null, listener);
+    }
+
+    public GenerateResponse generate(Long projectId, Long userId, String prompt, List<ImagePart> images,
+                                     List<LlmMessage> priorTurns, RecalledContext recalled, RagOptions rag,
+                                     Long sessionId, Consumer<AgentEvent> listener) {
         // One span for the whole run; each model call and build inside it is
         // a child, so a slow run shows exactly which step was slow.
         try (Tracer.Span span = tracer.start("agent.run")) {
             span.tag("project.id", projectId).tag("session.id", sessionId);
             try {
-                GenerateResponse r = run(projectId, userId, prompt, images, priorTurns, recalled, sessionId, listener);
+                GenerateResponse r = run(projectId, userId, prompt, images, priorTurns, recalled,
+                        rag == null ? RagOptions.DEFAULT : rag, sessionId, listener);
                 span.tag("run.id", r.runId()).tag("run.status", r.status()).tag("run.stop_reason", r.stopReason())
                     .tag("run.tokens", r.totalTokens()).tag("run.repair_rounds", r.repairRounds());
                 return r;
@@ -168,8 +181,8 @@ public class AgentService {
     }
 
     private GenerateResponse run(Long projectId, Long userId, String prompt, List<ImagePart> images,
-                                 List<LlmMessage> priorTurns, RecalledContext recalled, Long sessionId,
-                                 Consumer<AgentEvent> listener) {
+                                 List<LlmMessage> priorTurns, RecalledContext recalled, RagOptions rag,
+                                 Long sessionId, Consumer<AgentEvent> listener) {
 
         // Before anything is spent. A soft limit: a run that starts under the
         // daily allowance is allowed to finish, so the overshoot is bounded by
@@ -204,10 +217,13 @@ public class AgentService {
         // the excerpts most relevant to it. Retrieval failing is never fatal -
         // the agent still has list_files, read_file and search_code.
         String request = prompt;
+        Map<String, Integer> ragUsed = new TreeMap<>(Map.of("codeExcerpts", 0, "notes", 0, "recalled", 0));
         try {
-            Optional<CodeIndex.RetrievedContext> context = index.contextFor(projectId, prompt);
+            Optional<CodeIndex.RetrievedContext> context = rag.code() == RagOptions.Code.OFF ? Optional.empty()
+                    : index.contextFor(projectId, prompt, rag.code() == RagOptions.Code.ALWAYS);
             if (context.isPresent()) {
                 request = prompt + "\n\n" + context.get().text();
+                ragUsed.put("codeExcerpts", context.get().excerpts());
                 emit(listener, AgentEvent.retrieved(context.get().excerpts(), context.get().files()));
             }
         } catch (RuntimeException e) {
@@ -217,14 +233,18 @@ public class AgentService {
         // recent window no longer shows but this request seems to refer to.
         if (recalled != null && recalled.messages() > 0) {
             request = request + "\n\n" + recalled.text();
+            ragUsed.put("recalled", recalled.messages());
             emit(listener, AgentEvent.recalled(recalled.messages()));
         }
         // RAG over the knowledge base: the few reference notes most relevant
         // to this request, for this project's stack. Never fatal either.
         try {
-            Optional<KnowledgeBase.Notes> notes = knowledge.notesFor(prompt, projects.stackOf(projectId));
+            Optional<KnowledgeBase.Notes> notes = rag.notes() == null
+                    ? knowledge.notesFor(prompt, projects.stackOf(projectId))
+                    : knowledge.notesFor(prompt, projects.stackOf(projectId), rag.notes());
             if (notes.isPresent()) {
                 request = request + "\n\n" + notes.get().text();
+                ragUsed.put("notes", notes.get().hits().size());
                 emit(listener, AgentEvent.notes(notes.get().hits().stream().map(KnowledgeBase.Hit::source).toList()));
             }
         } catch (RuntimeException e) {
@@ -448,7 +468,8 @@ public class AgentService {
 
         GenerateResponse result = new GenerateResponse(run.getId(), status, stopReason, summary,
                 List.copyOf(written), toolCallCount, repairRounds, buildPassed, totalTokens, durationMs,
-                run.getErrorMessage(), java.util.Collections.unmodifiableMap(toolUsage), run.getCostUsd());
+                run.getErrorMessage(), java.util.Collections.unmodifiableMap(toolUsage), run.getCostUsd(),
+                java.util.Collections.unmodifiableMap(ragUsed));
 
         emit(listener, AgentEvent.done(result));
         return result;

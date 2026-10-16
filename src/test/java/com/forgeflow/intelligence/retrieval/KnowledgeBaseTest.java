@@ -144,4 +144,17 @@ class KnowledgeBaseTest extends ApiTestSupport {
         assertThat(hits.get(0).path("source").asText()).startsWith("react-state-and-effects ›");
         get("/api/v1/knowledge/search?q=x&stack=cobol", a, 400);
     }
+
+    @Test
+    void eachHalfOfTheSearchCanRunAlone() {
+        Account a = signup("notes-modes");
+        for (String mode : new String[]{"keyword", "vector", "hybrid"}) {
+            JsonNode hits = get("/api/v1/knowledge/search?q=prefers-color-scheme&mode=" + mode, a, 200);
+            assertThat(hits.size()).as(mode).isPositive();
+        }
+        // A word no note contains: keywords alone find nothing; meaning always returns its nearest.
+        assertThat(get("/api/v1/knowledge/search?q=zyxwvutsrq&mode=keyword", a, 200)).isEmpty();
+        assertThat(get("/api/v1/knowledge/search?q=zyxwvutsrq&mode=vector", a, 200)).isNotEmpty();
+        get("/api/v1/knowledge/search?q=x&mode=telepathy", a, 400);
+    }
 }

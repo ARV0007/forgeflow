@@ -47,7 +47,8 @@ public class AgentController {
                                      Authentication auth) {
         Long userId = (Long) auth.getPrincipal();
         projects.requireWrite(projectId, userId);   // 404 if no access, 403 if VIEWER
-        return agent.generate(projectId, userId, request.prompt());
+        RagOptions rag = RagOptions.parse(request.codeContext(), request.notes());
+        return agent.generate(projectId, userId, request.prompt(), rag, event -> { });
     }
 
     @PostMapping(value = "/generate/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -61,6 +62,7 @@ public class AgentController {
         // Do it inside the background task and a forbidden request would get
         // 200 plus an error event instead of a clean 404.
         projects.requireWrite(projectId, userId);
+        RagOptions rag = RagOptions.parse(request.codeContext(), request.notes());
         // Same reason: out of tokens must be a real 402, not an error event in a 200.
         entitlements.requireRoomFor(userId, Quota.AI_TOKENS_PER_DAY);
 
@@ -68,7 +70,7 @@ public class AgentController {
 
         executor.submit(Tracer.wrap(() -> {
             try {
-                agent.generate(projectId, userId, request.prompt(), event -> {
+                agent.generate(projectId, userId, request.prompt(), rag, event -> {
                     try {
                         emitter.send(SseEmitter.event().name(event.type()).data(event));
                     } catch (Exception e) {
