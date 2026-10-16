@@ -1106,3 +1106,79 @@ Gotchas: `/mcp` now refuses callers with no token (401) unless
 `FORGEFLOW_MCP_API_KEY` is set and sent, or `FORGEFLOW_MCP_OPEN=true` (local
 only). A token can't create or revoke tokens - do that signed in.
 
+
+## 28. RAG everywhere (15–16 Oct)
+
+### Try each piece in the workbench
+
+1. **Ask.** Open a project with some code → click **Ask** (next to
+   Generate) → type "where is the total calculated?" → the answer comes back
+   with chips like `[1] app.js 12-30`. Click a chip: the file opens at those
+   lines. Ask something that isn't there ("how does login work?") and you
+   should get "I couldn't find that in this project's code".
+2. **Import.** Top bar → **Import** → either paste
+   `https://github.com/owner/repo` (or `.../tree/main/some-folder` for one
+   folder) and click **Import**, or choose a `.zip` and click **Upload**. The message says how many files came
+   in and what was skipped. Undo it from **History**.
+3. **Reference notes.** Generate anything. In the activity feed look for
+   "read notes: ..." - those are the sections that went along with your request.
+4. **Long chat memory.** Only shows up in a chat past 10 messages. Refer back
+   to something from early on; the feed says "remembered N earlier messages from this chat".
+
+### From the command line
+
+```bash
+# Ask
+curl -s -X POST localhost:8081/api/v1/projects/42/ask -H "Authorization: Bearer $T" \
+     -H 'Content-Type: application/json' -d '{"question":"where is the cart total computed?"}'
+
+# Import a zip / a GitHub repo
+curl -s -X POST 'localhost:8081/api/v1/projects/42/import/zip?name=shop.zip' -H "Authorization: Bearer $T" \
+     -H 'Content-Type: application/zip' --data-binary @shop.zip
+curl -s -X POST localhost:8081/api/v1/projects/42/import/github -H "Authorization: Bearer $T" \
+     -H 'Content-Type: application/json' -d '{"url":"https://github.com/owner/repo"}'
+
+# Search the notes - one half at a time
+curl -s "localhost:8081/api/v1/knowledge/search?q=dark%20theme%20flashes&mode=vector" -H "Authorization: Bearer $T"
+
+# Generate with the switches
+curl -s -X POST localhost:8081/api/v1/projects/42/generate -H "Authorization: Bearer $T" \
+     -H 'Content-Type: application/json' -d '{"prompt":"add a dark mode","notes":0,"codeContext":"always"}'
+```
+
+### Measuring it live (Aman runs these - they sign in)
+
+```bash
+# 1. The notes benchmark: read-only, no AI tokens. ~3 minutes with the 1 s pause.
+python3 evals/run_notes_eval.py --base https://forgeflow-7m08.onrender.com
+
+# 2. Do the notes help the apps? Same 20 prompts, notes off, then the default (3).
+python3 evals/run_evals.py --base https://forgeflow-7m08.onrender.com --notes 0
+python3 evals/run_evals.py --base https://forgeflow-7m08.onrender.com
+```
+
+Compare pass rate, tokens per app and repair rounds. Each full eval uses
+roughly a day's AI allowance, so run them on different days if the second
+one hits the 402.
+
+### Looking inside
+
+```sql
+SELECT doc, section, stacks, embedding_model, embedding IS NOT NULL AS has_vector
+FROM knowledge_chunks ORDER BY doc, chunk_index;
+
+-- which chat messages have been embedded (only ones beyond the last-10 window)
+SELECT id, role, embedding IS NOT NULL AS has_vector, left(content, 50)
+FROM chat_messages WHERE session_id = 7 ORDER BY id;
+```
+
+### Gotchas
+
+- Notes load on startup. Edit a `.md` in `resources/knowledge/` and restart -
+  only the changed note is re-embedded.
+- Put the stack comment at the top of the note: `<!-- stacks: react -->`.
+  No comment = applies to every stack.
+- Offline (`FORGEFLOW_EMBEDDER=hashing`) the vector half is meaningless - the
+  hashing embedder doesn't understand words. Benchmark numbers only mean
+  something with real embeddings.
+- Ask and Import count as AI calls for rate limiting (6 a minute by default).

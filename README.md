@@ -33,7 +33,7 @@ live preview · file tree · version history · every step streamed to the brows
 | **Follow-up changes** ("make the button green") | **5 / 5** still build, and all 5 were targeted **edits**, not rewrites of the file |
 | **Code search** (70 questions with known answers, 11 decoy files) | the right file is in the top 3 **99%** of the time and first **87%** (MRR 0.92); keyword-only: 79% / 63% |
 | **Tuning from the benchmark** | the keyword weight cut from 1.0 to **0.25**: top-1 81% → 87%, paraphrased questions 62% → 77% - better on the original and the decoy questions alike |
-| **Tests** | 219 tests against a real Postgres, Redis, Qdrant and S3 API on every push |
+| **Tests** | 243 tests against a real Postgres, Redis, Qdrant and S3 API on every push |
 
 How each number is produced: `evals/` and [`docs/WORKLOG.md`](docs/WORKLOG.md).
 
@@ -58,7 +58,7 @@ How each number is produced: `evals/` and [`docs/WORKLOG.md`](docs/WORKLOG.md).
 |---|---|
 | **Projects** | create, list, rename, delete; share with **editors** and **viewers**; public projects |
 | **Auth** | sign up, log in (JWT), get / edit my profile |
-| **AI generation** | **screenshot to app** (paste a screenshot or sketch; Gemini builds from it); chat sessions with **memory** (last 10 messages); streaming replies; **retry if failed**; a self-healing build gate; targeted `edit_file` changes; errors from the running preview fed back to the agent |
+| **AI generation** | **screenshot to app** (paste a screenshot or sketch; Gemini builds from it); chat sessions with **memory** (last 10 messages, plus **older messages recalled** by search when a request refers back); streaming replies; **retry if failed**; a self-healing build gate; targeted `edit_file` changes; errors from the running preview fed back to the agent |
 | **Files** | file tree, file content, save by hand, **download as zip**, who created / last changed each file |
 | **History** | a **version per AI run**, coloured diffs between versions, **one-click restore** (itself undoable) |
 | **Publish** | a public address serving a **frozen version** (a checkpoint): editing doesn't change it, publishing again does, and any earlier release can be **rolled back** in one click |
@@ -66,6 +66,9 @@ How each number is produced: `evals/` and [`docs/WORKLOG.md`](docs/WORKLOG.md).
 | **React apps** | create a project as **React + Vite**: the agent writes a real Vite project; the preview **compiles it in the browser** (Sucrase + a tiny module loader); **Run with Node** boots it under real Node.js in a **WebContainer** (`npm install`, `npm run dev`) |
 | **AI checks its own app** | after each change the preview photographs itself in the browser, a **vision model** scores it against the request, and major issues go back to the agent for **one automatic fix round** |
 | **Search (RAG)** | hybrid code search (pgvector or Qdrant + full-text, weighted rank fusion, optional LLM rerank); the agent has a `search_code` tool; big projects get relevant code attached to each request; **measured** by a 70-question retrieval benchmark |
+| **Ask your project** | questions about the code answered **only from the code**, every claim cited to file and lines (citations checked server-side), "not in this project" when it isn't; also an MCP tool |
+| **Import** | bring in a **public GitHub repo** (or one folder of it) or a **zip**: zip-bomb and path-traversal safe, skips `node_modules`, binaries and huge files, undoable from history, indexed for search straight away |
+| **Reference notes** | 13 built-in notes (React, CSS layout, accessibility, dark mode, fetch...) retrieved by stack into **every** run, plus a `search_docs` tool; per-request switches (`notes`, `codeContext`) and a `rag` report on every run for A/B evals |
 | **Plans** | FREE / PRO — projects, live previews, AI tokens per day; **Stripe** Checkout and a signed webhook |
 | **Platform** | a **stateless API** that scales out (chat locks, live logs and rate limits in **Redis**; the gateway load-balances with failover), Redis **rate limiting**, request **tracing** (W3C traceparent, optional Zipkin), an **MCP server** so other AI agents can drive it - as *you*, with **personal access tokens** (hashed, shown once, revocable) |
 | **Architecture** | runs as one app (Render) **or** the full diagram: API gateway, Kafka + indexing worker, MinIO/S3, Qdrant, Kubernetes manifests |
@@ -185,16 +188,18 @@ breaking the feature on purpose and watching it go red.
 Also under test: the API reference matches the routes Spring serves, module
 boundaries hold, and an SSE stream ends cleanly on a real Tomcat.
 
-Two evals against real Gemini:
+Evals against real Gemini:
 
 ```bash
 python3 evals/run_evals.py --base <url>            # 20 prompts: does the app build? (+5 follow-up edits)
 python3 evals/run_retrieval_eval.py --base <url>   # 70 questions (v2, with decoy files): does search find the right file?
                                                    # --set v1 = the original 42; --rerank adds the LLM rerank
+python3 evals/run_notes_eval.py --base <url>       # 30 questions: do the reference notes come back for the right question?
+python3 evals/run_evals.py --base <url> --notes 0  # A/B: the same 20 apps with reference notes switched off
 ```
 
 Browser walk-through (sign up → chat → preview → logs → visual check and
-auto-fix → search → ask → history → upgrade → share → screenshot → quota),
+auto-fix → search → ask → history → upgrade → share → screenshot → quota → React → import),
 against a demo-mode server started with `FORGEFLOW_RATELIMIT_AI_PER_MINUTE=60`
 (the walk makes more model calls a minute than one real user may):
 

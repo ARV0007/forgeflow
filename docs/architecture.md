@@ -1189,3 +1189,84 @@ any request: Authorization: Bearer ff_pat_... ─► JwtAuthFilter ─► Access
 | module boundary | `AccessTokens` interface in shared (the filter), implemented in account (the table) |
 | /mcp default | closed: personal token or shared key; `FORGEFLOW_MCP_OPEN=true` for local use |
 
+
+## 28. RAG everywhere
+
+Four corpora, one search. Every one uses the same hybrid search from §17.9:
+vector (pgvector, or Qdrant for project code) plus Postgres full-text, merged
+with weighted RRF (`CodeIndex.fuse`: `w_v/(60+r_v) + w_k/(60+r_k)`, 1.0 / 0.25).
+
+```
+                      ┌─ project code ──── file_chunks (40-line windows)      ─► excerpts past 15 files · search_code · Ask
+request ─► retrieve ──┼─ reference notes ─ knowledge_chunks (one ## section)  ─► 3 notes on every run · search_docs
+                      ├─ older chat ────── chat_messages.embedding (lazy)     ─► EARLIER IN THIS CHAT (chat runs only)
+                      └─ (imports feed project code via code.generated)
+```
+
+### 28.1 Ask your project (`intelligence/retrieval/ProjectQa`)
+
+```
+POST /projects/{id}/ask {question}  (READ access, AI rate limit, quota)
+  ─► fitsWhole? (≤15 files, ≤60k chars) ─► every file whole
+     else      ─► CodeIndex hybrid search, top 8
+  ─► sources numbered [1..n] with path + lines ─► LLM (answer only from sources, cite, or NOT_FOUND)
+  ─► check: drop citations to non-existent sources; NOT_FOUND → found=false
+  ─► {answer, found, citations[{n, path, startLine, endLine}], sources, tokens, costUsd}   metered as "ask"
+```
+
+### 28.2 Import (`workspace/ProjectImporter`, `ImportController`)
+
+```
+POST /projects/{id}/import/zip?name=   (application/zip body, ≤20 MB)       ┐ WRITE access
+POST /projects/{id}/import/github {url}  ─► {github-base}/{o}/{r}/archive/{ref}.zip ┘ AI rate limit
+  ─► temp file ─► ZipFile (central directory; skipped entries never inflated)
+  ─► per entry: ignored folder? unsafe path? >200 KB? binary (ext / NUL / bad UTF-8)?  → counted skip
+  ─► running total ≤30 MB (else refuse) · ≤20k entries · keep ≤1,500 files · strip common root
+  ─► checkpoint(old files) ─► replace files ─► checkpoint(IMPORT, V16) ─► code.generated(IMPORTED) ─► indexer
+```
+
+| Concern | Decision |
+|---|---|
+| zip bombs | caps enforced while reading, not from the sizes the zip claims |
+| zip slip | every path through the normal file-path rules |
+| SSRF | host fixed by config; user supplies owner/repo/ref matching a strict pattern only |
+| undo | the pre-import checkpoint; restore from version history |
+| errors | `ImportRefused extends BadRequestException` → 400 ProblemDetail with the reason |
+
+### 28.3 Knowledge base (`intelligence/retrieval/KnowledgeBase`)
+
+```
+startup: resources/knowledge/*.md (<!-- stacks: ... -->) ─► chunk by "## " (≤1,600 chars)
+         ─► knowledge_chunks (V17) ─► embed only if doc_hash or embedding_model changed
+run:     AgentService ─► notesFor(prompt, stack, n=3) ─► hybrid search WHERE stack matches ─► ≤3,500 chars
+         ─► appended as REFERENCE NOTES ─► AgentEvent.notes(sources) ─► "read notes: ..." in the workbench
+tool:    search_docs(query) ─► same search, mid-run
+API:     GET /api/v1/knowledge · GET /api/v1/knowledge/search?q&k&stack&mode=keyword|vector|hybrid
+```
+
+### 28.4 Long chat memory (`chat/ChatRecall`)
+
+```
+ChatService.complete ─► window = last 10 messages ─► windowStart = oldest id in it
+  ─► ChatRecall.recall(session, windowStart, request)
+       older than window? no ─► nothing
+       embedMissing (≤400 most recent older messages, batches of 50, stored once; V18)
+       hybrid search over them ─► top 3 ─► add each one's partner (question↔reply) ─► ≤3,000 chars
+  ─► RecalledContext(text, n) ─► AgentService (separate EARLIER IN THIS CHAT section) ─► AgentEvent.recalled(n)
+```
+
+Module rule kept: `chat` calls `intelligence`; the agent only sees a
+`RecalledContext` record. Embedding failure → keywords only.
+
+### 28.5 Switches and measurement
+
+| Knob | Where | Values |
+|---|---|---|
+| `codeContext` | generate / generate/stream body | `auto` (past 15 files), `always`, `off` |
+| `notes` | same | 0–5 (default 3) |
+| `mode` | `/knowledge/search` | `keyword`, `vector`, `hybrid` |
+| `rag` | every generate response | `{codeExcerpts, notes, recalled}` actually used |
+
+`RagOptions.parse` refuses bad values with 400. Evals:
+`run_evals.py --notes N --code-context X` (A/B the app evals),
+`run_notes_eval.py` (30 labelled questions × 3 modes, recall@1/3, MRR).

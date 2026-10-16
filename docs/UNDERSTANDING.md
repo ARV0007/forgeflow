@@ -2344,7 +2344,332 @@ token that could mint a replacement would survive its own revocation.
 
 ---
 
-## Chapter 32 — What's next
+## Chapter 32 — Asking the archivist a question (grounded answers)
+
+Chapter 19 built an archivist who fetches the right drawings *for the
+contractor*. This chapter lets **you** ask the archivist directly: "where does
+the discount get applied?" and get an answer with page numbers.
+
+**Plain English.** A good archivist doesn't answer from memory. They pull the
+drawings, read them, and say "it's on sheet 3, lines 12 to 20". If the
+drawings don't show it, they say "that isn't in this project" — they don't
+make something up because it sounds like what projects usually do.
+
+That last part is the whole design. A language model asked "how does this
+project handle login?" will happily describe how projects *usually* handle
+login. That's a **hallucination**: confident, plausible, and about some other
+project. Grounding is how you stop it.
+
+### The three steps
+
+1. **Retrieve.** The same hybrid search the agent uses. Small projects (up to
+   15 files and 60,000 characters) skip the search and send every file whole,
+   because having everything beats any search.
+2. **Number the sources.** Each excerpt goes in as `[1] src/cart.js lines
+   12-51`, `[2] ...`. The instructions say: answer *only* from these, cite
+   every claim as `[n]`, and if the answer isn't there, reply with exactly
+   `NOT_FOUND: <what you looked for>`.
+3. **Check the answer.** This is the step people skip. The server doesn't
+   trust the model's citations: a `[7]` when there were only 5 sources is
+   deleted, not shown. An answer starting `NOT_FOUND` becomes "I couldn't find
+   that in this project's code" with `found: false`. The reader gets a list of
+   the sources actually cited — file and lines — and in the workbench each
+   one is a chip that opens the file at those lines.
+
+### Where it lives
+
+- `POST /api/v1/projects/{id}/ask` — viewers may ask (it changes nothing),
+  but it spends the asker's own AI tokens and counts against the AI rate limit.
+- The MCP server has an `ask_project` tool, so another agent can ask too.
+- The workbench has an **Ask** button next to Generate.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why not just let the model answer and trust it?**
+Because you can't tell a correct answer from a confident wrong one by reading
+it. Citations make every claim checkable: click `[2]`, see the lines. And a
+model that's *allowed* to say "not found" is far less likely to invent.
+
+**Q: The model cites `[9]` but there were only 8 sources. What does the user see?**
+The `[9]` is removed from the text and doesn't appear in the citation list.
+Only citations that point at a real source survive.
+
+**Q: Why can a viewer ask, when a viewer can't generate?**
+Asking is reading. A viewer can already open every file; Ask just reads them
+faster. Generating writes files, which needs the editor role.
+
+**Q: Why does a small project skip retrieval?**
+Retrieval can miss. Sending all 6 files can't. Search only earns its place
+once the project is too big to send whole.
+
+</details>
+
+---
+
+## Chapter 33 — Bringing your own code (import a repo or a zip)
+
+Until now every project started empty and the AI wrote all of it. That means
+RAG only ever searched code the AI wrote itself — small and tidy. Real
+retrieval is tested on real codebases: someone else's repo, 200 files, a
+`node_modules` folder nobody wants.
+
+**Plain English.** A new job site, but the client hands you the plans for the
+building that's already there. Before you file them, you throw out the
+packaging (`node_modules`, `.git`, `dist`), anything that isn't a drawing
+(images, fonts, compiled files), and anything addressed to the wrong place
+(`../../etc/passwd`). The rest goes in the archive and gets indexed.
+
+### Two ways in
+
+- **Upload a zip** — `POST .../import/zip`, the raw zip as the body, up to 20 MB.
+- **A GitHub link** — `POST .../import/github` with `{"url": "https://github.com/owner/repo"}`.
+  ForgeFlow downloads GitHub's own zip of the repo. A link ending
+  `/tree/main/web` imports just the `web` folder of the `main` branch.
+
+Both replace the project's files, so both need the editor role, and both save
+a checkpoint of the old files first (a new checkpoint kind, `IMPORT`). One
+click in version history undoes an import.
+
+### The part that matters: a zip is hostile until proven otherwise
+
+A zip is a list of instructions from a stranger: "make a file called X with
+these bytes". Every one of those can be a trap:
+
+| Trap | What it looks like | What ForgeFlow does |
+|---|---|---|
+| **Zip bomb** | 10 KB zip that unpacks to 10 GB | Reads each file through a 200 KB cap and stops the *whole* import past 30 MB unpacked — it never inflates more than that, whatever the zip claims |
+| **Path traversal** ("zip slip") | an entry named `../../app.js` | Refused as UNSAFE_PATH — the same path rules every file write uses |
+| **Junk** | `node_modules/`, `.git/`, `dist/` | Skipped as IGNORED_FOLDER, never even opened |
+| **Binaries** | `logo.png`, `font.woff2`, a file with NUL bytes, invalid UTF-8 | Skipped as BINARY |
+| **One huge file** | a 5 MB minified bundle | Skipped as TOO_LARGE (over 200 KB) — it's not code anyone will edit |
+| **Too many files** | 50,000 tiny entries | Over 20,000 entries: the whole zip is refused. Over 1,500 text files kept: the rest are skipped as OVER_FILE_LIMIT |
+
+The import report says exactly how many files were skipped and why, so
+nothing disappears silently.
+
+**Why `ZipFile` and not `ZipInputStream`?** The first version streamed the zip
+front to back. The problem: to *skip* an entry in a stream, you still have to
+read through its bytes — so a skipped 10 GB bomb entry still got inflated.
+`ZipFile` reads the zip's table of contents (the "central directory", at the
+end of the file) and jumps straight to the entries it wants. Skipped entries
+are never touched.
+
+**Why is the GitHub address fixed in config?** If the server downloaded
+whatever URL the user typed, anyone could make it fetch
+`http://169.254.169.254/...` — cloud metadata, internal admin pages. That's
+**SSRF** (server-side request forgery). ForgeFlow only ever builds
+`{github-base}/{owner}/{repo}/archive/{ref}.zip`, with the base taken from
+`forgeflow.import.github-base`. The user picks the owner and repo, never the
+host.
+
+After an import, the same `code.generated` event as a run fires (status
+`IMPORTED`), so the code is indexed and Ask works on it straight away.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: What's a zip bomb, and why doesn't the 20 MB upload limit stop it?**
+A small zip that unpacks to something enormous — compression ratios over
+1000:1 are easy with repeated bytes. 20 MB limits what's uploaded, not what
+it unpacks to. That's why there's a second limit on unpacked bytes, enforced
+while reading.
+
+**Q: What is "zip slip"?**
+An entry whose name climbs out of the target folder (`../../something`).
+Unpack it naively and you overwrite a file outside the project. Every path
+goes through the same normaliser as any file write and is refused if it
+escapes.
+
+**Q: Why strip the common root folder?**
+GitHub's zips put everything inside `repo-main/`. Without stripping it, every
+path would start with `repo-main/` and the preview wouldn't find
+`index.html` at the top.
+
+**Q: A teammate imports the wrong repo over your work. Now what?**
+Version history. The import saved your files as a checkpoint first; restore it.
+
+</details>
+
+---
+
+## Chapter 34 — A reference shelf (the knowledge base)
+
+RAG so far searched *the project*. But much of what goes wrong in a generated
+app isn't about this project at all — it's general know-how the model gets
+slightly wrong: a missing `key` in a React list, a `useEffect` that loops
+forever, a dark theme that flashes white on load.
+
+**Plain English.** Every good site office has a shelf of trade manuals. The
+contractor doesn't read them cover to cover before each job — the archivist
+pulls the two or three pages that matter for *this* job: "you're fitting a
+staircase, here's the page on handrail heights."
+
+### What's on the shelf
+
+13 short notes in `src/main/resources/knowledge/`, written for this project
+(not copied from anywhere): React state and effects, lists and keys, forms,
+Vite projects, CSS layout, responsive design, dark mode, accessibility, DOM
+events, localStorage, fetch and async, animation, and timers/numbers/dates.
+Each says which stacks it applies to in a comment at the top:
+`<!-- stacks: react -->`.
+
+### How it works
+
+- **Chunking by section.** Each `## ` heading becomes one chunk (cut further
+  if it's over 1,600 characters). A section is already one idea — no need for
+  the 40-line windows code uses.
+- **Stored once.** On startup, notes are loaded into `knowledge_chunks` and
+  embedded. A note is only re-embedded if its text changed (a hash) or the
+  embedding model changed.
+- **Filtered by stack.** A plain HTML project never gets React advice. This
+  is a hard filter, not a ranking: the wrong stack can't sneak in.
+- **Attached to every run.** Before the agent starts, the 3 best-matching
+  sections (within 3,500 characters) go after the request as **REFERENCE
+  NOTES**, with an instruction to use them where they apply and ignore the
+  rest. The workbench shows "read notes: dark-mode-and-theming › A toggle
+  button, ...".
+- **Searchable on demand.** The agent also has a `search_docs` tool, for when
+  it hits something mid-run.
+
+**Why notes, when the model already knows React?** It knows *most* of it. The
+notes cover the mistakes our evals actually saw, and they make the advice
+consistent across models. They're also the cheapest RAG to measure: the
+answer to "which note should this question find?" never changes.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why filter by stack instead of letting search rank React notes low?**
+Ranking can still put a React note third for a plain HTML project, and then
+the model starts writing `useState` in vanilla JavaScript. A filter makes
+that impossible.
+
+**Q: What stops the notes from crowding out the actual request?**
+A character budget (3,500), a count (3), and placement: the user's request
+comes first, notes after, with an explicit "ignore what doesn't apply".
+
+**Q: How would you know the notes help at all?**
+Run the app evals twice — once normally, once with `--notes 0` — and compare
+pass rate and tokens. Chapter 36 is about exactly that.
+
+</details>
+
+---
+
+## Chapter 35 — Remembering further back (long chat memory)
+
+Chapter 15 gave the chat a memory: the last 10 messages go along with every
+request. That's a sliding window, and things fall out of it. Twenty messages
+in, "make the header like the footer we did at the start" points at something
+the model can no longer see.
+
+**Plain English.** The contractor keeps today's notes on the clipboard. Older
+ones go in the filing cabinet. When the client says "like we agreed on day
+one", the archivist goes to the cabinet, finds that conversation, and clips
+it back on — the question *and* the answer, so it makes sense.
+
+### How it works
+
+- **Only what's beyond the window is searched.** The last 10 are already
+  there; there's no point retrieving them twice.
+- **Same hybrid search** as code: meaning and keywords, fused.
+- **Pairs, not fragments.** Each hit comes back with its other half — a
+  question with the reply it got, a reply with the question that caused it —
+  in the order they happened. "Added a dark green footer" means nothing
+  without "make the footer dark green with a signup form".
+- **A separate section.** Up to 3 hits, within 3,000 characters, go in as
+  **EARLIER IN THIS CHAT**, clearly marked as older than the recent messages.
+- **Lazy vectors.** A message is only embedded the first time it's older than
+  the window *and* a search looks at it. Then its vector is saved and never
+  made again. A short chat is never embedded at all.
+
+If embedding fails, recall falls back to keywords alone. If there's nothing
+older than the window, it does nothing.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why not just make the window 100 messages?**
+Cost and attention. Every message in the window is re-sent on every round of
+every run, and a model given 100 messages pays less attention to each. Ten
+recent ones plus three *relevant* old ones is cheaper and sharper.
+
+**Q: Why embed lazily instead of when each message is saved?**
+Most chats never get past 10 messages, so embedding them would be wasted
+calls. Lazily, a message is embedded once, only when it could actually be
+recalled.
+
+**Q: Why does `chat` call `ChatRecall` and not the other way round?**
+The module rules: chat may use intelligence; intelligence may not use chat.
+So the chat module finds the old messages and hands the agent a plain
+`RecalledContext` (some text and a count). The agent never knows chats exist.
+
+</details>
+
+---
+
+## Chapter 36 — Switches and a ruler (measuring each piece of RAG)
+
+There are now four kinds of retrieval feeding a run: project code, reference
+notes, chat recall, and the agent's own searches. That's a lot of extra text
+in front of the model. Does each piece pay for itself?
+
+**Plain English.** You can't tell if a new tool speeds up the crew by
+watching them work. You run the same job twice, once with it and once
+without, and time both.
+
+### The switches
+
+Every generate request can now say:
+
+- `"codeContext": "auto" | "always" | "off"` — attach retrieved code excerpts
+  the usual way (only past 15 files), always (even for small projects), or never.
+- `"notes": 0..5` — how many reference-note sections to attach. 0 = none.
+
+Bad values are refused with a 400. Every response also reports what retrieval
+actually added: `"rag": {"codeExcerpts": 0, "notes": 3, "recalled": 0}`.
+
+### The rulers
+
+- **App evals with switches:** `python3 evals/run_evals.py --notes 0` runs the
+  20 golden prompts with notes off. Compare pass rate, tokens and cost against
+  a normal run. `--code-context always` does the same for code excerpts on the
+  follow-up edits.
+- **The notes benchmark:** `python3 evals/run_notes_eval.py` asks 30 labelled
+  questions — exact names (`prefers-color-scheme`), plain descriptions ("light
+  page flashes before the dark theme loads") and paraphrases ("the price
+  shows 0.30000000000000004") — in three modes: keyword only, vector only,
+  hybrid. The knowledge search gained a `mode` parameter so each half can run
+  alone. It's read-only and spends no AI tokens.
+
+**What the offline run showed (and why it doesn't count).** Run locally with
+the fake hashing embedder, keyword search won (87% recall@1) and hybrid came
+second (73%) — because the hashing "embedder" doesn't understand meaning, so
+the vector half only adds noise. That's a test of the plumbing, not of RAG.
+The real numbers come from running it live, with Gemini embeddings.
+
+<details>
+<summary><b>Counter-questions</b></summary>
+
+**Q: Why report `rag` in every response instead of only logging it?**
+So an eval can read it. The eval script prints "retrieval used" per run;
+without it you'd be guessing whether a switch did anything.
+
+**Q: If notes-off scored the same pass rate as notes-on, would you remove them?**
+Not on pass rate alone. Look at tokens and repair rounds too — notes that
+save one repair round per app pay for themselves even at the same pass rate.
+And 20 prompts is a small sample: one flip is 5 points.
+
+**Q: Why ask the same question in three modes?**
+To see what each half contributes. If hybrid scored the same as keyword
+alone, the vector half would be cost without benefit.
+
+</details>
+
+---
+
+## Chapter 37 — What's next
 
 Done since this chapter was first written: **evals** (Chapter 12), **deploy**,
 the **workbench**, the **MCP server** (Chapter 13), **CI**, **members and
@@ -2353,13 +2678,15 @@ roles** (Chapter 14), **chat memory** (Chapter 15) and the **logs stream**
 (Chapter 18), **RAG** (Chapter 19), **tracing** (Chapter 20), the
 **workbench** (Chapter 21), `edit_file`, the runtime loop and prompt
 caching (Chapter 22), and the full topology - Kafka, MinIO, Qdrant, the
-gateway, Kubernetes (Chapter 23), version history (Chapter 24), screenshot to app (Chapter 25), the AI checking its own app (Chapter 26), React apps running in the browser (Chapter 27), a stateless API that scales out (Chapter 28), a Kubernetes pod per preview (Chapter 29), Publish (Chapter 30), and personal access tokens for agents (Chapter 31). What's left:
+gateway, Kubernetes (Chapter 23), version history (Chapter 24), screenshot to app (Chapter 25), the AI checking its own app (Chapter 26), React apps running in the browser (Chapter 27), a stateless API that scales out (Chapter 28), a Kubernetes pod per preview (Chapter 29), Publish (Chapter 30), personal access tokens for agents (Chapter 31), and RAG everywhere - Ask your project (32), import (33), the reference notes (34), long chat memory (35) and the switches to measure them (36). What's left:
 
 - **A headless browser in the build gate**, so runtime errors are caught
   without anyone opening the preview.
 - **"Forgot password?"** — needs an email sender to mail a reset link.
 - **Measure the visual check** — how often it flags something real, and how
   often the fix round raises the score.
+- **Measure RAG live** — the notes benchmark and a notes-on/notes-off eval
+  against real Gemini (Chapter 36).
 - **Watch Run with Node boot on Render** — the WebContainer needs
   stackblitz.com, which the build workspace can't reach.
 
@@ -2382,9 +2709,11 @@ every run would be checked, and the visual check could finally be measured
 like everything else.
 
 **Q: RAG is built now. Is it doing anything for today's projects?**
-Mostly not, and that's by design. Generated sites are usually under fifteen
-files, and below that the agent reads everything — more reliable than any
-retrieval. RAG is there for when projects grow, and `search_code` is there
-whenever the agent wants it.
+It used to do almost nothing: generated sites are usually under fifteen
+files, and below that the agent reads everything. Since Chapter 34 it does
+something on every run — the reference notes are retrieved for every
+request. Code retrieval still waits until a project is big, which an import
+(Chapter 33) now makes happen on day one. Whether all of it *helps* is the
+open question Chapter 36 is built to answer.
 
 </details>

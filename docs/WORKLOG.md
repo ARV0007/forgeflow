@@ -1463,6 +1463,131 @@ questions they're scored on. A held-out question set is the real test.
 
 ---
 
+## Day 12 — RAG everywhere · 15–16 Oct 2026
+
+Aman's ask: "everything that's possible in terms of RAG." Until today RAG
+did one thing — attach code excerpts once a project passed 15 files, which
+generated projects almost never do. Five pieces, each committed on its own.
+
+### 1. Ask your project (grounded Q&A)
+
+**Built.** `POST /api/v1/projects/{id}/ask`, an **Ask** button, and an
+`ask_project` MCP tool. `ProjectQa` retrieves (or sends a small project
+whole — up to 15 files and 60,000 chars), numbers the sources `[1]..[n]`, and
+tells the model to answer only from them and cite every claim, or reply
+`NOT_FOUND: ...`.
+
+**Why.** The generation half of RAG on its own, with nothing written back —
+and the cleanest place to show *grounding*. The server checks the answer
+rather than trusting it: citations to sources that don't exist are deleted;
+`NOT_FOUND` becomes `found: false` and a plain "I couldn't find that". The
+citation chips in the workbench open the file at the cited lines.
+
+Read-only, so viewers may ask, but it spends the asker's tokens and counts
+as an AI call for rate limiting. The demo model got a keyword-matching
+answerer so the walk can exercise it offline. `AskProjectTest` (4).
+
+### 2. Import a GitHub repo or a zip
+
+**Built.** `POST .../import/zip` (raw zip body, 20 MB) and
+`POST .../import/github` (`{url}`; `/tree/<branch>/<folder>` imports one
+folder). Editors only. A checkpoint of the old files is saved first, then an
+`IMPORT` checkpoint (V16), then `code.generated` fires with status `IMPORTED`
+so the code is indexed at once.
+
+**Why.** RAG had only ever been tested on code the AI wrote — small and tidy.
+Imports give it real codebases. And a zip is hostile input, so the importer
+is mostly defence:
+
+- `ZipFile` over a temp file, not `ZipInputStream` (see the mistake below).
+- 200 KB per file, 30 MB unpacked in total (enforced while reading), 20,000
+  entries, 1,500 files kept.
+- Skips, counted in the report: ignored folders (`node_modules`, `.git`,
+  `dist`, `build`, ...), binaries (by extension, NUL bytes, or invalid UTF-8),
+  oversized files, unsafe paths, files over the limit.
+- The common root folder (`repo-main/`) is stripped.
+- **SSRF:** the GitHub host comes from `forgeflow.import.github-base`, never
+  from the user. Only `{base}/{owner}/{repo}/archive/{ref}.zip` is fetched,
+  with owner, repo and ref checked against a strict pattern.
+
+New shared `BadRequestException` → 400 ProblemDetail with the reason.
+`ImportTest` (5) runs against a fake GitHub (`HttpServer` on a random port,
+wired in with `@DynamicPropertySource`) and a set of hostile zips.
+
+### 3. The knowledge base (reference notes)
+
+**Built.** 13 original notes in `resources/knowledge/` (about 3,000 words),
+each tagged with the stacks it applies to. `KnowledgeBase` chunks them by
+`## ` section, stores them in `knowledge_chunks` (V17), embeds each once (a
+hash and model name decide when to re-embed), and searches with the same
+hybrid RRF, hard-filtered by stack. Every run gets the 3 best sections
+(within 3,500 chars) after the request, under REFERENCE NOTES; the agent can
+search for more with a new `search_docs` tool. `GET /api/v1/knowledge` and
+`/knowledge/search`.
+
+**Why.** Code RAG helps big projects; notes help every project. They target
+the mistakes the evals actually showed (keys in lists, effects that loop, a
+dark theme flashing white). The stack filter is hard so a plain HTML project
+can never be handed React advice. `KnowledgeBaseTest` (8) includes a
+16-question offline benchmark: every question finds its note in the top 3.
+
+### 4. Long chat memory
+
+**Built.** `ChatRecall`: before a chat run, the messages *older* than the
+last-10 window are searched (hybrid) for the new request. Up to 3 hits, each
+with its other half (question ↔ reply), in order, within 3,000 chars, go to
+the agent as EARLIER IN THIS CHAT. Vectors are made lazily: a message is
+embedded the first time it's beyond the window and a search looks at it,
+then stored (V18). At most the 400 most recent older messages are searched.
+
+**Why.** The window forgets. "Like the footer we did at the start" needs the
+start. Lazy embedding means short chats cost nothing. The chat module owns
+recall and hands the agent a plain `RecalledContext`, keeping the module
+rule (intelligence never imports chat). `ChatRecallTest` (2): 30 messages,
+the old exchange comes back, and exactly the 20 beyond the window got vectors.
+
+### 5. Switches and measurement
+
+**Built.** Generate requests take `codeContext` (`auto`/`always`/`off`) and
+`notes` (0–5); responses report `rag: {codeExcerpts, notes, recalled}`.
+Knowledge search takes `mode=keyword|vector|hybrid`. `run_evals.py` gained
+`--code-context` and `--notes`. New `run_notes_eval.py` + 30 labelled
+questions (12 exact names, 9 descriptions, 9 paraphrases), scored by note:
+recall@1, recall@3, MRR, per mode. `RagOptionsTest` (4).
+
+**Why.** Four kinds of retrieval now feed a run. Each one is extra text in
+front of the model; each should prove it pays. A/B runs with a switch are the
+only honest way to know.
+
+**Offline smoke run (hashing embedder):** keyword 87% recall@1, vector 63%,
+hybrid 73%. That's not a result — the hashing embedder has no idea what
+words mean, so the vector half only adds noise. It proves the plumbing. The
+real numbers need the live run with Gemini embeddings.
+
+### Mistakes & fixes
+
+- **The first importer inflated the bombs it skipped.** It streamed the zip
+  with `ZipInputStream`, and the only way to skip an entry in a stream is to
+  read through it. A skipped 1 GB entry was still decompressed. Rewritten
+  with `ZipFile`, which jumps between entries using the central directory, so
+  skipped entries are never touched.
+- **`ResponseStatusException` lost its message.** Clients got a 400 with no
+  reason (Spring hides it unless `include-message` is on). A dedicated
+  `BadRequestException` with its own handler returns the reason as a
+  ProblemDetail.
+- **Four tests compared the whole request text** (`isEqualTo("tweak")`) to
+  prove "nothing was added". Now reference notes are always added. They now
+  check what they're really about — no RUNTIME ERRORS, no RELEVANT CODE —
+  with `startsWith` plus `doesNotContain`.
+- **The walk hit the AI rate limit** (6 a minute) once Ask and Import joined
+  it. The walk's server now runs with `FORGEFLOW_RATELIMIT_AI_PER_MINUTE=60`,
+  documented in the script.
+
+243 tests (9 skipped need Docker), the browser walk passes. Commits 2456039,
+2d2ad0b, ca7c238, bdc9be3, 4970c27, a71814d.
+
+---
+
 ## Open items
 
 - Runtime errors and the visual check only happen if someone has the preview
@@ -1476,7 +1601,12 @@ questions they're scored on. A held-out question set is the real test.
   Qdrant mode filters inside the search. Fine
   at this size; with many projects, a busy one could crowd a small one out of
   the candidate list (pgvector 0.8's iterative scans fix this).
-- Embedding calls aren't counted against the token quota (rerank calls are).
+- Embedding calls aren't counted against the token quota (rerank calls are) -
+  that now includes the reference notes and chat recall.
+- RAG isn't measured live yet: the notes benchmark and a `--notes 0` eval run
+  need real Gemini embeddings (Aman runs these).
+- Import takes public GitHub repos only; private repos would need the user's
+  GitHub token.
 - Kubernetes previews are tested against a fake API server, not a real
   cluster yet (kind or minikube would do it).
 - Kubernetes previews don't get the console bridge or the visual check (nginx
@@ -1512,3 +1642,6 @@ questions they're scored on. A held-out question set is the real test.
 - Tracing (traceparent, Zipkin), OpenAPI with a contract test, module-boundary test (Day 10)
 - Chat-shaped workbench, demo model, browser walk-through, README (Day 10)
 - `edit_file`, runtime errors fed back to the agent, cached tokens, MCP key (Day 11)
+- RAG everywhere: Ask your project with checked citations, import from GitHub
+  or a zip, reference notes on every run, long chat memory, per-request RAG
+  switches and a notes benchmark (Day 12)

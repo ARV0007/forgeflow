@@ -14,7 +14,8 @@ the line says so, with a placeholder.
 > ForgeFlow is an AI app builder, like Lovable, that I built from scratch in
 > Java and Spring Boot. You describe an app in plain English, or paste a
 > screenshot, and you get a running app back that you can keep changing by
-> chatting.
+> chatting. You can also bring in an existing GitHub repo and ask questions
+> about it, and every answer cites the exact lines it came from.
 >
 > The interesting part is that I don't trust the model. The agent isn't
 > allowed to finish until its code passes a build check. If the build fails,
@@ -36,7 +37,7 @@ the line says so, with a placeholder.
 > rewriting it: five out of five. I also wrote a 70-question benchmark for
 > code search, with decoy files built to confuse it. Search finds the right
 > file in the top three 99% of the time, after I used the benchmark to retune
-> how the two halves of the search are weighted. There are 219 tests, all
+> how the two halves of the search are weighted. There are 243 tests, all
 > against real databases.
 
 Shorter, for "tell me about a project" in 30 seconds:
@@ -154,6 +155,44 @@ earns its place is exact names: 100% against vector's 90%, and that's the
 kind of question the agent's `search_code` tool asks most. So 0.25 is now the
 default, and a test pins it.
 
+**What does RAG actually do in ForgeFlow? Isn't it just "embed and search"?**
+Retrieval feeds four places, and the interesting parts are around the search:
+- **Reference notes on every run.** Thirteen short notes I wrote (React
+  effects, list keys, dark mode, accessibility...) are chunked by section,
+  and the three that best match the request go along with it, filtered by
+  the project's stack, so a plain HTML project never gets React advice.
+- **Ask your project.** Questions answered only from the code. Sources are
+  numbered, the model has to cite them, and the server checks the
+  citations: a citation to a source that doesn't exist is deleted, and the
+  model is allowed, and told, to say "not found" instead of guessing.
+- **Long chat memory.** The last 10 messages always go along. Older ones are
+  searched, and each hit comes back with its other half, the question with
+  its reply. Messages are embedded lazily, once, and only if they ever fall
+  out of the window.
+- **Import.** A GitHub repo or zip gives RAG real code to work on. Most of
+  that code is defensive: zip bombs, path traversal, SSRF.
+
+And each piece has a switch (`notes: 0`, `codeContext: off`) so I can run the
+same eval with and without it.
+
+**How do you stop the model from making things up about the code?**
+Three layers. Give it only numbered sources and tell it to cite each claim.
+Give it a legitimate way out: reply `NOT_FOUND` when the sources don't
+answer the question. Then don't trust the output: the server keeps only
+citations that point at real sources, and the UI turns each one into a link
+to the exact lines, so a reader can check any claim in one click.
+
+**A user uploads a zip. What can go wrong?**
+A zip bomb: a few KB that unpacks to gigabytes. Path traversal: an entry
+named `../../something` that writes outside the project. And plain junk:
+`node_modules`, images, minified bundles. I read the zip's central directory
+with `ZipFile`, so skipped entries are never decompressed (my first version
+streamed it and still inflated the entries it skipped), cap each file and
+the running total *while reading*, and send every path through the same
+validator as any other write. For GitHub imports the server builds the
+download URL itself from a fixed host, so a user can't point it at an
+internal address.
+
 **How did you make the API stateless?**
 Three things lived in memory, and all three moved to Redis:
 - **The chat lock.** One reply at a time per chat. It's `SET NX PX`, and the
@@ -213,6 +252,8 @@ Two layers:
   against a fake API server that speaks the real protocol.
 - Add a server-side browser so the visual check runs without anyone watching.
 - Measure how often the visual check's fix round actually raises the score.
+- Measure the reference notes live: same 20 prompts with notes on and off,
+  and the 30-question notes benchmark with real embeddings.
 
 ---
 
@@ -275,8 +316,7 @@ hit its limit. The test profile now caps each pool at 4.
 
 ## 5. Resume lines
 
-Pick three or four. The one bracketed number still needs the retrieval v2
-run; fill it in from that output.
+Pick three or four. Every number here comes from a run you can repeat.
 
 - Built an AI app builder (Java 21, Spring Boot) whose agent must pass a
   build check before finishing; **20/20** generated apps build on a golden
@@ -297,7 +337,12 @@ run; fill it in from that output.
 - Shipped immutable version history and one-click publish and rollback
   (a site is a pointer to a version), plus an MCP server with hashed
   personal access tokens so other AI agents act as the user.
-- 219 tests against real Postgres, Redis, Qdrant and S3 in CI, and a
+- Extended RAG beyond code search: grounded Q&A over a project with
+  server-checked citations, a stack-filtered knowledge base retrieved into
+  every generation, long chat memory with lazily embedded history, and
+  hardened GitHub/zip import (zip-bomb, path-traversal and SSRF safe),
+  each with a per-request switch for A/B evaluation.
+- 243 tests against real Postgres, Redis, Qdrant and S3 in CI, and a
   Playwright walk-through of the whole product.
 
 ---
@@ -308,6 +353,9 @@ Say these before someone else does:
 - Kubernetes previews are tested against a fake API server, not a real
   cluster.
 - The visual check only runs while someone has the preview open.
+- The reference notes and chat recall aren't measured live yet. The
+  benchmark and the on/off switch exist; the numbers don't.
+- Import is public repos only.
 - The live deployment runs one process; the multi-service topology runs from
   `docker-compose.full.yml` and `deploy/k8s`.
 - Overall, the tuned hybrid only ties vector-only search. Its edge is on
