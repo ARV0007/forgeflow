@@ -1704,9 +1704,12 @@ out. V22.
   scripted answers. It's disabled (`cron: "-"`) in the test profile.
 - **GitHub push protection blocked the push.** The guardrail tests used a
   complete fake Stripe key (`sk_live_...`) as test data, and GitHub can't tell
-  a fake key from a real one. Aman marked it as test data on GitHub, and every
-  fake credential now lives in `support/FakeSecrets`, assembled from pieces, so
-  no source file contains a whole one again. Lesson: test data for a secret
+  a fake key from a real one. Rather than bypass the scanner, the 12 commits
+  that had never been pushed were rebuilt (`git filter-branch`) with the key
+  split in two (`"sk_" + "live_..."`), so no snapshot contains it whole; the
+  final code was byte-identical, and nothing already on GitHub was touched.
+  Every fake credential now lives in `support/FakeSecrets`, assembled from
+  pieces. Lesson: test data for a secret
   detector must not itself be detectable in the source.
 - **Postgres was down three times** after container restarts.
 
