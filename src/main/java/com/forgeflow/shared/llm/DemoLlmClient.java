@@ -45,6 +45,16 @@ public class DemoLlmClient implements LlmClient {
             return new LlmResponse(review, List.of(), "[]", estimate(history) + 258, 60, estimate(history) + 318);
         }
 
+        // The reviewer agent (no tools, a request and a diff). The demo can't
+        // judge code, so it approves and says so - enough to show the second
+        // agent at work offline.
+        if (systemPrompt != null && systemPrompt.startsWith("You review code changes")) {
+            return new LlmResponse("{\"verdict\": \"approve\", \"summary\": \"Demo review: the demo model approves every change.\", "
+                    + "\"issues\": [{\"severity\": \"minor\", \"file\": \"index.html\", "
+                    + "\"problem\": \"Demo note: a real reviewer would read the diff here.\"}]}",
+                    List.of(), "[]", estimate(history) + 150, 50, estimate(history) + 200);
+        }
+
         // Ask your project (no tools, numbered sources). The demo can't reason
         // about code, so it does what keyword search would: cite the first
         // source that mentions a word of the question, or say NOT_FOUND.

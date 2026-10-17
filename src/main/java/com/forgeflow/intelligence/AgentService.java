@@ -71,6 +71,8 @@ public class AgentService {
     private final ProjectService projects;
     private final LlmPricing pricing;
     private final Models models;
+    private final CodeReviewer reviewer;
+    private final boolean reviewByDefault;
     private final tools.jackson.databind.ObjectMapper json = new tools.jackson.databind.ObjectMapper();
 
     private final int maxToolCalls;
@@ -94,6 +96,8 @@ public class AgentService {
                         ProjectService projects,
                         LlmPricing pricing,
                         Models models,
+                        CodeReviewer reviewer,
+                        @Value("${forgeflow.agent.review.enabled:true}") boolean reviewByDefault,
                         @Value("${forgeflow.agent.max-tool-calls}") int maxToolCalls,
                         @Value("${forgeflow.agent.timeout-seconds}") long timeoutSeconds,
                         @Value("${forgeflow.agent.max-input-tokens}") int maxInputTokens,
@@ -114,6 +118,8 @@ public class AgentService {
         this.projects = projects;
         this.pricing = pricing;
         this.models = models;
+        this.reviewer = reviewer;
+        this.reviewByDefault = reviewByDefault;
         this.maxToolCalls = maxToolCalls;
         this.timeoutSeconds = timeoutSeconds;
         this.maxInputTokens = maxInputTokens;
@@ -163,17 +169,17 @@ public class AgentService {
     public GenerateResponse generate(Long projectId, Long userId, String prompt, List<ImagePart> images,
                                      List<LlmMessage> priorTurns, RecalledContext recalled, Long sessionId,
                                      Consumer<AgentEvent> listener) {
-        return generate(projectId, userId, prompt, images, priorTurns, recalled, RagOptions.DEFAULT, sessionId, listener);
+        return generate(projectId, userId, prompt, images, priorTurns, recalled, RunOptions.DEFAULT, sessionId, listener);
     }
 
     /** A one-off generate with its own retrieval settings - how the evals measure RAG. */
-    public GenerateResponse generate(Long projectId, Long userId, String prompt, RagOptions rag,
+    public GenerateResponse generate(Long projectId, Long userId, String prompt, RunOptions rag,
                                      Consumer<AgentEvent> listener) {
         return generate(projectId, userId, prompt, List.of(), null, null, rag, null, listener);
     }
 
     public GenerateResponse generate(Long projectId, Long userId, String prompt, List<ImagePart> images,
-                                     List<LlmMessage> priorTurns, RecalledContext recalled, RagOptions rag,
+                                     List<LlmMessage> priorTurns, RecalledContext recalled, RunOptions rag,
                                      Long sessionId, Consumer<AgentEvent> listener) {
         // One span for the whole run; each model call and build inside it is
         // a child, so a slow run shows exactly which step was slow.
@@ -181,7 +187,7 @@ public class AgentService {
             span.tag("project.id", projectId).tag("session.id", sessionId);
             try {
                 GenerateResponse r = run(projectId, userId, prompt, images, priorTurns, recalled,
-                        rag == null ? RagOptions.DEFAULT : rag, sessionId, listener);
+                        rag == null ? RunOptions.DEFAULT : rag, sessionId, listener);
                 span.tag("run.id", r.runId()).tag("run.status", r.status()).tag("run.stop_reason", r.stopReason())
                     .tag("run.tokens", r.totalTokens()).tag("run.repair_rounds", r.repairRounds());
                 return r;
@@ -193,7 +199,7 @@ public class AgentService {
     }
 
     private GenerateResponse run(Long projectId, Long userId, String prompt, List<ImagePart> images,
-                                 List<LlmMessage> priorTurns, RecalledContext recalled, RagOptions rag,
+                                 List<LlmMessage> priorTurns, RecalledContext recalled, RunOptions rag,
                                  Long sessionId, Consumer<AgentEvent> listener) {
 
         // Before anything is spent. A soft limit: a run that starts under the
@@ -241,8 +247,8 @@ public class AgentService {
         String request = prompt;
         Map<String, Integer> ragUsed = new TreeMap<>(Map.of("codeExcerpts", 0, "notes", 0, "recalled", 0));
         try {
-            Optional<CodeIndex.RetrievedContext> context = rag.code() == RagOptions.Code.OFF ? Optional.empty()
-                    : index.contextFor(projectId, prompt, rag.code() == RagOptions.Code.ALWAYS);
+            Optional<CodeIndex.RetrievedContext> context = rag.code() == RunOptions.Code.OFF ? Optional.empty()
+                    : index.contextFor(projectId, prompt, rag.code() == RunOptions.Code.ALWAYS);
             if (context.isPresent()) {
                 scan("the retrieved code", context.get().text(), guards, listener);
                 request = prompt + "\n\n" + context.get().text();
@@ -310,6 +316,12 @@ public class AgentService {
         // turned back because of it.
         List<AgentReport.PlanStep> plan = new ArrayList<>();
         int planChecks = 0;
+        // The reviewer agent: what each changed file looked like before this
+        // run touched it, how many reviews ran, and the latest verdict.
+        boolean reviewOn = rag.review() != null ? rag.review() : reviewByDefault;
+        Map<String, String> originals = new java.util.LinkedHashMap<>();
+        int reviews = 0;
+        CodeReviewer.Verdict lastReview = null;
         // Every tool call in order, with its path - the run's trajectory.
         List<String> trajectory = new ArrayList<>();
 
@@ -444,6 +456,29 @@ public class AgentService {
                         // THE GATE. finish only succeeds if the build passes.
                         BuildResult check = verify(projectId, listener);
 
+                        // The second gate: a reviewer agent reads the request and
+                        // the diff. Major problems go back to the builder once;
+                        // the second look is final either way.
+                        if (check.passed() && reviewOn && !originals.isEmpty() && reviews < MAX_REVIEWS) {
+                            reviews++;
+                            emit(listener, AgentEvent.status("Reviewing the changes"));
+                            List<CodeReviewer.Change> changes = new ArrayList<>();
+                            originals.forEach((p, before) -> changes.add(
+                                    new CodeReviewer.Change(p, before, tools.current(projectId, p).orElse(null))));
+                            lastReview = reviewer.review(prompt, changes,
+                                    why -> note(guards, listener, "Model fallback: " + why));
+                            totalTokens += lastReview.totalTokens();
+                            costUsd = costUsd.add(lastReview.costUsd());
+                            emit(listener, AgentEvent.review(lastReview.ok() ? lastReview.verdict() : "skipped",
+                                    lastReview.summary(), lastReview.issues()));
+                            if (!lastReview.ok()) {
+                                note(guards, listener, "Review skipped: " + lastReview.summary());
+                            } else if (lastReview.wantsChanges() && reviews < MAX_REVIEWS) {
+                                results.add(ToolResult.failed("finish", CodeReviewer.feedback(lastReview)));
+                                continue;
+                            }
+                        }
+
                         if (check.passed()) {
                             buildPassed = true;
                             Object s = call.args().get("summary");
@@ -467,6 +502,10 @@ public class AgentService {
                         continue;
                     }
 
+                    if (("write_file".equals(call.name()) || "edit_file".equals(call.name()))
+                            && path != null && !originals.containsKey(path)) {
+                        originals.put(path, tools.current(projectId, path).orElse(null));
+                    }
                     ToolResult result = tools.execute(projectId, userId, call);
                     results.add(result);
                     if (READS.contains(call.name()) && result.ok()) {
@@ -560,7 +599,9 @@ public class AgentService {
                 buildPassed == null ? "not run" : (buildPassed ? "passed" : "FAILED"),
                 totalTokens, durationMs);
 
-        AgentReport report = new AgentReport(model, tier.name(), fellBack, List.copyOf(plan), null, List.copyOf(guards),
+        AgentReport.Review review = lastReview == null ? null : new AgentReport.Review(
+                lastReview.ok() ? lastReview.verdict() : "skipped", reviews, lastReview.summary(), lastReview.issues());
+        AgentReport report = new AgentReport(model, tier.name(), fellBack, List.copyOf(plan), review, List.copyOf(guards),
                 null, List.of(), List.of(), List.of(), List.of(), List.copyOf(trajectory));
         try {
             run.setAgentReport(json.writeValueAsString(report));
@@ -636,6 +677,8 @@ public class AgentService {
     }
 
     static final int MAX_PLAN_CHECKS = 2;
+    /** First look, and the look after one round of fixes. */
+    static final int MAX_REVIEWS = 2;
     static final int MAX_PLAN_STEPS = 10;
     private static final Set<String> STEP_STATUSES = Set.of("pending", "in_progress", "done", "skipped");
 

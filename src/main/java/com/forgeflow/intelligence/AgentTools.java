@@ -288,6 +288,15 @@ public class AgentTools {
         });
     }
 
+    /** A file's current content, or empty if it doesn't exist or the path is invalid - for the reviewer's before/after. */
+    public java.util.Optional<String> current(Long projectId, String rawPath) {
+        try {
+            return files.read(projectId, safePath(rawPath));
+        } catch (ToolException e) {
+            return java.util.Optional.empty();
+        }
+    }
+
     /** How many files the project has - an empty project means a new build, not an edit. */
     public int fileCount(Long projectId) {
         return files.list(projectId).size();

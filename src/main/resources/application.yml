@@ -113,6 +113,10 @@ forgeflow:
     max-cost-usd: 0.10
     # At this share of any budget (tokens, steps, time, cost) the agent is told once to wrap up.
     wrap-up-at: 0.8
+    # The reviewer agent (CodeReviewer) checks every run that changed files
+    # before it may finish; requests can switch it off with "review": false.
+    review:
+      enabled: ${FORGEFLOW_REVIEW:true}
   # Domain events (code.generated). in-process: all-in-one (Render, tests).
   # kafka: the full topology - see docker-compose.full.yml and deploy/k8s.
   events:

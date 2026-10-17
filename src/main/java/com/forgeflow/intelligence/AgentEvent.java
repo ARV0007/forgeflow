@@ -68,6 +68,11 @@ public record AgentEvent(String type, String message, String path, Object data) 
         return new AgentEvent("plan", "Plan: " + steps.size() + " step" + (steps.size() == 1 ? "" : "s"), null, steps);
     }
 
+    /** The reviewer agent's verdict (approve, changes or skipped), with its issues as data. */
+    public static AgentEvent review(String verdict, String summary, List<?> issues) {
+        return new AgentEvent("review", summary, verdict, issues);
+    }
+
     /** A guardrail fired: injection-like text seen, a secret refused, a budget reached, a model fell back. */
     public static AgentEvent guard(String message) {
         return new AgentEvent("guard", message, null, null);

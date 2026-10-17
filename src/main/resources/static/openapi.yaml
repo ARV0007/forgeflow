@@ -788,6 +788,7 @@ components:
               prompt: { type: string, maxLength: 4000 }
               codeContext: { type: string, enum: [auto, always, off], description: "retrieved code for this run: auto (only past 15 files, the default), always, or off - for measuring RAG" }
               notes: { type: integer, minimum: 0, maximum: 5, description: "reference notes to attach (default: the configured 3; 0 = none)" }
+              review: { type: boolean, description: "whether the reviewer agent checks the changes before the run may finish; absent = the server default (on)" }
     Message:
       required: true
       content:
@@ -927,7 +928,7 @@ components:
           type: object
           nullable: true
           properties:
-            verdict: { type: string, enum: [approve, changes] }
+            verdict: { type: string, enum: [approve, changes, skipped] }
             rounds: { type: integer }
             summary: { type: string }
             issues:

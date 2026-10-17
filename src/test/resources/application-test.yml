@@ -7,6 +7,11 @@ forgeflow:
       # A failing scripted call should fail, not quietly consume the next
       # scripted answer as a "fallback". ModelRoutingTest switches it on.
       fallback: ""
+  agent:
+    review:
+      # The reviewer adds a model call to every run that writes files; the
+      # existing scripts don't include one. ReviewerAgentTest switches it on.
+      enabled: false
   mcp:
     # McpServerTest drives the anonymous service-account path; tokens are tested in ApiTokenTest.
     allow-anonymous: true

@@ -17,7 +17,7 @@ import static com.forgeflow.support.ScriptedLlm.write;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** The measuring knobs: retrieval can be forced on, switched off, and is reported per run. */
-class RagOptionsTest extends ApiTestSupport {
+class RunOptionsTest extends ApiTestSupport {
 
     @Autowired
     ProjectFileService files;

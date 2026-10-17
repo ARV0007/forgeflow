@@ -370,7 +370,7 @@ function appendMessage(m) {
   } else {
     const failed = m.status && m.status !== 'SUCCEEDED';
     el.className = 'msg-bot' + (failed ? ' is-failed' : '');
-    el.innerHTML = planBlock(m.agent?.plan || [], false) + `<div class="bot-text"></div>` + guardBlock(m.agent?.guards) +
+    el.innerHTML = planBlock(m.agent?.plan || [], false) + `<div class="bot-text"></div>` + reviewBlock(m.agent?.review) + guardBlock(m.agent?.guards) +
       (m.toolCalls?.length
         ? `<div class="bot-files">${m.toolCalls.map((t) =>
             `<button class="file-chip" data-path="${esc(t.path)}">${esc(t.path)}</button>`).join('')}</div>` : '') +
@@ -395,6 +395,16 @@ function planBlock(steps, live) {
   const items = steps.map((p) =>
     `<li class="plan-${esc(p.status)}"><span class="plan-mark">${PLAN_MARK[p.status] || ''}</span>${esc(p.title)}</li>`).join('');
   return `<details class="plan"${live ? ' open' : ''}><summary>Plan &middot; ${done} of ${steps.length} done</summary><ol>${items}</ol></details>`;
+}
+
+/** The reviewer agent's verdict on a saved reply. */
+function reviewBlock(r) {
+  if (!r || r.verdict === 'skipped') return '';
+  const label = r.verdict === 'approve' ? 'Reviewer approved' : 'Reviewer still has concerns';
+  const issues = (r.issues || []).map((i) =>
+    `<li class="rv-${esc(i.severity)}"><b>${esc(i.severity)}</b> ${i.file ? `<code>${esc(i.file)}</code> ` : ''}${esc(i.problem)}</li>`).join('');
+  return `<details class="code-review rv-${esc(r.verdict)}"><summary>${label}${r.rounds > 1 ? ' after a fix round' : ''}</summary>` +
+    `${r.summary ? `<p>${esc(r.summary)}</p>` : ''}${issues ? `<ul>${issues}</ul>` : ''}</details>`;
 }
 
 /** Guardrail notices on a saved reply - what the agent refused, ignored or ran out of. */
@@ -458,6 +468,15 @@ function pendingReply() {
           }
           box.outerHTML = planBlock(Array.isArray(ev.data) ? ev.data : [], true);
           scrollThread();
+          break;
+        }
+        case 'review': {
+          // The reviewer agent: a second model read the request and the diff.
+          const issues = Array.isArray(ev.data) ? ev.data : [];
+          const major = issues.filter((i) => i.severity === 'major').length;
+          if (ev.path === 'changes') step('st st-repair', `reviewer found ${major} problem${major === 1 ? '' : 's'} &mdash; sending back to fix`);
+          else if (ev.path === 'approve') step('st st-pass', `reviewer approved${issues.length ? ` (${issues.length} note${issues.length === 1 ? '' : 's'})` : ''}`);
+          else step('st', 'review skipped');
           break;
         }
         case 'model': if (ev.data) step('st st-model', esc(ev.message.toLowerCase())); break;

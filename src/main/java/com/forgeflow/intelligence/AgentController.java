@@ -47,7 +47,7 @@ public class AgentController {
                                      Authentication auth) {
         Long userId = (Long) auth.getPrincipal();
         projects.requireWrite(projectId, userId);   // 404 if no access, 403 if VIEWER
-        RagOptions rag = RagOptions.parse(request.codeContext(), request.notes());
+        RunOptions rag = RunOptions.parse(request.codeContext(), request.notes(), request.review());
         return agent.generate(projectId, userId, request.prompt(), rag, event -> { });
     }
 
@@ -62,7 +62,7 @@ public class AgentController {
         // Do it inside the background task and a forbidden request would get
         // 200 plus an error event instead of a clean 404.
         projects.requireWrite(projectId, userId);
-        RagOptions rag = RagOptions.parse(request.codeContext(), request.notes());
+        RunOptions rag = RunOptions.parse(request.codeContext(), request.notes(), request.review());
         // Same reason: out of tokens must be a real 402, not an error event in a 200.
         entitlements.requireRoomFor(userId, Quota.AI_TOKENS_PER_DAY);
 
