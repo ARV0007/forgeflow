@@ -23,7 +23,7 @@ class AgentGuardrailsTest extends ApiTestSupport {
     @Autowired
     ProjectFileService files;
 
-    private static final String LEAKY_JS = "const key = 'AIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q';\n" + JS;
+    private static final String LEAKY_JS = "const key = '" + com.forgeflow.support.FakeSecrets.GOOGLE_API_KEY + "';\n" + JS;
 
     @Test
     void aCredentialIsNeverWrittenAndTheRunSaysSo() {

@@ -1702,7 +1702,13 @@ out. V22.
   answer. Fallback is off in the test profile and on in `ModelRoutingTest`.
 - **The nightly audit cron could fire mid-test-run** at 02:15 and steal
   scripted answers. It's disabled (`cron: "-"`) in the test profile.
-- **Postgres was down twice** after container restarts.
+- **GitHub push protection blocked the push.** The guardrail tests used a
+  complete fake Stripe key (`sk_live_...`) as test data, and GitHub can't tell
+  a fake key from a real one. Aman marked it as test data on GitHub, and every
+  fake credential now lives in `support/FakeSecrets`, assembled from pieces, so
+  no source file contains a whole one again. Lesson: test data for a secret
+  detector must not itself be detectable in the source.
+- **Postgres was down three times** after container restarts.
 
 290 tests (9 skipped need Docker), the browser walk passes (now including
 the plan, reviewer verdict, Ask verification, Memory and Audit).

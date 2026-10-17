@@ -255,7 +255,7 @@ with sync_playwright() as p:
     page.fill("#memory-new", "Prices are shown in rupees")
     page.click("#btn-memory-add")
     expect(page.locator("#memory-list .mem-text")).to_have_text("Prices are shown in rupees", timeout=10000)
-    page.fill("#memory-new", "Stripe key is sk_" + "live_51H8abcdefghijklmnopqrstu")
+    page.fill("#memory-new", "Stripe key is " + "sk_" + "live_51H8abcdefghijklmnopqrstu")   # fake, split so scanners don't flag the source
     page.click("#btn-memory-add")
     expect(page.locator("#memory-msg")).to_contain_text("credentials are never kept")
     page.fill("#memory-new", "")

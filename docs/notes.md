@@ -1255,3 +1255,6 @@ FROM project_audits a LEFT JOIN audit_findings f ON f.audit_id = a.id WHERE a.pr
   cron are off in `application-test.yml`; their own tests switch them on.
   A test that adds a model call to every run would break every scripted test.
 - A new UI class name: grep `styles.css` for it first. `.plan` was taken.
+- Fake credentials in tests go in `support/FakeSecrets`, built from pieces.
+  A whole one in a source file (even fake) makes GitHub push protection
+  reject the push.

@@ -86,9 +86,9 @@ class ProjectMemoryTest extends ApiTestSupport {
     void credentialsAndOverlongFactsAreRefusedForAgentsAndPeopleAlike() {
         Account a = signup("memory-guard");
         long id = site(a);
-        post(mem(id), a, Map.of("content", "Stripe key is sk_" + "live_51H8abcdefghijklmnopqrstu"), 400);
+        post(mem(id), a, Map.of("content", "Stripe key is " + com.forgeflow.support.FakeSecrets.STRIPE_SECRET_KEY), 400);
         post(mem(id), a, Map.of("content", "x".repeat(301)), 400);
-        llm.then(calls(remember("The API key is AIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q"))).then(calls(finish("Ok.")));
+        llm.then(calls(remember("The API key is " + com.forgeflow.support.FakeSecrets.GOOGLE_API_KEY))).then(calls(finish("Ok.")));
         post("/api/v1/projects/" + id + "/generate", a, Map.of("prompt", "remember my key"), 200);
         String refusal = llm.seen().get(1).get(llm.seen().get(1).size() - 1).toolResults().get(0).output();
         assertThat(refusal).startsWith("ERROR: That looks like a real Google API key");

@@ -1,5 +1,6 @@
 package com.forgeflow.intelligence;
 
+import com.forgeflow.support.FakeSecrets;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -9,12 +10,12 @@ class GuardrailsTest {
 
     @Test
     void realCredentialShapesAreCaughtByKind() {
-        assertThat(Guardrails.secretIn("const key = 'AIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q';")).contains("Google API key");
+        assertThat(Guardrails.secretIn("const key = '" + FakeSecrets.GOOGLE_API_KEY + "';")).contains("Google API key");
         assertThat(Guardrails.secretIn("aws_access_key_id = AKIAIOSFODNN7EXAMPLE")).contains("AWS access key");
-        assertThat(Guardrails.secretIn("stripe('sk_" + "live_51H8abcdefghijklmnopqrstu')")).contains("Stripe secret key");
-        assertThat(Guardrails.secretIn("token: ghp_abcdefghijklmnopqrstuvwxyz0123456789AB")).contains("GitHub token");
-        assertThat(Guardrails.secretIn("-----BEGIN RSA PRIVATE KEY-----\nMIIE")).contains("private key");
-        assertThat(Guardrails.secretIn("Bearer ff_pat_0123456789abcdefABCDEF0123456789")).contains("ForgeFlow access token");
+        assertThat(Guardrails.secretIn("stripe('" + FakeSecrets.STRIPE_SECRET_KEY + "')")).contains("Stripe secret key");
+        assertThat(Guardrails.secretIn("token: " + FakeSecrets.GITHUB_TOKEN)).contains("GitHub token");
+        assertThat(Guardrails.secretIn(FakeSecrets.PRIVATE_KEY_HEADER + "\nMIIE")).contains("private key");
+        assertThat(Guardrails.secretIn("Bearer " + FakeSecrets.FORGEFLOW_TOKEN)).contains("ForgeFlow access token");
     }
 
     @Test
