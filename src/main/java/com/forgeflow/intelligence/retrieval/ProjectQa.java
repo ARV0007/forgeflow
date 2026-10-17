@@ -70,9 +70,29 @@ public class ProjectQa {
      * @param found     false when the sources didn't hold the answer (NOT_FOUND)
      * @param citations only the sources the answer actually cites, in order of first use
      * @param sources   how many sources the model was shown
+     * @param searches  what agentic retrieval did (queries tried, results kept) - empty when the
+     *                  project was sent whole or plain search was used
+     * @param check     the faithfulness check: are the cited sources really saying what the answer
+     *                  claims? null when not run
      */
     public record Answer(String answer, boolean found, List<Source> citations, int sources,
-                         int tokens, BigDecimal costUsd) {
+                         int tokens, BigDecimal costUsd, List<String> searches, Faithfulness check) {
+
+        Answer(String answer, boolean found, List<Source> citations, int sources, int tokens, BigDecimal costUsd) {
+            this(answer, found, citations, sources, tokens, costUsd, List.of(), null);
+        }
+
+        Answer with(int moreTokens, BigDecimal moreCost, List<String> searches, Faithfulness check) {
+            return new Answer(answer, found, citations, sources, tokens + moreTokens, costUsd.add(moreCost), searches, check);
+        }
+    }
+
+    /**
+     * @param claims      how many cited sentences were checked
+     * @param supported   how many the cited sources really support
+     * @param unsupported the sentences that weren't, verbatim
+     */
+    public record Faithfulness(int claims, int supported, List<String> unsupported) {
     }
 
     record Excerpt(String path, int startLine, int endLine, String text) {
@@ -81,16 +101,21 @@ public class ProjectQa {
     private final CodeIndex index;
     private final ProjectFileService files;
     private final LlmClient llm;
+    private final AgenticRetriever agentic;
+    private final boolean agenticAsk;
     private final Entitlements entitlements;
     private final UsageMeter usage;
     private final LlmPricing pricing;
     private final Tracer tracer;
 
-    public ProjectQa(CodeIndex index, ProjectFileService files, LlmClient llm, Entitlements entitlements,
-                     UsageMeter usage, LlmPricing pricing, Tracer tracer) {
+    public ProjectQa(CodeIndex index, ProjectFileService files, LlmClient llm, AgenticRetriever agentic,
+                     @org.springframework.beans.factory.annotation.Value("${forgeflow.retrieval.agentic.ask:true}") boolean agenticAsk,
+                     Entitlements entitlements, UsageMeter usage, LlmPricing pricing, Tracer tracer) {
         this.index = index;
         this.files = files;
         this.llm = llm;
+        this.agentic = agentic;
+        this.agenticAsk = agenticAsk;
         this.entitlements = entitlements;
         this.usage = usage;
         this.pricing = pricing;
@@ -104,20 +129,43 @@ public class ProjectQa {
     public Answer ask(Long userId, Long projectId, String question) {
         entitlements.requireRoomFor(userId, Quota.AI_TOKENS_PER_DAY);
         try (Tracer.Span span = tracer.start("rag.ask")) {
-            List<Excerpt> excerpts = retrieve(projectId, question);
+            Retrieved got = retrieve(projectId, question);
+            List<Excerpt> excerpts = got.excerpts();
             span.tag("project.id", projectId).tag("rag.sources", excerpts.size());
             if (excerpts.isEmpty()) {
-                return new Answer("This project has no files to answer from yet.", false, List.of(), 0, 0, BigDecimal.ZERO);
+                usage.record(userId, projectId, UsageKind.AI_TOKENS, got.tokens(), "ask");
+                return new Answer(got.searches().isEmpty() ? "This project has no files to answer from yet."
+                        : "I couldn't find that in this project's code - none of the search results were about it.",
+                        false, List.of(), 0, got.tokens(), got.cost(), got.searches(), null);
             }
             LlmResponse r = llm.chat(SYSTEM, List.of(LlmMessage.user(prompt(question, excerpts))), List.of());
-            usage.record(userId, projectId, UsageKind.AI_TOKENS, r.totalTokens(), "ask");
+            usage.record(userId, projectId, UsageKind.AI_TOKENS, r.totalTokens() + got.tokens(), "ask");
             BigDecimal cost = pricing.cost(llm.modelName(), r.promptTokens(), r.cachedTokens(), r.totalTokens());
             span.tag("llm.total_tokens", r.totalTokens());
-            return check(r.text(), excerpts, r.totalTokens(), cost);
+            return check(r.text(), excerpts, r.totalTokens(), cost).with(got.tokens(), got.cost(), got.searches(), null);
         }
     }
 
-    private List<Excerpt> retrieve(Long projectId, String question) {
+    private record Retrieved(List<Excerpt> excerpts, List<String> searches, int tokens, BigDecimal cost) {
+    }
+
+    private Retrieved retrieve(Long projectId, String question) {
+        List<Excerpt> plain = retrievePlain(projectId, question);
+        if (plain == null) {
+            if (agenticAsk) {
+                AgenticRetriever.Result r = agentic.search(projectId, question, TOP_K, null);
+                return new Retrieved(r.hits().stream().map(h -> new Excerpt(h.path(), h.startLine(), h.endLine(), h.content())).toList(),
+                        r.trace(), r.totalTokens(), r.costUsd());
+            }
+            plain = index.search(projectId, question, TOP_K).stream()
+                    .map(h -> new Excerpt(h.path(), h.startLine(), h.endLine(), h.content()))
+                    .toList();
+        }
+        return new Retrieved(plain, List.of(), 0, BigDecimal.ZERO);
+    }
+
+    /** The whole project when it's small enough; null when it has to be searched. */
+    private List<Excerpt> retrievePlain(Long projectId, String question) {
         if (index.fitsWhole(projectId)) {
             Map<String, String> all = new TreeMap<>(files.snapshot(projectId));
             int chars = all.values().stream().mapToInt(String::length).sum();
@@ -127,9 +175,7 @@ public class ProjectQa {
                 return out;
             }
         }
-        return index.search(projectId, question, TOP_K).stream()
-                .map(h -> new Excerpt(h.path(), h.startLine(), h.endLine(), h.content()))
-                .toList();
+        return null;
     }
 
     static String prompt(String question, List<Excerpt> excerpts) {

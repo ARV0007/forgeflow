@@ -53,9 +53,12 @@ public class AgentTools {
                 new ToolSpec("search_code",
                         "Search this project's code by meaning and by keyword. Returns the most relevant excerpts "
                                 + "with file names and line numbers. Use it to find where something lives in a "
-                                + "larger project, then read_file the file before changing it.",
-                        schema(Map.of("query", prop("string",
-                                        "What you are looking for, e.g. 'dark mode toggle' or 'renderTodos'")),
+                                + "larger project, then read_file the file before changing it. Set thorough to true "
+                                + "when a plain search came back with nothing useful or the question is vague: the "
+                                + "search then tries several phrasings and checks each result for relevance (slower).",
+                        schema(new LinkedHashMap<>(Map.of(
+                                        "query", prop("string", "What you are looking for, e.g. 'dark mode toggle' or 'renderTodos'"),
+                                        "thorough", prop("boolean", "Rewrite the query, grade the results, retry once - for hard searches"))),
                                List.of("query"))),
 
                 new ToolSpec("search_docs",
@@ -194,7 +197,11 @@ public class AgentTools {
         if (query == null || query.isBlank()) {
             throw new ToolException("query is required");
         }
-        List<CodeIndex.SearchHit> hits = index.search(projectId, query, 6);
+        return formatHits(index.search(projectId, query, 6));
+    }
+
+    /** search_code's answer, shared by the plain and the thorough (agentic) search. */
+    static ToolResult formatHits(List<CodeIndex.SearchHit> hits) {
         if (hits.isEmpty()) {
             return ToolResult.ok("search_code", "No matches. Use list_files to see what exists.");
         }

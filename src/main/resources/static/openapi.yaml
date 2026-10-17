@@ -608,7 +608,7 @@ paths:
       parameters:
         - { name: q, in: query, required: true, schema: { type: string }, example: dark mode toggle }
         - { name: k, in: query, schema: { type: integer, default: 8, maximum: 20 } }
-        - { name: mode, in: query, description: "hybrid (default), or vector / keyword alone - for measuring each half", schema: { type: string, enum: [hybrid, vector, keyword], default: hybrid } }
+        - { name: mode, in: query, description: "hybrid (default), or vector / keyword alone - for measuring each half; agentic = rewrite the query, search, grade the results, retry once (model calls, metered; X-Search-Trace says what it tried)", schema: { type: string, enum: [hybrid, vector, keyword, agentic], default: hybrid } }
         - { name: vectorWeight, in: query, description: "RRF weight of the vector list for this search (0-10)", schema: { type: number } }
         - { name: keywordWeight, in: query, description: "RRF weight of the keyword list for this search (0-10)", schema: { type: number } }
         - { name: rerank, in: query, description: "reorder the top 15 with the chat model before returning k", schema: { type: boolean, default: false } }
@@ -1104,6 +1104,15 @@ components:
         sources: { type: integer, description: How many excerpts the model was shown }
         tokens: { type: integer }
         costUsd: { type: number }
+        searches: { type: array, items: { type: string }, description: "agentic retrieval: queries tried and results kept, one line per round (empty when the project was sent whole)" }
+        check:
+          type: object
+          nullable: true
+          description: "faithfulness check: do the cited sources really support each cited sentence?"
+          properties:
+            claims: { type: integer }
+            supported: { type: integer }
+            unsupported: { type: array, items: { type: string } }
     Plan:
       type: object
       properties:

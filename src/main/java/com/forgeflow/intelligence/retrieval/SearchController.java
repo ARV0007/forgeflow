@@ -35,12 +35,23 @@ public class SearchController {
     private final ProjectService projects;
     private final LlmReranker reranker;
     private final ProjectQa qa;
+    private final AgenticRetriever agentic;
+    private final com.forgeflow.billing.Entitlements entitlements;
+    private final com.forgeflow.billing.UsageMeter usage;
 
-    public SearchController(CodeIndex index, ProjectService projects, LlmReranker reranker, ProjectQa qa) {
+    /** On a mode=agentic search: what it tried, rounds separated by " | ". */
+    public static final String TRACE_HEADER = "X-Search-Trace";
+
+    public SearchController(CodeIndex index, ProjectService projects, LlmReranker reranker, ProjectQa qa,
+                            AgenticRetriever agentic, com.forgeflow.billing.Entitlements entitlements,
+                            com.forgeflow.billing.UsageMeter usage) {
         this.index = index;
         this.projects = projects;
         this.reranker = reranker;
         this.qa = qa;
+        this.agentic = agentic;
+        this.entitlements = entitlements;
+        this.usage = usage;
     }
 
     public record AskRequest(String question) {
@@ -72,11 +83,21 @@ public class SearchController {
                                             @RequestParam(defaultValue = "false") boolean rerank,
                                             Authentication auth) {
         projects.getById(projectId, (Long) auth.getPrincipal());
+        if ("agentic".equalsIgnoreCase(mode)) {
+            // Rewrite, search, grade, retry: model calls, so metered like any other.
+            Long userId = (Long) auth.getPrincipal();
+            entitlements.requireRoomFor(userId, com.forgeflow.billing.Quota.AI_TOKENS_PER_DAY);
+            AgenticRetriever.Result r = agentic.search(projectId, query, Math.max(1, Math.min(k, 20)), null);
+            usage.record(userId, projectId, com.forgeflow.billing.UsageKind.AI_TOKENS, r.totalTokens(), "agentic-search");
+            String trace = String.join(" | ", r.trace()).replaceAll("[\\r\\n]+", " ");
+            return ResponseEntity.ok().header(TRACE_HEADER, trace.length() > 1500 ? trace.substring(0, 1500) : trace)
+                    .body(r.hits());
+        }
         CodeIndex.Mode m;
         try {
             m = CodeIndex.Mode.valueOf(mode.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "mode must be hybrid, vector or keyword");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "mode must be hybrid, vector, keyword or agentic");
         }
         // Weights override the configured fusion for this one search - how the
         // eval sweeps them without a restart. Out of range is a client error.

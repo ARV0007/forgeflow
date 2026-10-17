@@ -479,6 +479,12 @@ function pendingReply() {
           else step('st', 'review skipped');
           break;
         }
+        case 'searched': {
+          // Agentic retrieval: the search rewrote the query and graded what it found.
+          const rounds = Array.isArray(ev.data) ? ev.data : [];
+          step('st st-rag', `thorough search: ${rounds.map((r) => esc(r)).join(' &rarr; ')}`);
+          break;
+        }
         case 'model': if (ev.data) step('st st-model', esc(ev.message.toLowerCase())); break;
         case 'guard': step('st st-guard', esc(ev.message)); break;
         case 'error': step('st st-bad', esc(ev.message)); break;

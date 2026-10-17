@@ -55,6 +55,22 @@ public class DemoLlmClient implements LlmClient {
                     List.of(), "[]", estimate(history) + 150, 50, estimate(history) + 200);
         }
 
+        // Agentic retrieval. The demo can't rephrase or judge, so it searches
+        // with the question's own words and calls every result relevant - the
+        // loop runs, honestly labelled by the trace it leaves.
+        if (systemPrompt != null && systemPrompt.startsWith("You write search queries")) {
+            String q = last.text() == null ? "" : last.text().replaceFirst("(?s)^QUESTION\\n", "").split("\n", 2)[0];
+            String words = String.join(" ", java.util.Arrays.stream(q.toLowerCase(java.util.Locale.ROOT).split("[^a-z0-9_]+"))
+                    .filter(w -> w.length() > 3).limit(4).toList());
+            return new LlmResponse("{\"queries\": [\"" + words.replace("\"", "") + "\"]}", List.of(), "[]",
+                    estimate(history), 20, estimate(history) + 20);
+        }
+        if (systemPrompt != null && systemPrompt.startsWith("You judge search results")) {
+            int n = last.text() == null ? 0 : (int) java.util.regex.Pattern.compile("(?m)^\\[\\d+\\] ").matcher(last.text()).results().count();
+            String all = String.join(", ", java.util.stream.IntStream.rangeClosed(1, Math.min(n, 4)).mapToObj(String::valueOf).toList());
+            return new LlmResponse("{\"relevant\": [" + all + "]}", List.of(), "[]", estimate(history), 15, estimate(history) + 15);
+        }
+
         // Ask your project (no tools, numbered sources). The demo can't reason
         // about code, so it does what keyword search would: cite the first
         // source that mentions a word of the question, or say NOT_FOUND.

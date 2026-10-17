@@ -72,6 +72,7 @@ public class AgentService {
     private final LlmPricing pricing;
     private final Models models;
     private final CodeReviewer reviewer;
+    private final com.forgeflow.intelligence.retrieval.AgenticRetriever agentic;
     private final boolean reviewByDefault;
     private final tools.jackson.databind.ObjectMapper json = new tools.jackson.databind.ObjectMapper();
 
@@ -97,6 +98,7 @@ public class AgentService {
                         LlmPricing pricing,
                         Models models,
                         CodeReviewer reviewer,
+                        com.forgeflow.intelligence.retrieval.AgenticRetriever agentic,
                         @Value("${forgeflow.agent.review.enabled:true}") boolean reviewByDefault,
                         @Value("${forgeflow.agent.max-tool-calls}") int maxToolCalls,
                         @Value("${forgeflow.agent.timeout-seconds}") long timeoutSeconds,
@@ -119,6 +121,7 @@ public class AgentService {
         this.pricing = pricing;
         this.models = models;
         this.reviewer = reviewer;
+        this.agentic = agentic;
         this.reviewByDefault = reviewByDefault;
         this.maxToolCalls = maxToolCalls;
         this.timeoutSeconds = timeoutSeconds;
@@ -322,6 +325,8 @@ public class AgentService {
         Map<String, String> originals = new java.util.LinkedHashMap<>();
         int reviews = 0;
         CodeReviewer.Verdict lastReview = null;
+        // Agentic retrieval: one line per thorough search (queries tried, results kept).
+        List<String> searches = new ArrayList<>();
         // Every tool call in order, with its path - the run's trajectory.
         List<String> trajectory = new ArrayList<>();
 
@@ -426,6 +431,27 @@ public class AgentService {
 
                     emit(listener, AgentEvent.tool(call.name(), path));
                     log.debug("run {} -> tool {} {}", run.getId(), call.name(), call.args().keySet());
+
+                    if ("search_code".equals(call.name()) && Boolean.parseBoolean(String.valueOf(call.args().get("thorough")))) {
+                        // The thorough search is a small agent of its own:
+                        // rewrite, search, grade, retry. Its model calls count
+                        // toward this run.
+                        String query = String.valueOf(call.args().getOrDefault("query", "")).strip();
+                        if (query.isEmpty()) {
+                            results.add(ToolResult.failed("search_code", "query is required"));
+                            continue;
+                        }
+                        var found = agentic.search(projectId, query, 6, why -> note(guards, listener, "Model fallback: " + why));
+                        totalTokens += found.totalTokens();
+                        costUsd = costUsd.add(found.costUsd());
+                        String line = "'" + query + "': " + String.join("; ", found.trace());
+                        searches.add(line);
+                        emit(listener, AgentEvent.searched(found.trace(), found.hits().size()));
+                        ToolResult r = AgentTools.formatHits(found.hits());
+                        scan("the search results", r.output(), guards, listener);
+                        results.add(r);
+                        continue;
+                    }
 
                     if ("update_plan".equals(call.name())) {
                         ToolResult planned = updatePlan(call, plan);
@@ -602,7 +628,7 @@ public class AgentService {
         AgentReport.Review review = lastReview == null ? null : new AgentReport.Review(
                 lastReview.ok() ? lastReview.verdict() : "skipped", reviews, lastReview.summary(), lastReview.issues());
         AgentReport report = new AgentReport(model, tier.name(), fellBack, List.copyOf(plan), review, List.copyOf(guards),
-                null, List.of(), List.of(), List.of(), List.of(), List.copyOf(trajectory));
+                null, List.of(), List.of(), List.of(), List.copyOf(searches), List.copyOf(trajectory));
         try {
             run.setAgentReport(json.writeValueAsString(report));
             run = runs.save(run);

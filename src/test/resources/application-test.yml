@@ -20,6 +20,10 @@ forgeflow:
     # what Render runs, so it is also what the tests should exercise.
     provider: in-process
   retrieval:
+    # Ask with plain search: agentic retrieval adds model calls the existing
+    # Ask scripts don't include. AgenticRetrievalTest switches it on.
+    agentic:
+      ask: false
     # Deterministic and offline; and indexing finishes before the request
     # returns, so tests can look at the index straight away.
     embedder: hashing

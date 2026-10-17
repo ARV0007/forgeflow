@@ -73,6 +73,11 @@ public record AgentEvent(String type, String message, String path, Object data) 
         return new AgentEvent("review", summary, verdict, issues);
     }
 
+    /** A thorough (agentic) search ran: what it tried, as data, and how many results it kept. */
+    public static AgentEvent searched(List<String> trace, int kept) {
+        return new AgentEvent("searched", "Thorough search kept " + kept + " result" + (kept == 1 ? "" : "s"), null, trace);
+    }
+
     /** A guardrail fired: injection-like text seen, a secret refused, a budget reached, a model fell back. */
     public static AgentEvent guard(String message) {
         return new AgentEvent("guard", message, null, null);
