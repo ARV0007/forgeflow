@@ -98,6 +98,12 @@ forgeflow:
   chat:
     # Spec: "past 10 chat messages (session history)" - the model's memory window.
     memory-messages: 10
+  # The audit agent (AuditAgent): read-only, files findings; on demand, and
+  # nightly for projects that opted in and changed since their last audit.
+  audit:
+    async: true
+    cron: ${FORGEFLOW_AUDIT_CRON:0 15 2 * * *}
+    nightly-limit: 20
   # The agent's fetch_docs tool (WebDocs): https pages on these hosts only, every
   # address checked to be public, redirects re-checked, 1 MB / 10 s per page.
   webdocs:

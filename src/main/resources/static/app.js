@@ -1293,6 +1293,75 @@ async function runImport(go) {
   }
 }
 
+// ── audit: a read-only agent files findings ─────────────
+
+let auditPoll = null;
+$('btn-audit').addEventListener('click', async () => {
+  $('dlg-audit').showModal();
+  $('btn-audit-run').disabled = $('audit-nightly').disabled = !canWrite();
+  try { $('audit-nightly').checked = (await api(`/api/v1/projects/${state.projectId}/audit-settings`)).nightly; } catch { /* leave it */ }
+  await showAudit();
+});
+$('dlg-audit').addEventListener('close', () => { clearTimeout(auditPoll); });
+$('audit-nightly').addEventListener('change', async (e) => {
+  try {
+    await api(`/api/v1/projects/${state.projectId}/audit-settings`, { method: 'PUT', body: { nightly: e.target.checked } });
+    toast(e.target.checked ? 'Nightly audits on' : 'Nightly audits off');
+  } catch (err) { e.target.checked = !e.target.checked; toast(err.message); }
+});
+$('btn-audit-run').addEventListener('click', async () => {
+  try {
+    await api(`/api/v1/projects/${state.projectId}/audits`, { method: 'POST' });
+    await showAudit();
+  } catch (err) { toast(err.message, { upgrade: err.upgrade }); }
+});
+
+const SEV = { high: 'High', medium: 'Medium', low: 'Low' };
+
+async function showAudit() {
+  clearTimeout(auditPoll);
+  const status = $('audit-status');
+  const list = $('audit-findings');
+  let a = null;
+  try { a = await api(`/api/v1/projects/${state.projectId}/audits/latest`); } catch (err) { status.textContent = err.message; return; }
+  if (!a) { status.className = 'msg'; status.textContent = 'No audit yet.'; list.innerHTML = ''; return; }
+  if (a.status === 'RUNNING') {
+    status.className = 'msg is-busy';
+    status.textContent = 'Auditing… the agent is reading the project.';
+    list.innerHTML = '';
+    if ($('dlg-audit').open) auditPoll = setTimeout(showAudit, 2000);
+    return;
+  }
+  status.className = a.status === 'FAILED' ? 'msg' : 'msg is-ok';
+  status.textContent = a.status === 'FAILED' ? `The audit failed: ${a.error || 'unknown error'}`
+    : `${a.trigger === 'NIGHTLY' ? 'Nightly audit' : 'Audit'} · ${new Date(a.finishedAt).toLocaleString()} · ${a.summary || ''}`;
+  list.innerHTML = a.findings.length ? a.findings.map((f) => `<li class="finding sev-${esc(f.severity)} is-${esc(f.status.toLowerCase())}" data-id="${f.id}">
+      <div class="finding-head"><b>${SEV[f.severity] || esc(f.severity)}</b> <span class="finding-cat">${esc(f.category)}</span>
+        ${f.file ? `<code>${esc(f.file)}</code>` : ''}</div>
+      <div>${esc(f.problem)}</div>${f.suggestion ? `<div class="finding-fix">${esc(f.suggestion)}</div>` : ''}
+      ${f.status === 'OPEN' && canWrite() ? `<div class="finding-actions"><button class="btn btn-primary btn-xs f-fix">Fix it</button>
+        <button class="btn btn-quiet btn-xs f-dismiss">Dismiss</button></div>` : `<div class="finding-done">${f.status === 'FIXED' ? 'fixed' : f.status === 'DISMISSED' ? 'dismissed' : ''}</div>`}
+    </li>`).join('') : '<li class="mem-empty">No problems found.</li>';
+  list.querySelectorAll('.finding').forEach((li) => {
+    li.querySelector('.f-fix')?.addEventListener('click', async (e) => {
+      e.target.disabled = true;
+      e.target.textContent = 'Fixing…';
+      try {
+        const r = await api(`/api/v1/projects/${state.projectId}/audits/findings/${li.dataset.id}/fix`, { method: 'POST' });
+        toast(r.run.status === 'SUCCEEDED' ? 'Fixed - see History for the change' : `The fix run ended ${r.run.status.toLowerCase()}`);
+        await Promise.all([showAudit(), loadFiles()]);
+        state.previewReload = reloadPreviewFrame();
+      } catch (err) { toast(err.message, { upgrade: err.upgrade }); e.target.disabled = false; e.target.textContent = 'Fix it'; }
+    });
+    li.querySelector('.f-dismiss')?.addEventListener('click', async () => {
+      try {
+        await api(`/api/v1/projects/${state.projectId}/audits/findings/${li.dataset.id}/dismiss`, { method: 'POST' });
+        await showAudit();
+      } catch (err) { toast(err.message); }
+    });
+  });
+}
+
 // ── project memory: facts every run starts with ─────────
 
 $('btn-memory').addEventListener('click', async () => {

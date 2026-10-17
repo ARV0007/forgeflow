@@ -115,6 +115,7 @@
         <button id="btn-build" class="btn btn-quiet btn-sm">Run build</button>
         <button id="btn-import" class="btn btn-quiet btn-sm" title="Bring in a GitHub repo or a zip">Import</button>
         <button id="btn-memory" class="btn btn-quiet btn-sm" title="Facts the agent keeps about this project">Memory</button>
+        <button id="btn-audit" class="btn btn-quiet btn-sm" title="An agent reviews the whole project for problems">Audit</button>
         <button id="btn-download" class="btn btn-quiet btn-sm" title="Download every file as a zip">Download</button>
       </div>
 
@@ -217,6 +218,20 @@
   <p class="dlg-sub">Skipped automatically: node_modules, .git, build output, images and other binaries,
      and files over 200 KB. Up to 1,500 files.</p>
   <p id="import-msg" class="msg"></p>
+  <div class="dlg-actions"><button class="btn btn-quiet btn-sm" data-close>Close</button></div>
+</dialog>
+
+<dialog id="dlg-audit" class="dlg dlg-wide">
+  <h2>Project audit</h2>
+  <p class="dlg-sub">A read-only agent goes through the whole project looking for bugs, accessibility,
+     security, performance and UX problems. It can't change anything: each finding has a Fix button
+     that hands it to the builder, or you can dismiss it.</p>
+  <div class="audit-bar">
+    <button id="btn-audit-run" class="btn btn-primary btn-sm">Audit now</button>
+    <label class="audit-nightly"><input id="audit-nightly" type="checkbox"> Audit every night if the project changed</label>
+  </div>
+  <p id="audit-status" class="msg"></p>
+  <ul id="audit-findings" class="audit-findings"></ul>
   <div class="dlg-actions"><button class="btn btn-quiet btn-sm" data-close>Close</button></div>
 </dialog>
 

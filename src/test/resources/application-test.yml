@@ -7,6 +7,11 @@ forgeflow:
       # A failing scripted call should fail, not quietly consume the next
       # scripted answer as a "fallback". ModelRoutingTest switches it on.
       fallback: ""
+  audit:
+    # In the request thread, so a test can read the findings straight away.
+    async: false
+    # Never on a timer during tests: a 02:15 run would eat other tests' scripted answers.
+    cron: "-"
   agent:
     review:
       # The reviewer adds a model call to every run that writes files; the

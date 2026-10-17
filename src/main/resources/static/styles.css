@@ -548,3 +548,18 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--e
 .approval span { flex: 1; min-width: 12rem; }
 .approval b { font-weight: 500; color: var(--ash); font-size: .8rem; }
 .approval.st-approved, .approval.st-rejected { border-color: var(--line, rgba(255,255,255,.12)); }
+
+/* The audit agent's findings */
+.audit-bar { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin: .3rem 0 .6rem; }
+.audit-nightly { display: flex; gap: .4rem; align-items: center; font-size: .85rem; color: var(--ash); }
+.audit-findings { list-style: none; margin: 0; padding: 0; max-height: 26rem; overflow-y: auto; display: grid; gap: .5rem; }
+.finding { padding: .55rem .7rem; border-left: 3px solid var(--ash); background: rgba(255,255,255,.03); border-radius: 4px; font-size: .86rem; }
+.finding.sev-high { border-left-color: var(--rust); }
+.finding.sev-medium { border-left-color: var(--ember); }
+.finding-head { display: flex; gap: .5rem; align-items: baseline; margin-bottom: .2rem; }
+.finding-head b { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; }
+.finding-cat { color: var(--ash); font-size: .78rem; }
+.finding-fix { color: var(--ash); margin-top: .2rem; }
+.finding-actions { display: flex; gap: .4rem; margin-top: .4rem; }
+.finding-done { color: var(--verdigris); font-size: .78rem; margin-top: .3rem; }
+.finding.is-dismissed { opacity: .55; }

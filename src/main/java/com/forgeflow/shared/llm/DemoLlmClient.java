@@ -55,6 +55,22 @@ public class DemoLlmClient implements LlmClient {
                     List.of(), "[]", estimate(history) + 150, 50, estimate(history) + 200);
         }
 
+        // The audit agent (read-only tools + report_issue). The demo can't
+        // judge code: it lists the files, files one honestly-labelled finding
+        // and finishes - enough to walk audit -> findings -> fix offline.
+        if (systemPrompt != null && systemPrompt.startsWith("You audit a small web project")) {
+            if (last.role() == LlmMessage.Role.USER) {
+                return new LlmResponse(null, List.of(new ToolCall("list_files", Map.of()),
+                        new ToolCall("report_issue", Map.of("severity", "low", "category", "accessibility", "file", "index.html",
+                                "problem", "Demo finding: the button has no visible focus style for keyboard users.",
+                                "suggestion", "Add a :focus-visible outline to buttons in the stylesheet."))),
+                        "[]", estimate(history), 60, estimate(history) + 60);
+            }
+            return new LlmResponse(null, List.of(new ToolCall("finish",
+                    Map.of("summary", "Demo audit: one finding (the demo model reports the same thing for every project)."))),
+                    "[]", estimate(history), 20, estimate(history) + 20);
+        }
+
         // Agentic retrieval. The demo can't rephrase or judge, so it searches
         // with the question's own words and calls every result relevant - the
         // loop runs, honestly labelled by the trace it leaves.
