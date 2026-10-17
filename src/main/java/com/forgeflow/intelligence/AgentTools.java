@@ -86,6 +86,23 @@ public class AgentTools {
                                         "content", prop("string", "The complete file content"))),
                                List.of("path", "content"))),
 
+                new ToolSpec("update_plan",
+                        "Write or revise your step plan. Call it FIRST for any request that needs more than one "
+                                + "change, with 2-7 short steps. Send the whole plan every time: mark a step "
+                                + "in_progress when you start it and done when it is finished; if something fails "
+                                + "or you learn more, change the steps. finish is refused while steps are pending.",
+                        schema(Map.of("steps", Map.of(
+                                        "type", "array",
+                                        "description", "The full plan, in order",
+                                        "items", Map.of("type", "object",
+                                                "properties", Map.of(
+                                                        "title", prop("string", "What this step does, e.g. 'Add the dark mode toggle to the header'"),
+                                                        "status", Map.of("type", "string",
+                                                                "enum", List.of("pending", "in_progress", "done", "skipped"),
+                                                                "description", "Where this step stands")),
+                                                "required", List.of("title", "status")))),
+                               List.of("steps"))),
+
                 new ToolSpec("finish",
                         "Call this when the task is complete. Summarise what you built in one or two sentences.",
                         schema(Map.of("summary", prop("string", "What you built")),

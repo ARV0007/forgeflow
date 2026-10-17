@@ -370,7 +370,7 @@ function appendMessage(m) {
   } else {
     const failed = m.status && m.status !== 'SUCCEEDED';
     el.className = 'msg-bot' + (failed ? ' is-failed' : '');
-    el.innerHTML = `<div class="bot-text"></div>` +
+    el.innerHTML = planBlock(m.agent?.plan || [], false) + `<div class="bot-text"></div>` + guardBlock(m.agent?.guards) +
       (m.toolCalls?.length
         ? `<div class="bot-files">${m.toolCalls.map((t) =>
             `<button class="file-chip" data-path="${esc(t.path)}">${esc(t.path)}</button>`).join('')}</div>` : '') +
@@ -384,6 +384,23 @@ function appendMessage(m) {
   thread.appendChild(el);
   scrollThread();
   return el;
+}
+
+const PLAN_MARK = { pending: '\u25CB', in_progress: '\u25D0', done: '\u25CF', skipped: '\u2298' };
+
+/** The agent's step plan as a checklist; open while it works, folded on the saved reply. */
+function planBlock(steps, live) {
+  if (!steps.length) return '';
+  const done = steps.filter((p) => p.status === 'done' || p.status === 'skipped').length;
+  const items = steps.map((p) =>
+    `<li class="plan-${esc(p.status)}"><span class="plan-mark">${PLAN_MARK[p.status] || ''}</span>${esc(p.title)}</li>`).join('');
+  return `<details class="plan"${live ? ' open' : ''}><summary>Plan &middot; ${done} of ${steps.length} done</summary><ol>${items}</ol></details>`;
+}
+
+/** Guardrail notices on a saved reply - what the agent refused, ignored or ran out of. */
+function guardBlock(guards) {
+  if (!guards || !guards.length) return '';
+  return `<ul class="guards">${guards.map((g) => `<li>${esc(g)}</li>`).join('')}</ul>`;
 }
 
 /** The reply being built right now: a live list of what the agent is doing. */
@@ -432,6 +449,17 @@ function pendingReply() {
             ev.message === 'Build passed' ? 'build passed' : `build failed &mdash; <span class="why">${esc(String(ev.data || '').split('\n')[0])}</span>`);
           break;
         case 'repair': step('st st-repair', `${esc(ev.message.toLowerCase())} &mdash; fixing before it can finish`); break;
+        case 'plan': {
+          // Plan, then build: one live checklist, replaced each time the agent revises it.
+          let box = el.querySelector('.plan');
+          if (!box) {
+            box = document.createElement('div');
+            el.querySelector('.work-head').after(box);
+          }
+          box.outerHTML = planBlock(Array.isArray(ev.data) ? ev.data : [], true);
+          scrollThread();
+          break;
+        }
         case 'model': if (ev.data) step('st st-model', esc(ev.message.toLowerCase())); break;
         case 'guard': step('st st-guard', esc(ev.message)); break;
         case 'error': step('st st-bad', esc(ev.message)); break;

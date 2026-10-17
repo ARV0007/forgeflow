@@ -136,7 +136,10 @@ public class ChatService {
         List<Long> ids = all.stream().map(ChatMessage::getId).toList();
         Map<Long, List<AttachmentInfo>> images = attachments.infoFor(ids);
         Map<Long, VisualReviewResponse> reviewed = reviews.latestFor(ids);
-        return all.stream().map(m -> toResponse(m, images.getOrDefault(m.getId(), List.of()), reviewed.get(m.getId())))
+        Map<Long, com.forgeflow.intelligence.dto.AgentReport> reports = agent.reports(
+                all.stream().map(ChatMessage::getRunId).filter(java.util.Objects::nonNull).toList());
+        return all.stream().map(m -> toResponse(m, images.getOrDefault(m.getId(), List.of()), reviewed.get(m.getId()),
+                        m.getRunId() == null ? null : reports.get(m.getRunId())))
                 .toList();
     }
 
@@ -262,8 +265,8 @@ public class ChatService {
             List<AttachmentInfo> sent = turn.userMessage() == null ? List.of()
                     : attachments.infoFor(List.of(turn.userMessage().getId())).getOrDefault(turn.userMessage().getId(), List.of());
             return new ChatTurnResponse(
-                    turn.userMessage() == null ? null : toResponse(turn.userMessage(), sent, null),
-                    toResponse(reply, List.of(), null), run);
+                    turn.userMessage() == null ? null : toResponse(turn.userMessage(), sent, null, null),
+                    toResponse(reply, List.of(), null, run.agent()), run);
         } finally {
             locks.release(turn.sessionId());
         }
@@ -383,10 +386,11 @@ public class ChatService {
         return json.readValue(raw, TOOL_CALLS);
     }
 
-    private ChatMessageResponse toResponse(ChatMessage m, List<AttachmentInfo> images, VisualReviewResponse review) {
+    private ChatMessageResponse toResponse(ChatMessage m, List<AttachmentInfo> images, VisualReviewResponse review,
+                                           com.forgeflow.intelligence.dto.AgentReport report) {
         return new ChatMessageResponse(m.getId(), m.getSessionId(), m.getRole(), m.getContent(), m.getAuthorId(),
                 parseToolCalls(m.getToolCalls()), m.getTokensUsed(), m.getStatus(), m.getRunId(), m.getCreatedAt(),
-                images, review, m.getCostUsd());
+                images, review, m.getCostUsd(), report);
     }
 
     /** One stored image's bytes - a read: anyone who can see the project. */

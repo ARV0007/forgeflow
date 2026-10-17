@@ -73,6 +73,11 @@ public class GenerationRun {
     @Column(name = "error_message", columnDefinition = "text")
     private String errorMessage;
 
+    /** The run's AgentReport as JSON - plan, review, guards, questions, approvals, memory, trajectory. */
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    @Column(name = "agent_report", columnDefinition = "jsonb")
+    private String agentReport;
+
     /** The request trace that started this run (V7). */
     @Column(name = "trace_id")
     private String traceId;
@@ -141,4 +146,7 @@ public class GenerationRun {
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+
+    public String getAgentReport() { return agentReport; }
+    public void setAgentReport(String agentReport) { this.agentReport = agentReport; }
 }

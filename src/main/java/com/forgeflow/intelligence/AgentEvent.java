@@ -63,6 +63,11 @@ public record AgentEvent(String type, String message, String path, Object data) 
         return new AgentEvent("done", "Finished", null, result);
     }
 
+    /** The agent's step plan, as it stands now (data: the steps). */
+    public static AgentEvent plan(List<?> steps) {
+        return new AgentEvent("plan", "Plan: " + steps.size() + " step" + (steps.size() == 1 ? "" : "s"), null, steps);
+    }
+
     /** A guardrail fired: injection-like text seen, a secret refused, a budget reached, a model fell back. */
     public static AgentEvent guard(String message) {
         return new AgentEvent("guard", message, null, null);

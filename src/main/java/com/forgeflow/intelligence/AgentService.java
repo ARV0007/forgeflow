@@ -71,6 +71,7 @@ public class AgentService {
     private final ProjectService projects;
     private final LlmPricing pricing;
     private final Models models;
+    private final tools.jackson.databind.ObjectMapper json = new tools.jackson.databind.ObjectMapper();
 
     private final int maxToolCalls;
     private final long timeoutSeconds;
@@ -305,6 +306,10 @@ public class AgentService {
         BigDecimal costUsd = BigDecimal.ZERO;
         boolean fellBack = false;
         boolean wrapUpSent = false;
+        // The agent's own step plan (update_plan), and how often finish was
+        // turned back because of it.
+        List<AgentReport.PlanStep> plan = new ArrayList<>();
+        int planChecks = 0;
         // Every tool call in order, with its path - the run's trajectory.
         List<String> trajectory = new ArrayList<>();
 
@@ -410,7 +415,32 @@ public class AgentService {
                     emit(listener, AgentEvent.tool(call.name(), path));
                     log.debug("run {} -> tool {} {}", run.getId(), call.name(), call.args().keySet());
 
+                    if ("update_plan".equals(call.name())) {
+                        ToolResult planned = updatePlan(call, plan);
+                        results.add(planned);
+                        if (planned.ok()) {
+                            emit(listener, AgentEvent.plan(List.copyOf(plan)));
+                        } else {
+                            emit(listener, AgentEvent.toolFailed(call.name(), planned.output()));
+                        }
+                        continue;
+                    }
+
                     if ("finish".equals(call.name())) {
+                        // The plan check comes first and costs nothing: a run
+                        // that planned five steps and did three isn't done.
+                        // Bounded, so a model that can't settle its plan
+                        // still reaches the build gate.
+                        List<String> open = unfinished(plan);
+                        if (!open.isEmpty() && planChecks < MAX_PLAN_CHECKS) {
+                            planChecks++;
+                            emit(listener, AgentEvent.status("Plan has " + open.size() + " unfinished step"
+                                    + (open.size() == 1 ? "" : "s")));
+                            results.add(ToolResult.failed("finish", "Your plan still has unfinished steps: "
+                                    + String.join("; ", open) + ". Do them now - or, if one is already done or "
+                                    + "no longer needed, call update_plan marking it done or skipped - then call finish."));
+                            continue;
+                        }
                         // THE GATE. finish only succeeds if the build passes.
                         BuildResult check = verify(projectId, listener);
 
@@ -431,7 +461,8 @@ public class AgentService {
                         } else {
                             repairRounds++;
                             emit(listener, AgentEvent.repair(repairRounds, maxRepairRounds));
-                            results.add(ToolResult.failed("finish", repairInstruction(check)));
+                            results.add(ToolResult.failed("finish", repairInstruction(check)
+                                    + (plan.isEmpty() ? "" : " Add the fixes to your plan with update_plan.")));
                         }
                         continue;
                     }
@@ -529,15 +560,40 @@ public class AgentService {
                 buildPassed == null ? "not run" : (buildPassed ? "passed" : "FAILED"),
                 totalTokens, durationMs);
 
+        AgentReport report = new AgentReport(model, tier.name(), fellBack, List.copyOf(plan), null, List.copyOf(guards),
+                null, List.of(), List.of(), List.of(), List.of(), List.copyOf(trajectory));
+        try {
+            run.setAgentReport(json.writeValueAsString(report));
+            run = runs.save(run);
+        } catch (RuntimeException e) {
+            log.warn("saving the agent report of run {} failed: {}", run.getId(), e.toString());
+        }
+
         GenerateResponse result = new GenerateResponse(run.getId(), status, stopReason, summary,
                 List.copyOf(written), toolCallCount, repairRounds, buildPassed, totalTokens, durationMs,
                 run.getErrorMessage(), java.util.Collections.unmodifiableMap(toolUsage), run.getCostUsd(),
-                java.util.Collections.unmodifiableMap(ragUsed),
-                new AgentReport(model, tier.name(), fellBack, List.of(), null, List.copyOf(guards), null, List.of(),
-                        List.of(), List.of(), List.of(), List.copyOf(trajectory)));
+                java.util.Collections.unmodifiableMap(ragUsed), report);
 
         emit(listener, AgentEvent.done(result));
         return result;
+    }
+
+    /** The saved agent reports of these runs, by run id - for chat history, where a reply shows its plan and review. */
+    public Map<Long, AgentReport> reports(java.util.Collection<Long> runIds) {
+        Map<Long, AgentReport> out = new java.util.HashMap<>();
+        if (runIds == null || runIds.isEmpty()) {
+            return out;
+        }
+        for (GenerationRun r : runs.findAllById(runIds)) {
+            if (r.getAgentReport() != null) {
+                try {
+                    out.put(r.getId(), json.readValue(r.getAgentReport(), AgentReport.class));
+                } catch (RuntimeException e) {
+                    log.debug("unreadable agent report on run {}: {}", r.getId(), e.toString());
+                }
+            }
+        }
+        return out;
     }
 
     /**
@@ -577,6 +633,58 @@ public class AgentService {
         BuildResult check = execution.build(projectId);
         emit(listener, AgentEvent.build(check.passed(), check.output()));
         return check;
+    }
+
+    static final int MAX_PLAN_CHECKS = 2;
+    static final int MAX_PLAN_STEPS = 10;
+    private static final Set<String> STEP_STATUSES = Set.of("pending", "in_progress", "done", "skipped");
+
+    /**
+     * update_plan replaces the whole plan each time - simpler for the model
+     * than patching steps by index, and the latest plan is always complete.
+     */
+    @SuppressWarnings("unchecked")
+    static ToolResult updatePlan(ToolCall call, List<AgentReport.PlanStep> plan) {
+        Object raw = call.args().get("steps");
+        if (!(raw instanceof List<?> items) || items.isEmpty()) {
+            return ToolResult.failed("update_plan", "steps must be a non-empty list of {title, status}");
+        }
+        if (items.size() > MAX_PLAN_STEPS) {
+            return ToolResult.failed("update_plan", "at most " + MAX_PLAN_STEPS + " steps - group smaller ones together");
+        }
+        List<AgentReport.PlanStep> next = new ArrayList<>();
+        for (Object item : items) {
+            String title;
+            String status = "pending";
+            if (item instanceof Map<?, ?> m) {
+                title = m.get("title") == null ? null : m.get("title").toString().strip();
+                if (m.get("status") != null) {
+                    status = m.get("status").toString().strip().toLowerCase(java.util.Locale.ROOT);
+                }
+            } else {
+                title = item == null ? null : item.toString().strip();
+            }
+            if (title == null || title.isEmpty()) {
+                return ToolResult.failed("update_plan", "every step needs a title");
+            }
+            if (!STEP_STATUSES.contains(status)) {
+                return ToolResult.failed("update_plan", "status must be one of pending, in_progress, done, skipped - not '"
+                        + status + "'");
+            }
+            next.add(new AgentReport.PlanStep(title.length() > 160 ? title.substring(0, 157) + "..." : title, status));
+        }
+        plan.clear();
+        plan.addAll(next);
+        long done = plan.stream().filter(p -> "done".equals(p.status()) || "skipped".equals(p.status())).count();
+        String upNext = plan.stream().filter(p -> !"done".equals(p.status()) && !"skipped".equals(p.status()))
+                .map(AgentReport.PlanStep::title).findFirst().orElse(null);
+        return ToolResult.ok("update_plan", "Plan saved: " + done + " of " + plan.size() + " steps done."
+                + (upNext == null ? " Every step is done - call finish." : " Next: " + upNext));
+    }
+
+    static List<String> unfinished(List<AgentReport.PlanStep> plan) {
+        return plan.stream().filter(p -> "pending".equals(p.status()) || "in_progress".equals(p.status()))
+                .map(p -> "'" + p.title() + "'").toList();
     }
 
     /** Tools whose output is text the agent didn't write - scanned for injected instructions. */

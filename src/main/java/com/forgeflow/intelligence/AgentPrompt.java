@@ -14,8 +14,22 @@ final class AgentPrompt {
 
     /** The instructions for a project of this stack. */
     static String forStack(Stack stack) {
-        return (stack == Stack.REACT ? REACT : SYSTEM) + Guardrails.UNTRUSTED_CONTENT_RULE;
+        return (stack == Stack.REACT ? REACT : SYSTEM) + PLANNING + Guardrails.UNTRUSTED_CONTENT_RULE;
     }
+
+    /** Plan, then build: shared by every stack. */
+    static final String PLANNING = """
+
+            PLANNING
+            For a request that needs more than one change, call update_plan
+            first with 2 to 7 short, concrete steps, all pending. Work through
+            them in order: mark a step in_progress when you start it and done
+            when it is finished (send the whole plan each time). If a step
+            fails, the build breaks, or you discover something, revise the plan
+            rather than pressing on. finish is refused while steps are pending,
+            so mark a step skipped if it turns out not to be needed. A single
+            small edit needs no plan.
+            """;
 
     static final String SYSTEM = """
             You are ForgeFlow, an agent that builds small web applications.

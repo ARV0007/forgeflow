@@ -60,6 +60,7 @@ public class DemoLlmClient implements LlmClient {
         if (last.role() == LlmMessage.Role.USER) {
             String ask = firstLine(last.text());
             return new LlmResponse(null, List.of(
+                    plan("pending", "Write the page structure in index.html", "Style it in styles.css", "Make the button count clicks in app.js"),
                     write("index.html", """
                             <!doctype html>
                             <html lang="en">
@@ -95,7 +96,8 @@ public class DemoLlmClient implements LlmClient {
                               button.textContent = 'Clicked ' + clicks + (clicks === 1 ? ' time' : ' times');
                               console.log('button clicked', clicks);
                             });
-                            """)),
+                            """),
+                    plan("done", "Write the page structure in index.html", "Style it in styles.css", "Make the button count clicks in app.js")),
                     "[]", estimate(history), 400, estimate(history) + 400);
         }
         return new LlmResponse(null, List.of(new ToolCall("finish",
@@ -107,6 +109,7 @@ public class DemoLlmClient implements LlmClient {
     private LlmResponse reactApp(String ask, List<LlmMessage> history) {
         String title = ask.replace("\\", "\\\\").replace("'", "\\'");
         return new LlmResponse(null, List.of(
+                plan("pending", "Set up the Vite project files", "Write the App and Counter components", "Add the styles"),
                 write("package.json", """
                         {
                           "name": "forgeflow-app",
@@ -187,8 +190,15 @@ public class DemoLlmClient implements LlmClient {
                         main { max-width: 40rem; margin: 4rem auto; padding: 0 1.5rem; }
                         .tag { color: #2a6fb5; font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; }
                         button { font: inherit; padding: .5rem 1rem; border-radius: 6px; border: 1px solid #b8c4d6; background: #fff; cursor: pointer; }
-                        """)),
+                        """),
+                plan("done", "Set up the Vite project files", "Write the App and Counter components", "Add the styles")),
                 "[]", estimate(history), 700, estimate(history) + 700);
+    }
+
+    /** The demo plans like the real agent is asked to: every step pending first, every step done at the end. */
+    private static ToolCall plan(String status, String... titles) {
+        return new ToolCall("update_plan", Map.of("steps",
+                java.util.Arrays.stream(titles).map(t -> Map.of("title", t, "status", status)).toList()));
     }
 
     private static ToolCall write(String path, String content) {

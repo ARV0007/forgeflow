@@ -10,6 +10,7 @@ import java.util.List;
  * @param images    for user messages: images sent with it (metadata; bytes at .../attachments/{id})
  * @param review    for assistant replies: the latest visual review of the result, if one was made
  * @param costUsd   for assistant replies: the run's model calls at list price (null for older replies)
+ * @param agent     for assistant replies: the run's plan, review, guardrail notices, question and approvals
  */
 public record ChatMessageResponse(
         Long id,
@@ -24,5 +25,6 @@ public record ChatMessageResponse(
         Instant createdAt,
         List<AttachmentInfo> images,
         VisualReviewResponse review,
-        java.math.BigDecimal costUsd) {
+        java.math.BigDecimal costUsd,
+        com.forgeflow.intelligence.dto.AgentReport agent) {
 }
