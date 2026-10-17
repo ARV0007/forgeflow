@@ -351,6 +351,9 @@ public class ChatService {
 
     /** A reply a person can read - including when the run did not work. */
     static String replyText(GenerateResponse run) {
+        if ("NEEDS_INPUT".equals(run.status())) {
+            return run.summary() == null || run.summary().isBlank() ? "I have a question before I go on." : run.summary();
+        }
         if ("SUCCEEDED".equals(run.status())) {
             return run.summary() == null || run.summary().isBlank() ? "Done." : run.summary();
         }

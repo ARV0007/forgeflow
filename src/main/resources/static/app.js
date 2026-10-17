@@ -368,9 +368,10 @@ function appendMessage(m) {
       return;
     }
   } else {
-    const failed = m.status && m.status !== 'SUCCEEDED';
-    el.className = 'msg-bot' + (failed ? ' is-failed' : '');
-    el.innerHTML = planBlock(m.agent?.plan || [], false) + `<div class="bot-text"></div>` + reviewBlock(m.agent?.review) + guardBlock(m.agent?.guards) +
+    const asking = m.status === 'NEEDS_INPUT';
+    const failed = m.status && m.status !== 'SUCCEEDED' && !asking;
+    el.className = 'msg-bot' + (failed ? ' is-failed' : '') + (asking ? ' is-asking' : '');
+    el.innerHTML = planBlock(m.agent?.plan || [], false) + `<div class="bot-text"></div>` + optionChips(m) + approvalSlot(m.agent?.approvals) + reviewBlock(m.agent?.review) + guardBlock(m.agent?.guards) +
       (m.toolCalls?.length
         ? `<div class="bot-files">${m.toolCalls.map((t) =>
             `<button class="file-chip" data-path="${esc(t.path)}">${esc(t.path)}</button>`).join('')}</div>` : '') +
@@ -380,6 +381,12 @@ function appendMessage(m) {
     el.querySelectorAll('.file-chip').forEach((b) => b.addEventListener('click', () => showCode(b.dataset.path)));
     if (m.id) el.dataset.messageId = m.id;
     if (m.review) el.appendChild(reviewCard(m.review, state.shots[m.id], { fixSent: m.fixSent }));
+    el.querySelectorAll('.answer-chip').forEach((b) => b.addEventListener('click', () => {
+      if (!canWrite() || state.busy) return;
+      $('prompt').value = b.textContent;
+      send();
+    }));
+    fillApprovals(el);
   }
   thread.appendChild(el);
   scrollThread();
@@ -405,6 +412,43 @@ function reviewBlock(r) {
     `<li class="rv-${esc(i.severity)}"><b>${esc(i.severity)}</b> ${i.file ? `<code>${esc(i.file)}</code> ` : ''}${esc(i.problem)}</li>`).join('');
   return `<details class="code-review rv-${esc(r.verdict)}"><summary>${label}${r.rounds > 1 ? ' after a fix round' : ''}</summary>` +
     `${r.summary ? `<p>${esc(r.summary)}</p>` : ''}${issues ? `<ul>${issues}</ul>` : ''}</details>`;
+}
+
+/** A question the agent stopped to ask: its suggested answers, one click each (only on the latest reply). */
+function optionChips(m) {
+  const opts = m.agent?.options || [];
+  if (m.status !== 'NEEDS_INPUT' || !opts.length) return '';
+  return `<div class="chips answer-chips">${opts.map((o) => `<button class="chip answer-chip" type="button">${esc(o)}</button>`).join('')}</div>`;
+}
+
+/** Where the deletion requests of a reply go; filled in from the approvals API. */
+function approvalSlot(ids) {
+  return ids && ids.length ? `<div class="approvals" data-ids="${ids.map(Number).join(',')}"></div>` : '';
+}
+
+async function fillApprovals(el) {
+  const slot = el.querySelector('.approvals');
+  if (!slot) return;
+  const ids = slot.dataset.ids.split(',').map(Number);
+  let all = [];
+  try { all = await api(`/api/v1/projects/${state.projectId}/approvals`); } catch { return; }
+  const mine = all.filter((r) => ids.includes(r.id));
+  slot.innerHTML = mine.map((r) => `<div class="approval st-${esc(r.status.toLowerCase())}" data-id="${r.id}">
+      <span>Delete <code>${esc(r.path)}</code>${r.reason ? ` &mdash; ${esc(r.reason)}` : ''}</span>
+      ${r.status === 'PENDING' && canWrite()
+        ? `<button class="btn btn-primary btn-xs ap-yes">Approve</button><button class="btn btn-quiet btn-xs ap-no">Keep it</button>`
+        : `<b>${r.status === 'PENDING' ? 'waiting for an editor' : r.status === 'APPROVED' ? 'deleted' : 'kept'}</b>`}</div>`).join('');
+  slot.querySelectorAll('.approval').forEach((card) => {
+    const decide = async (what) => {
+      try {
+        await api(`/api/v1/projects/${state.projectId}/approvals/${card.dataset.id}/${what}`, { method: 'POST' });
+        await fillApprovals(el);
+        if (what === 'approve') await loadFiles();
+      } catch (err) { toast(err.message); }
+    };
+    card.querySelector('.ap-yes')?.addEventListener('click', () => decide('approve'));
+    card.querySelector('.ap-no')?.addEventListener('click', () => decide('reject'));
+  });
 }
 
 /** Guardrail notices on a saved reply - what the agent refused, ignored or ran out of. */
@@ -486,6 +530,8 @@ function pendingReply() {
           break;
         }
         case 'remembered': step('st st-rag', `remembered: <span class="why">${esc(ev.message)}</span>`); break;
+        case 'asked': step('st st-repair', `asked you: <span class="why">${esc(ev.message)}</span>`); break;
+        case 'approval': step('st st-repair', `asked to delete <code>${esc(ev.path || '')}</code> &mdash; needs your approval`); break;
         case 'model': if (ev.data) step('st st-model', esc(ev.message.toLowerCase())); break;
         case 'guard': step('st st-guard', esc(ev.message)); break;
         case 'error': step('st st-bad', esc(ev.message)); break;
@@ -496,7 +542,8 @@ function pendingReply() {
 
 function updateRetry(messages) {
   const last = messages[messages.length - 1];
-  $('btn-retry').hidden = !(canWrite() && last && last.role === 'assistant' && last.status !== 'SUCCEEDED');
+  $('btn-retry').hidden = !(canWrite() && last && last.role === 'assistant' && last.status !== 'SUCCEEDED'
+    && last.status !== 'NEEDS_INPUT');
 }
 
 // ── sending ─────────────────────────────────────────────

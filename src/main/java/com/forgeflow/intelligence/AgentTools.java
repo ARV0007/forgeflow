@@ -119,6 +119,25 @@ public class AgentTools {
                                 + "in PROJECT MEMORY ([#12] -> 12). Remember the corrected fact separately.",
                         schema(Map.of("id", prop("integer", "The memory's number")), List.of("id"))),
 
+                new ToolSpec("ask_user",
+                        "Stop and ask the user one short question, when the request is ambiguous in a way that "
+                                + "changes what you would build and there is no sensible default. The run ends; their "
+                                + "answer arrives as the next message. Don't ask about things you can reasonably "
+                                + "decide - choose, and say what you chose in your summary.",
+                        schema(new LinkedHashMap<>(Map.of(
+                                        "question", prop("string", "One short question"),
+                                        "options", Map.of("type", "array", "items", Map.of("type", "string"),
+                                                "description", "Up to 4 likely answers the user can pick with one click"))),
+                               List.of("question"))),
+
+                new ToolSpec("delete_file",
+                        "Ask to delete a file. You cannot delete files yourself: this files a request the user "
+                                + "approves or rejects, and the file stays until they approve. Give the reason.",
+                        schema(new LinkedHashMap<>(Map.of(
+                                        "path", prop("string", "Relative path of the file to delete"),
+                                        "reason", prop("string", "Why it should go, in one sentence"))),
+                               List.of("path", "reason"))),
+
                 new ToolSpec("finish",
                         "Call this when the task is complete. Summarise what you built in one or two sentences.",
                         schema(Map.of("summary", prop("string", "What you built")),
@@ -282,6 +301,11 @@ public class AgentTools {
 
         refuseSecrets(path, content);
         String before = files.read(projectId, path).orElse(null);
+        if (before != null && content.isBlank()) {
+            // Emptying a file is deleting it by another name - and deleting needs the user's yes.
+            throw new ToolException("Refused: that would empty " + path + ". To remove a file, call delete_file - "
+                    + "the user approves deletions.");
+        }
         files.write(projectId, path, content, userId);
 
         String result = "Wrote " + path + " (" + bytes + " bytes)";

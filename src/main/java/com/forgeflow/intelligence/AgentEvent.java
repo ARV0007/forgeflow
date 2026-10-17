@@ -83,6 +83,16 @@ public record AgentEvent(String type, String message, String path, Object data) 
         return new AgentEvent("remembered", fact, null, null);
     }
 
+    /** The agent stopped to ask the user something (data: suggested answers). */
+    public static AgentEvent asked(String question, List<String> options) {
+        return new AgentEvent("asked", question, null, options);
+    }
+
+    /** The agent asked permission for something it may not do alone (path: the file; data: the request id). */
+    public static AgentEvent approval(Long id, String path, String reason) {
+        return new AgentEvent("approval", reason == null ? "Wants to delete " + path : reason, path, id);
+    }
+
     /** A guardrail fired: injection-like text seen, a secret refused, a budget reached, a model fell back. */
     public static AgentEvent guard(String message) {
         return new AgentEvent("guard", message, null, null);

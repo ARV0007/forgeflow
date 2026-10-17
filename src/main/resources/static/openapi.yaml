@@ -664,6 +664,35 @@ paths:
         "402": { $ref: "#/components/responses/QuotaExceeded" }
         "404": { $ref: "#/components/responses/Problem" }
 
+  /api/v1/projects/{projectId}/approvals:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    get:
+      tags: [Chat]
+      summary: What the agent asked permission for - today, deleting files (READ)
+      parameters:
+        - { name: pending, in: query, description: only requests still waiting, schema: { type: boolean, default: false } }
+      responses:
+        "200": { description: Newest first, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Approval" } } } } }
+  /api/v1/projects/{projectId}/approvals/{approvalId}/approve:
+    parameters:
+      - { $ref: "#/components/parameters/projectId" }
+      - { name: approvalId, in: path, required: true, schema: { type: integer, format: int64 } }
+    post:
+      tags: [Chat]
+      summary: Say yes - the file is deleted, its last content kept as a version (WRITE)
+      responses:
+        "200": { description: Decided, content: { application/json: { schema: { $ref: "#/components/schemas/Approval" } } } }
+        "400": { description: Already decided }
+  /api/v1/projects/{projectId}/approvals/{approvalId}/reject:
+    parameters:
+      - { $ref: "#/components/parameters/projectId" }
+      - { name: approvalId, in: path, required: true, schema: { type: integer, format: int64 } }
+    post:
+      tags: [Chat]
+      summary: Say no - the file stays (WRITE)
+      responses:
+        "200": { description: Decided, content: { application/json: { schema: { $ref: "#/components/schemas/Approval" } } } }
+        "400": { description: Already decided }
   /api/v1/projects/{projectId}/memories:
     parameters: [{ $ref: "#/components/parameters/projectId" }]
     get:
@@ -1112,6 +1141,19 @@ components:
         skipped: { type: object, additionalProperties: { type: integer }, description: "Count per reason: IGNORED_FOLDER, BINARY, TOO_LARGE, UNSAFE_PATH, OVER_FILE_LIMIT" }
         bytes: { type: integer }
         checkpointId: { type: integer }
+    Approval:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        runId: { type: integer, format: int64, nullable: true }
+        kind: { type: string, enum: [DELETE_FILE] }
+        path: { type: string }
+        reason: { type: string, nullable: true }
+        status: { type: string, enum: [PENDING, APPROVED, REJECTED] }
+        requestedBy: { type: integer, format: int64, nullable: true }
+        decidedBy: { type: integer, format: int64, nullable: true }
+        createdAt: { type: string, format: date-time }
+        decidedAt: { type: string, format: date-time, nullable: true }
     MemoryFact:
       type: object
       properties:

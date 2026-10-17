@@ -37,6 +37,15 @@ final class AgentPrompt {
             currency, an audience, "always", "never", "from now on" - save it
             with remember (one fact per call). If a saved fact is now wrong,
             forget it by its number and remember the new one.
+
+            ASKING AND APPROVAL
+            If the request is ambiguous in a way that changes what you would
+            build, and there is no sensible default, call ask_user with one
+            short question and a few likely answers; the run ends and the
+            user's reply arrives as the next message. Most requests don't need
+            this - decide, and say what you chose in your summary.
+            You cannot delete files. If one should go, call delete_file with the
+            reason; the user approves or rejects it. Never empty a file instead.
             """;
 
     static final String SYSTEM = """

@@ -538,3 +538,13 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--e
 .mem-text { flex: 1; color: var(--bone); }
 .mem-src { color: var(--ash); font-size: .75rem; white-space: nowrap; }
 .mem-empty { color: var(--ash); }
+
+/* Human in the loop: a question, and deletions waiting for a yes */
+.msg-bot.is-asking .bot-text { color: var(--bone); font-weight: 500; }
+.answer-chips { margin: .5rem 0 0; }
+.approvals { margin: .5rem 0 0; display: grid; gap: .35rem; }
+.approval { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; font-size: .85rem; padding: .4rem .55rem;
+  border: 1px solid var(--ember); border-radius: 6px; }
+.approval span { flex: 1; min-width: 12rem; }
+.approval b { font-weight: 500; color: var(--ash); font-size: .8rem; }
+.approval.st-approved, .approval.st-rejected { border-color: var(--line, rgba(255,255,255,.12)); }

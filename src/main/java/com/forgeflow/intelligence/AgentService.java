@@ -74,6 +74,7 @@ public class AgentService {
     private final CodeReviewer reviewer;
     private final com.forgeflow.intelligence.retrieval.AgenticRetriever agentic;
     private final com.forgeflow.intelligence.memory.ProjectMemory memory;
+    private final com.forgeflow.intelligence.approval.Approvals approvals;
     private final boolean reviewByDefault;
     private final tools.jackson.databind.ObjectMapper json = new tools.jackson.databind.ObjectMapper();
 
@@ -101,6 +102,7 @@ public class AgentService {
                         CodeReviewer reviewer,
                         com.forgeflow.intelligence.retrieval.AgenticRetriever agentic,
                         com.forgeflow.intelligence.memory.ProjectMemory memory,
+                        com.forgeflow.intelligence.approval.Approvals approvals,
                         @Value("${forgeflow.agent.review.enabled:true}") boolean reviewByDefault,
                         @Value("${forgeflow.agent.max-tool-calls}") int maxToolCalls,
                         @Value("${forgeflow.agent.timeout-seconds}") long timeoutSeconds,
@@ -125,6 +127,7 @@ public class AgentService {
         this.reviewer = reviewer;
         this.agentic = agentic;
         this.memory = memory;
+        this.approvals = approvals;
         this.reviewByDefault = reviewByDefault;
         this.maxToolCalls = maxToolCalls;
         this.timeoutSeconds = timeoutSeconds;
@@ -344,6 +347,10 @@ public class AgentService {
         List<String> searches = new ArrayList<>();
         // Facts this run saved to project memory.
         List<String> rememberedNow = new ArrayList<>();
+        // Human in the loop: a question that ended the run, and deletions waiting for a yes.
+        String question = null;
+        List<String> options = List.of();
+        List<Long> approvalIds = new ArrayList<>();
         // Every tool call in order, with its path - the run's trajectory.
         List<String> trajectory = new ArrayList<>();
 
@@ -467,6 +474,38 @@ public class AgentService {
                         ToolResult r = AgentTools.formatHits(found.hits());
                         scan("the search results", r.output(), guards, listener);
                         results.add(r);
+                        continue;
+                    }
+
+                    if ("ask_user".equals(call.name())) {
+                        Object q = call.args().get("question");
+                        if (q == null || q.toString().isBlank()) {
+                            results.add(ToolResult.failed("ask_user", "question is required"));
+                            continue;
+                        }
+                        question = q.toString().strip();
+                        options = options(call.args().get("options"));
+                        summary = question;
+                        emit(listener, AgentEvent.asked(question, options));
+                        results.add(ToolResult.ok("ask_user", "The question is with the user; this run ends here."));
+                        done = true;
+                        break;
+                    }
+
+                    if ("delete_file".equals(call.name())) {
+                        if (path == null || tools.current(projectId, path).isEmpty()) {
+                            results.add(ToolResult.failed("delete_file", "No such file: " + path));
+                            continue;
+                        }
+                        Object why = call.args().get("reason");
+                        var req = approvals.requestDelete(projectId, run.getId(), userId, path, why == null ? null : why.toString());
+                        if (!approvalIds.contains(req.id())) {
+                            approvalIds.add(req.id());
+                        }
+                        emit(listener, AgentEvent.approval(req.id(), path, req.reason()));
+                        results.add(ToolResult.ok("delete_file", "Deleting " + path + " needs the user's approval: request #"
+                                + req.id() + " is waiting, and the file stays until they say yes. Don't rely on it being "
+                                + "gone; carry on, and mention the request in your summary."));
                         continue;
                     }
 
@@ -595,7 +634,8 @@ public class AgentService {
                 history.add(LlmMessage.toolResults(results));
 
                 if (done) {
-                    stopReason = Boolean.TRUE.equals(buildPassed) ? "FINISH_TOOL" : "MAX_REPAIRS";
+                    stopReason = question != null ? "ASKED_USER"
+                            : Boolean.TRUE.equals(buildPassed) ? "FINISH_TOOL" : "MAX_REPAIRS";
                     break;
                 }
             }
@@ -656,7 +696,8 @@ public class AgentService {
         AgentReport.Review review = lastReview == null ? null : new AgentReport.Review(
                 lastReview.ok() ? lastReview.verdict() : "skipped", reviews, lastReview.summary(), lastReview.issues());
         AgentReport report = new AgentReport(model, tier.name(), fellBack, List.copyOf(plan), review, List.copyOf(guards),
-                null, List.of(), List.of(), List.copyOf(rememberedNow), List.copyOf(searches), List.copyOf(trajectory));
+                question, options, List.copyOf(approvalIds), List.copyOf(rememberedNow), List.copyOf(searches),
+                List.copyOf(trajectory));
         try {
             run.setAgentReport(json.writeValueAsString(report));
             run = runs.save(run);
@@ -712,6 +753,9 @@ public class AgentService {
      *   repairs exhausted, or an error    -> FAILED
      */
     private String statusFor(String stopReason, Boolean buildPassed) {
+        if ("ASKED_USER".equals(stopReason)) {
+            return "NEEDS_INPUT";
+        }
         if (Boolean.TRUE.equals(buildPassed)) {
             return "SUCCEEDED";
         }
@@ -732,6 +776,16 @@ public class AgentService {
 
     static final int MAX_PLAN_CHECKS = 2;
     static final int MEMORY_CHARS = 2_500;
+
+    /** ask_user's suggested answers: strings, at most four, each short. */
+    static List<String> options(Object raw) {
+        if (!(raw instanceof List<?> items)) {
+            return List.of();
+        }
+        return items.stream().filter(java.util.Objects::nonNull).map(o -> o.toString().strip())
+                .filter(o -> !o.isEmpty()).map(o -> o.length() > 80 ? o.substring(0, 77) + "..." : o)
+                .distinct().limit(4).toList();
+    }
     /** A run that saves more than this is noting what it did, not what's durable. */
     static final int MAX_REMEMBERED_PER_RUN = 5;
 
