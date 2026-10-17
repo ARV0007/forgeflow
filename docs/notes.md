@@ -1182,3 +1182,76 @@ FROM chat_messages WHERE session_id = 7 ORDER BY id;
   hashing embedder doesn't understand words. Benchmark numbers only mean
   something with real embeddings.
 - Ask and Import count as AI calls for rate limiting (6 a minute by default).
+
+## 29. The agentic layer (17 Oct)
+
+### What you'll see in the workbench
+
+1. **Plan.** Ask for something with a few parts ("a recipe page with search
+   and a dark mode"). A checklist appears and ticks off live; it folds onto
+   the reply when it's done.
+2. **Reviewer.** Under the reply: "Reviewer approved", or "Reviewer still has
+   concerns" with the issues. Live, you may see "reviewer found 2 problems —
+   sending back to fix".
+3. **Guard notices** (amber ⚠): a credential refused, instructions found in a
+   file, a budget warning, a model fallback.
+4. **Questions.** If the agent stops to ask, its reply is the question with
+   one-click answers. Click one, or type your own.
+5. **Deletes.** "Delete old.js — reason. [Approve] [Keep it]" on the reply.
+   Nothing is deleted until you click Approve (and History can undo it).
+6. **Memory** (top-right): facts the agent keeps. Tell it "from now on prices
+   are in rupees" and watch it appear. Add or forget facts yourself.
+7. **Audit** (top-right): "Audit now" runs a read-only inspection in the
+   background; each finding has **Fix it** and **Dismiss**. Tick "Audit every
+   night" to have it run on its own when the project changed.
+8. **Ask** now says "Checked: all 3 cited claims are backed by their sources"
+   (or which ones aren't), and on big projects what it searched for.
+
+### Switches (Render → Environment)
+
+| Variable | Default | What it does |
+|---|---|---|
+| `FORGEFLOW_MODEL_STRONG` | (blank = same model) | model for new builds, pictures, long briefs, reviews, the judge |
+| `FORGEFLOW_MODEL_FALLBACK` | `gemini-2.5-flash` | tried once when a call still fails |
+| `FORGEFLOW_REVIEW` | `true` | the reviewer agent on every run that changes files |
+| `FORGEFLOW_AGENTIC_ASK` | `true` | rewrite + grade + retry for Ask on big projects |
+| `FORGEFLOW_WEBDOCS` | `true` | the `fetch_docs` tool |
+| `FORGEFLOW_AUDIT_CRON` | `0 15 2 * * *` | when nightly audits run (UTC) |
+
+### Measuring it (Aman runs these — they sign in)
+
+```bash
+B=https://forgeflow-7m08.onrender.com
+python3 evals/run_evals.py --base $B --judge              # pass rate + how the agent worked + rubric scores
+python3 evals/run_evals.py --base $B --judge --review off # the same without the reviewer: is it worth its call?
+python3 evals/run_ask_eval.py --base $B                    # answered / right file / claims backed / refused the unanswerable
+python3 evals/run_retrieval_eval.py --base $B --set heldout             # did the tuned weights generalise?
+python3 evals/run_retrieval_eval.py --base $B --set heldout --agentic   # does rewrite + grade + retry beat plain hybrid?
+```
+
+The judge and the reviewer each add a model call per app, and agentic
+search adds 3–4 per question, so these spend more of the daily allowance
+than the old evals. Spread them over days if a run stops on a 402.
+
+### Looking inside
+
+```sql
+SELECT id, status, stop_reason, model, agent_report->'plan', agent_report->'review'->>'verdict',
+       jsonb_array_length(agent_report->'guards') AS guards
+FROM generation_runs WHERE project_id = 42 ORDER BY id DESC LIMIT 5;
+
+SELECT * FROM project_memories WHERE project_id = 42;
+SELECT id, path, status, reason FROM agent_approvals WHERE project_id = 42 ORDER BY id DESC;
+SELECT a.id, a.status, a.trigger, f.severity, f.category, f.problem, f.status
+FROM project_audits a LEFT JOIN audit_findings f ON f.audit_id = a.id WHERE a.project_id = 42 ORDER BY a.id DESC;
+```
+
+### Gotchas
+
+- The demo model plays every persona (planner, reviewer, auditor, grader,
+  judge) with canned, labelled answers. The plumbing runs offline, but none of
+  the numbers mean anything without Gemini.
+- In tests, the reviewer, agentic Ask, the model fallback and the nightly
+  cron are off in `application-test.yml`; their own tests switch them on.
+  A test that adds a model call to every run would break every scripted test.
+- A new UI class name: grep `styles.css` for it first. `.plan` was taken.

@@ -33,7 +33,7 @@ live preview · file tree · version history · every step streamed to the brows
 | **Follow-up changes** ("make the button green") | **5 / 5** still build, and all 5 were targeted **edits**, not rewrites of the file |
 | **Code search** (70 questions with known answers, 11 decoy files) | the right file is in the top 3 **99%** of the time and first **87%** (MRR 0.92); keyword-only: 79% / 63% |
 | **Tuning from the benchmark** | the keyword weight cut from 1.0 to **0.25**: top-1 81% → 87%, paraphrased questions 62% → 77% - better on the original and the decoy questions alike |
-| **Tests** | 243 tests against a real Postgres, Redis, Qdrant and S3 API on every push |
+| **Tests** | 290 tests against a real Postgres, Redis, Qdrant and S3 API on every push |
 
 How each number is produced: `evals/` and [`docs/WORKLOG.md`](docs/WORKLOG.md).
 
@@ -68,6 +68,9 @@ How each number is produced: `evals/` and [`docs/WORKLOG.md`](docs/WORKLOG.md).
 | **Search (RAG)** | hybrid code search (pgvector or Qdrant + full-text, weighted rank fusion, optional LLM rerank); the agent has a `search_code` tool; big projects get relevant code attached to each request; **measured** by a 70-question retrieval benchmark |
 | **Ask your project** | questions about the code answered **only from the code**, every claim cited to file and lines (citations checked server-side), "not in this project" when it isn't; also an MCP tool |
 | **Import** | bring in a **public GitHub repo** (or one folder of it) or a **zip**: zip-bomb and path-traversal safe, skips `node_modules`, binaries and huge files, undoable from history, indexed for search straight away |
+| **Agents** | three agents: a **builder** that plans first (a live checklist it must finish), a **reviewer** that reads the request and the diff and can send work back once, and a read-only **auditor** that inspects the whole project (on demand or nightly) and files findings you fix in one click |
+| **Agent safety** | credentials refused in generated code and memory; injected instructions in files, search results and web pages reported and ignored; per-run cost limit with a wrap-up warning; the agent **asks** when a request is ambiguous and must get your **approval to delete** a file |
+| **Agent tools** | **project memory** (facts every run starts with), **agentic search** (rewrite the query, grade results, retry), an allowlisted **web docs** tool (MDN, react.dev) behind an SSRF fence, **model routing** (fast vs strong) with **fallback** to a backup model |
 | **Reference notes** | 13 built-in notes (React, CSS layout, accessibility, dark mode, fetch...) retrieved by stack into **every** run, plus a `search_docs` tool; per-request switches (`notes`, `codeContext`) and a `rag` report on every run for A/B evals |
 | **Plans** | FREE / PRO — projects, live previews, AI tokens per day; **Stripe** Checkout and a signed webhook |
 | **Platform** | a **stateless API** that scales out (chat locks, live logs and rate limits in **Redis**; the gateway load-balances with failover), Redis **rate limiting**, request **tracing** (W3C traceparent, optional Zipkin), an **MCP server** so other AI agents can drive it - as *you*, with **personal access tokens** (hashed, shown once, revocable) |
@@ -195,11 +198,15 @@ python3 evals/run_evals.py --base <url>            # 20 prompts: does the app bu
 python3 evals/run_retrieval_eval.py --base <url>   # 70 questions (v2, with decoy files): does search find the right file?
                                                    # --set v1 = the original 42; --rerank adds the LLM rerank
 python3 evals/run_notes_eval.py --base <url>       # 30 questions: do the reference notes come back for the right question?
+python3 evals/run_ask_eval.py --base <url>         # Ask: right file, claims backed by sources, refuses the unanswerable
+python3 evals/run_evals.py --base <url> --judge    # + LLM-as-judge rubric scores and how the agent worked (plan, review, reads)
+python3 evals/run_retrieval_eval.py --base <url> --set heldout --agentic   # 24 held-out questions; + agentic search
 python3 evals/run_evals.py --base <url> --notes 0  # A/B: the same 20 apps with reference notes switched off
 ```
 
 Browser walk-through (sign up → chat → preview → logs → visual check and
-auto-fix → search → ask → history → upgrade → share → screenshot → quota → React → import),
+auto-fix → search → ask (with its faithfulness check) → history → memory → audit and fix → upgrade → share →
+screenshot → quota → React → import; every reply checked for its plan and the reviewer's verdict),
 against a demo-mode server started with `FORGEFLOW_RATELIMIT_AI_PER_MINUTE=60`
 (the walk makes more model calls a minute than one real user may):
 

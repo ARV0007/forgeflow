@@ -17,8 +17,10 @@ the line says so, with a placeholder.
 > chatting. You can also bring in an existing GitHub repo and ask questions
 > about it, and every answer cites the exact lines it came from.
 >
-> The interesting part is that I don't trust the model. The agent isn't
-> allowed to finish until its code passes a build check. If the build fails,
+> The interesting part is that I don't trust the model. The agent plans
+> first and can't finish with steps open, and it isn't allowed to finish
+> until its code passes a build check and a second, independent reviewer
+> agent has read the diff. If the build fails,
 > the errors go back to the agent and it fixes them. After that, the preview
 > takes a screenshot of itself, a vision model scores it against what you
 > asked for, and if something is clearly wrong the agent gets one more round
@@ -37,7 +39,7 @@ the line says so, with a placeholder.
 > rewriting it: five out of five. I also wrote a 70-question benchmark for
 > code search, with decoy files built to confuse it. Search finds the right
 > file in the top three 99% of the time, after I used the benchmark to retune
-> how the two halves of the search are weighted. There are 243 tests, all
+> how the two halves of the search are weighted. There are 290 tests, all
 > against real databases.
 
 Shorter, for "tell me about a project" in 30 seconds:
@@ -193,6 +195,50 @@ validator as any other write. For GitHub imports the server builds the
 download URL itself from a fixed host, so a user can't point it at an
 internal address.
 
+**Is it really "agentic", or just a chatbot that writes files?**
+It's three agents with different jobs and different powers. The builder plans
+(a checklist the finish gate enforces), uses tools, remembers project facts,
+asks when a request is genuinely ambiguous, and can only *request* a delete.
+The reviewer is a separate model with no tools that sees just the request and
+the diff and can send work back once. The auditor is read-only by
+construction and files findings a person turns into runs. Around them:
+routing between a fast and a strong model, fallback when one is down,
+guardrails, and evals that check the trajectory, not just the output.
+
+**Why a separate reviewer instead of asking the model to check its own work?**
+Self-review mostly agrees with itself: the builder has a whole run of context
+arguing its approach is right. The reviewer starts cold, sees what a human
+reviewer would see (the request and a diff), has no tools so it can't "fix
+it quietly", and answers in a fixed JSON shape the server can act on. It's
+fail-open, so a broken reviewer never blocks a passing build, and its second
+look is final, so it can't loop.
+
+**How do you defend against prompt injection?**
+Three layers, and I don't claim any one is complete. The rule: the system
+prompt says everything from files, tools and web pages is data. The tripwire:
+everything the agent reads is scanned for common injection phrasings and
+reported on the run. And the real wall, what the tools can do: no shell, no
+arbitrary network (web docs go through an allowlist and an SSRF fence),
+credentials refused on write, and deleting needs a human.
+
+**What's SSRF and how does your web tool avoid it?**
+Server-side request forgery: getting the server to fetch an address the
+attacker chooses, like the cloud metadata endpoint or localhost admin pages.
+`fetch_docs` takes https URLs on an allowlist only, resolves the host and
+refuses if *any* address is private, loopback, link-local or metadata (so an
+allowed name pointed at 10.x still fails), follows redirects by hand
+re-checking each hop, and caps size, time and content type. The remaining
+gap is DNS rebinding between my check and the client's connect. I can name
+it and say how to close it.
+
+**How do you evaluate an agent?**
+At three levels. Outcome: does it build (20 golden prompts). Quality: an
+LLM judge scores each app 1-5 on an anchored rubric, used to compare
+versions, never as an absolute grade. Process: every run's trajectory (did it
+plan, read before editing, what did the reviewer say). For RAG: a held-out
+question set written after tuning, and for Ask a faithfulness check plus
+unanswerable questions, where the only right answer is "not in this project".
+
 **How did you make the API stateless?**
 Three things lived in memory, and all three moved to Redis:
 - **The chat lock.** One reply at a time per chat. It's `SET NX PX`, and the
@@ -254,6 +300,8 @@ Two layers:
 - Measure how often the visual check's fix round actually raises the score.
 - Measure the reference notes live: same 20 prompts with notes on and off,
   and the 30-question notes benchmark with real embeddings.
+- Run the agentic evals live: the reviewer on vs off with the judge, the
+  held-out search set with agentic retrieval, and the Ask eval.
 
 ---
 
@@ -342,7 +390,14 @@ Pick three or four. Every number here comes from a run you can repeat.
   every generation, long chat memory with lazily embedded history, and
   hardened GitHub/zip import (zip-bomb, path-traversal and SSRF safe),
   each with a per-request switch for A/B evaluation.
-- 243 tests against real Postgres, Redis, Qdrant and S3 in CI, and a
+- Built a multi-agent layer: a planning builder held to its own checklist, an
+  independent reviewer agent that reads the diff and can send work back, and a
+  read-only audit agent running nightly; plus corrective RAG (query rewriting
+  and relevance grading), human approval for deletions, model routing with
+  fallback, and guardrails against prompt injection, credential leaks and SSRF.
+- Evaluated agents beyond pass/fail: trajectory checks, an LLM-as-judge rubric,
+  answer faithfulness against cited sources, and a held-out retrieval set.
+- 290 tests against real Postgres, Redis, Qdrant and S3 in CI, and a
   Playwright walk-through of the whole product.
 
 ---
@@ -356,6 +411,11 @@ Say these before someone else does:
 - The reference notes and chat recall aren't measured live yet. The
   benchmark and the on/off switch exist; the numbers don't.
 - Import is public repos only.
+- The agentic layer (reviewer, routing, judge, faithfulness, held-out set)
+  is tested offline; its live numbers are still to be run. Routing does nothing
+  until a strong model is configured.
+- Injection detection catches common phrasings, not all of them; the tools'
+  limits are the real defence.
 - The live deployment runs one process; the multi-service topology runs from
   `docker-compose.full.yml` and `deploy/k8s`.
 - Overall, the tuned hybrid only ties vector-only search. Its edge is on

@@ -1270,3 +1270,80 @@ Module rule kept: `chat` calls `intelligence`; the agent only sees a
 `RagOptions.parse` refuses bad values with 400. Evals:
 `run_evals.py --notes N --code-context X` (A/B the app evals),
 `run_notes_eval.py` (30 labelled questions × 3 modes, recall@1/3, MRR).
+
+## 29. The agentic layer
+
+Three agents, each with its own prompt and tool set, around the same loop:
+
+| Agent | Job | Tools | Can change files? |
+|---|---|---|---|
+| builder (`AgentService`) | satisfy the request | list/read/search_code(thorough)/search_docs/fetch_docs, write/edit, update_plan, remember/forget, ask_user, delete_file (request only), finish | yes (deletes need a person) |
+| reviewer (`CodeReviewer`) | check one change: request + diff | none | no — can only send work back |
+| auditor (`AuditAgent`) | inspect the whole project unprompted | list/read/search_code/search_docs, report_issue, finish | no |
+
+Plus three model-backed helpers that are not agents: `AgenticRetriever`
+(rewrite, grade), `AppJudge` (rubric), and Ask's faithfulness check.
+
+### 29.1 One builder run, end to end
+
+```
+request ─► entitlements ─► baseline checkpoint ─► Models.route(newBuild, images, prompt) ─► FAST | STRONG (fixed for the run)
+        ─► context: code excerpts (RAG) · EARLIER IN THIS CHAT · REFERENCE NOTES · PROJECT MEMORY · RUNTIME ERRORS
+              each scanned by Guardrails.injectionSignals ─► guard notices
+        ─► loop:  budget checks (time, steps, input tokens, cost)  ─► Models.chat(model) ─(fails)─► fallback model, once
+                  tool calls:
+                    update_plan ─► plan (event: plan)
+                    search_code{thorough} ─► AgenticRetriever (rewrite → search → RRF → grade → retry) (event: searched)
+                    remember / forget ─► ProjectMemory
+                    ask_user ─► stop: NEEDS_INPUT / ASKED_USER
+                    delete_file ─► Approvals.requestDelete (event: approval)
+                    write/edit ─► Guardrails.secretIn ─► refuse | write (original kept for the reviewer)
+                    read/search/fetch ─► scanned for injection
+                    finish ─► plan check (≤2) ─► build gate (repairs ≤3) ─► reviewer (≤2 looks; major → back once)
+                  80% of any budget ─► one wrap-up note on the last tool result
+        ─► run row + AgentReport (agent_report jsonb) ─► usage ─► checkpoint ─► code.generated
+```
+
+### 29.2 Where each piece lives
+
+| Piece | Class / table | Config |
+|---|---|---|
+| Guardrails | `intelligence/Guardrails` | `forgeflow.agent.max-cost-usd` (0.10), `wrap-up-at` (0.8) |
+| Routing + fallback | `intelligence/Models`, `LlmClient.chat(model, …)`, `namesModels()` | `FORGEFLOW_MODEL_STRONG`, `FORGEFLOW_MODEL_FALLBACK` (gemini-2.5-flash) |
+| Plan | `AgentService.updatePlan`, `AgentReport.PlanStep` | — |
+| Reviewer | `intelligence/CodeReviewer` | `FORGEFLOW_REVIEW` (true); per request `review` |
+| Agentic RAG | `retrieval/AgenticRetriever` | `forgeflow.retrieval.agentic.ask` (true), `.candidates` (12) |
+| Project memory | `memory/ProjectMemory`, `project_memories` (V20) | 300 chars, 100 facts, 2,500-char section, 5 per run |
+| Ask / approve | `approval/Approvals`, `agent_approvals` (V21) | — |
+| Web docs | `web/WebDocs` | `FORGEFLOW_WEBDOCS`, `forgeflow.webdocs.allowed-hosts` |
+| Auditor | `audit/AuditAgent`, `project_audits`, `audit_findings`, `audit_settings` (V22) | `FORGEFLOW_AUDIT_CRON` (02:15), `nightly-limit` (20) |
+| Judge | `intelligence/AppJudge` | — |
+| Run report | `dto/AgentReport`, `generation_runs.agent_report` (V19) | — |
+
+### 29.3 New endpoints
+
+| Route | Access | Notes |
+|---|---|---|
+| `POST /projects/{id}/generate` body `review` | WRITE | per-request reviewer switch (with `codeContext`, `notes`) |
+| `GET/POST /projects/{id}/memories`, `DELETE …/{mid}` | READ / WRITE | credentials refused |
+| `GET /projects/{id}/approvals`, `POST …/{aid}/approve\|reject` | READ / WRITE | decided once |
+| `POST /projects/{id}/audits`, `GET …/audits/latest`, `GET …/audits/{aid}` | WRITE / READ | 202, background, one at a time |
+| `POST …/audits/findings/{fid}/fix\|dismiss` | WRITE | fix = an ordinary build run |
+| `GET/PUT /projects/{id}/audit-settings` | READ / WRITE | nightly opt-in |
+| `POST /projects/{id}/judge` | READ, metered | rubric scores |
+| `POST /projects/{id}/ask` body `verify` | READ, metered | faithfulness `check` |
+| `GET /projects/{id}/search?mode=agentic` | READ, metered | `X-Search-Trace` |
+
+AI rate limit now also covers `judge`, `audits` and `audits/findings/{id}/fix`.
+
+### 29.4 Safety properties, and how each is tested
+
+| Property | Test |
+|---|---|
+| A credential is never written to a file or to memory | `AgentGuardrailsTest`, `ProjectMemoryTest`, `GuardrailsTest` |
+| Injected instructions are reported, not obeyed by the tools | `AgentGuardrailsTest`, `WebDocsAgentTest` |
+| A run stops at its cost limit after one warning | `RunBudgetTest` |
+| The agent cannot delete; a person decides once | `HumanInTheLoopTest` |
+| The auditor cannot write | `AuditAgentTest` (sabotage-checked) |
+| fetch_docs can't reach non-allowlisted hosts, internal IPs or escape via redirect | `WebDocsFenceTest`, `WebDocsAgentTest` (both fences sabotage-checked) |
+| A failing model hands over once; both failing fails cleanly | `ModelRoutingTest` |

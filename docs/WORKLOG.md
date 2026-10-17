@@ -1588,6 +1588,127 @@ real numbers need the live run with Gemini embeddings.
 
 ---
 
+## Day 13 — The agentic layer · 17 Oct 2026
+
+Aman's ask: "add agentic AI things in this as much as possible." Picked from
+a menu, he chose all ten. Each is its own commit, with tests that were
+sabotage-checked (break the feature, watch the test go red, restore).
+
+One design rule held throughout. The test suite drives the agent with a
+scripted model that answers calls in order. Any feature that adds model
+calls (reviewer, query rewriting, grading) is **switched by config, off in
+the test profile, and on in its own tests**. The 243 existing tests stayed
+untouched apart from four that compared whole request text.
+
+### 1. Guardrails (936984f)
+
+- **Secrets out:** agent writes containing a real credential shape (Google,
+  AWS, Stripe, GitHub, Slack, OpenAI-style, ForgeFlow tokens, private keys)
+  are refused with an actionable reason. Shapes, not entropy, so ordinary
+  code doesn't trip it.
+- **Instructions in:** everything the agent reads (retrieved code, notes, old
+  chat, preview errors, `read_file`, search results, web pages) is scanned
+  for injection phrasings and reported. The system prompt's new UNTRUSTED
+  CONTENT rule does the defending.
+- **Budgets:** a per-run cost limit (`max-cost-usd`, CAPPED / COST_BUDGET) and
+  one wrap-up warning at 80% of any budget, riding on the last tool result.
+
+### 2. Model routing + fallback (936984f)
+
+`Models`: one routing decision per run (new build, pictures, or a long brief
+go STRONG; edits go FAST), and one fallback attempt when a call still fails
+after the client's retries (default `gemini-2.5-flash`, priced from a public
+list that matches our existing flash-lite price). Cost is now summed per call
+at each model's price. Both tiers are the same model until
+`FORGEFLOW_MODEL_STRONG` is set: the evals should decide that, not me.
+
+### 3. Plan, then build (9ee8c54)
+
+`update_plan` (the whole plan each call), a PLANNING prompt section, and a
+plan check in the finish gate: free, at most twice, then the build decides.
+The run's whole `AgentReport` is now saved (`generation_runs.agent_report`,
+V19) and returned on chat messages, so a reply keeps its plan after reload.
+
+### 4. Reviewer agent (72c170e)
+
+`CodeReviewer`: its own prompt, no tools, sees only the request and the
+diff (before = when the run first touched the file). Major issues go back
+once; the second look is final. Fail-open. Per-request `"review": false`
+(RagOptions became `RunOptions`).
+
+### 5. Agentic RAG (0e633a3)
+
+`AgenticRetriever`: rewrite → search with every rewrite → RRF → grade → retry
+once with feedback. Used by Ask (nothing relevant means no answer call), by
+`search_code` when the agent sets `thorough: true`, and by `mode=agentic` on
+the search API for the benchmark.
+
+### 6. Project memory (6862107)
+
+`project_memories` (V20); `remember` / `forget` tools; a PROJECT MEMORY
+section in every run, ranked by shared words then recency past 2,500 chars;
+a Memory dialog; credentials refused for agents and people alike.
+
+### 7. Human in the loop (001e44b)
+
+`ask_user` ends a run as NEEDS_INPUT with one-click answers; the reply is the
+next message. `delete_file` only files a request (`agent_approvals`, V21):
+editors approve or keep, decided once, an approved delete is checkpointed
+first. Writing an empty file over an existing one is refused.
+
+### 8. Web docs tool (96f0cdb)
+
+`fetch_docs` (MDN search or one page) from an allowlist, behind an SSRF
+fence: https, allowlisted host, every resolved IP public, redirects
+re-checked by hand, 1 MB / 10 s / text only. Tested with a fake DNS resolver
+(an allowed name pointed at 10.x, 169.254.169.254, ::1...) and a fake docs
+server.
+
+### 9. Audit agent (bcb897c)
+
+A read-only third agent (its tools can't write) that files findings with
+severity and category. It runs in the background on demand, or nightly for
+opted-in projects that changed (charged to the owner). One audit per project
+at a time via a partial unique index, which also stops two instances
+double-running. "Fix it" hands a finding to the builder; "Dismiss" crosses it
+out. V22.
+
+### 10. Agent evals (8d735c0)
+
+- **Trajectory checks** in `run_evals.py`: planned first, read before edit,
+  reviewer verdict, guards, questions, routing.
+- **`--judge`:** `AppJudge` scores apps 1–5 on five anchored criteria.
+- **Ask `verify`:** each cited sentence checked against only its sources;
+  `run_ask_eval.py` with 12 answerable and 6 unanswerable questions (the
+  hallucination check).
+- **`--set heldout`:** 24 search questions written after tuning, labels
+  checked in CI; `--agentic` scores the corrective loop.
+
+### Mistakes & fixes
+
+- **A CSS class collision the walk caught.** The plan checklist used
+  `.plan`, which the billing dialog's plan cards already used. Styles
+  clashed, and the walk's "two plan cards" count found six. Renamed to
+  `.agent-plan`. A one-line grep for the class name first would have caught
+  it.
+- **Agentic retrieval looked broken on a five-file project.** Round 1 saw
+  every file, so round 2 had nothing new to grade. That's correct behaviour
+  (it never re-grades what it already judged irrelevant), but untestable on a
+  tiny project. Made the candidate count configurable; the test uses 2.
+- **A test mislabelled its sources.** Ask numbers sources by path, so
+  `app.js` is [1], not [2]. The code was right; the test was fixed.
+- **The fallback could have eaten scripted answers.** In tests, a failing
+  scripted call followed by a "fallback" would consume the next scripted
+  answer. Fallback is off in the test profile and on in `ModelRoutingTest`.
+- **The nightly audit cron could fire mid-test-run** at 02:15 and steal
+  scripted answers. It's disabled (`cron: "-"`) in the test profile.
+- **Postgres was down twice** after container restarts.
+
+290 tests (9 skipped need Docker), the browser walk passes (now including
+the plan, reviewer verdict, Ask verification, Memory and Audit).
+
+---
+
 ## Open items
 
 - Runtime errors and the visual check only happen if someone has the preview
@@ -1607,6 +1728,13 @@ real numbers need the live run with Gemini embeddings.
   need real Gemini embeddings (Aman runs these).
 - Import takes public GitHub repos only; private repos would need the user's
   GitHub token.
+- The agentic layer is measured offline only: the reviewer's effect, routing,
+  the judge scores, Ask faithfulness and the held-out set all need live runs.
+- Routing does nothing until `FORGEFLOW_MODEL_STRONG` is set.
+- `fetch_docs` checks DNS, then the HTTP client resolves again on connect
+  (DNS rebinding) - theoretical with this allowlist, closable by connecting to
+  the checked IP.
+- Injection detection is a tripwire for common phrasings, not a complete filter.
 - Kubernetes previews are tested against a fake API server, not a real
   cluster yet (kind or minikube would do it).
 - Kubernetes previews don't get the console bridge or the visual check (nginx
@@ -1645,3 +1773,7 @@ real numbers need the live run with Gemini embeddings.
 - RAG everywhere: Ask your project with checked citations, import from GitHub
   or a zip, reference notes on every run, long chat memory, per-request RAG
   switches and a notes benchmark (Day 12)
+- The agentic layer: guardrails, model routing + fallback, plan-then-build, a
+  reviewer agent, agentic (corrective) RAG, project memory, ask-the-user and
+  delete approvals, an allowlisted web docs tool, a background audit agent,
+  and agent evals (trajectory, judge, faithfulness, held-out set) (Day 13)
