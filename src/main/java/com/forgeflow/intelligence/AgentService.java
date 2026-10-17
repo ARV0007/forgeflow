@@ -451,7 +451,8 @@ public class AgentService {
                     toolUsage.merge(call.name(), 1, Integer::sum);
                     Object rawPath = call.args().get("path");
                     String path = rawPath == null ? null : rawPath.toString();
-                    trajectory.add(path == null ? call.name() : call.name() + " " + path);
+                    Object what = path != null ? path : call.args().getOrDefault("url", call.args().get("query"));
+                    trajectory.add(what == null ? call.name() : call.name() + " " + what);
 
                     emit(listener, AgentEvent.tool(call.name(), path));
                     log.debug("run {} -> tool {} {}", run.getId(), call.name(), call.args().keySet());

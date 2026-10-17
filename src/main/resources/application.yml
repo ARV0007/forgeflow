@@ -98,6 +98,11 @@ forgeflow:
   chat:
     # Spec: "past 10 chat messages (session history)" - the model's memory window.
     memory-messages: 10
+  # The agent's fetch_docs tool (WebDocs): https pages on these hosts only, every
+  # address checked to be public, redirects re-checked, 1 MB / 10 s per page.
+  webdocs:
+    enabled: ${FORGEFLOW_WEBDOCS:true}
+    allowed-hosts: developer.mozilla.org,react.dev,vite.dev,vitejs.dev,web.dev
   # Importing a repo or zip into a project (ProjectImporter).
   import:
     github-base: ${FORGEFLOW_IMPORT_GITHUB_BASE:https://github.com}

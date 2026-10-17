@@ -32,14 +32,33 @@ public class AgentTools {
     private final ProjectFileService files;
     private final CodeIndex index;
     private final KnowledgeBase knowledge;
+    private final com.forgeflow.intelligence.web.WebDocs web;
 
-    public AgentTools(ProjectFileService files, CodeIndex index, KnowledgeBase knowledge) {
+    public AgentTools(ProjectFileService files, CodeIndex index, KnowledgeBase knowledge,
+                      com.forgeflow.intelligence.web.WebDocs web) {
         this.files = files;
         this.index = index;
         this.knowledge = knowledge;
+        this.web = web;
     }
 
     public List<ToolSpec> specs() {
+        List<ToolSpec> all = new java.util.ArrayList<>(base());
+        if (web.enabled()) {
+            all.add(all.size() - 1, new ToolSpec("fetch_docs",
+                    "Read real web documentation when you need exact, current details of a web API, CSS feature or "
+                            + "React/Vite behaviour: give a query to search MDN, or a url to read one page. Only "
+                            + String.join(", ", web.allowedHosts()) + " can be read. Try search_docs (ForgeFlow's own "
+                            + "notes) first; this is slower.",
+                    schema(new LinkedHashMap<>(Map.of(
+                                    "query", prop("string", "Search MDN, e.g. 'Intl.NumberFormat currency'"),
+                                    "url", prop("string", "A page to read, e.g. https://developer.mozilla.org/en-US/docs/Web/API/AbortController"))),
+                           List.of())));
+        }
+        return all;
+    }
+
+    private List<ToolSpec> base() {
         return List.of(
                 new ToolSpec("list_files",
                         "List every file currently in the project, with its size in bytes.",
@@ -173,6 +192,7 @@ public class AgentTools {
                 case "read_file" -> readFile(projectId, str(call, "path"));
                 case "search_code" -> searchCode(projectId, str(call, "query"));
                 case "search_docs" -> searchDocs(str(call, "query"));
+                case "fetch_docs" -> fetchDocs(str(call, "url"), str(call, "query"));
                 case "edit_file" -> editFile(projectId, userId, str(call, "path"),
                         str(call, "old_text"), str(call, "new_text"));
                 case "write_file" -> writeFile(projectId, userId, str(call, "path"), str(call, "content"));
@@ -207,6 +227,20 @@ public class AgentTools {
         return files.read(projectId, path)
                 .map(content -> ToolResult.ok("read_file", content))
                 .orElseGet(() -> ToolResult.failed("read_file", "No such file: " + path));
+    }
+
+    private ToolResult fetchDocs(String url, String query) {
+        try {
+            if (url != null && !url.isBlank()) {
+                return ToolResult.ok("fetch_docs", web.fetch(url));
+            }
+            if (query != null && !query.isBlank()) {
+                return ToolResult.ok("fetch_docs", web.search(query));
+            }
+            return ToolResult.failed("fetch_docs", "give a query to search, or a url to read");
+        } catch (com.forgeflow.intelligence.web.WebDocs.Refused e) {
+            return ToolResult.failed("fetch_docs", e.getMessage());
+        }
     }
 
     private ToolResult searchDocs(String query) {
