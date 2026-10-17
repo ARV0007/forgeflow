@@ -563,3 +563,10 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--e
 .finding-actions { display: flex; gap: .4rem; margin-top: .4rem; }
 .finding-done { color: var(--verdigris); font-size: .78rem; margin-top: .3rem; }
 .finding.is-dismissed { opacity: .55; }
+
+/* Ask: the faithfulness check */
+.answer-check { font-size: .8rem; margin: .4rem 0 0; }
+.answer-check.is-ok { color: var(--verdigris); }
+.answer-check.is-ok::before { content: "\2713  "; }
+.answer-check.is-warn { color: var(--ember); }
+.answer-check.is-warn::before { content: "\26A0  "; }

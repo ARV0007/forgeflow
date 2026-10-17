@@ -54,7 +54,8 @@ public class SearchController {
         this.usage = usage;
     }
 
-    public record AskRequest(String question) {
+    /** @param verify also check each cited claim against its sources (one more model call) */
+    public record AskRequest(String question, Boolean verify) {
     }
 
     /**
@@ -70,7 +71,7 @@ public class SearchController {
         if (q.isEmpty() || q.length() > 1000) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "question must be 1 to 1000 characters");
         }
-        return qa.ask(userId, projectId, q);
+        return qa.ask(userId, projectId, q, Boolean.TRUE.equals(body.verify()));
     }
 
     @GetMapping("/api/v1/projects/{projectId}/search")

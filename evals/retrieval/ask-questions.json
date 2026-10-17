@@ -1,0 +1,25 @@
+{
+  "_comment": "Ask eval over the 40-file FreshCart fixture. 'answerable' questions name the file the answer lives in; 'unanswerable' ones ask about things the shop does not have - the right answer is 'not in this project'.",
+  "answerable": [
+    {"q": "What is the most of one product someone can add to the cart?", "expect": "js/cart.js"},
+    {"q": "How is the final order total worked out at checkout?", "expect": "js/checkout.js", "accept": ["js/cart-page.js", "js/shipping.js", "js/discounts.js"]},
+    {"q": "How are prices for things sold by weight shown?", "expect": "js/currency.js"},
+    {"q": "How is the delivery arrival time estimated?", "expect": "js/delivery-tracking.js"},
+    {"q": "How many loyalty points does a customer earn per pound, and what are they worth?", "expect": "js/loyalty.js"},
+    {"q": "What happens when a gift card only covers part of the order?", "expect": "js/gift-cards.js"},
+    {"q": "Which messages can a customer opt out of, and which are always sent?", "expect": "js/notifications.js"},
+    {"q": "After how many letters do search suggestions appear?", "expect": "js/search-suggestions.js"},
+    {"q": "How long before an idle shopper is warned and then signed out?", "expect": "js/session-timeout.js"},
+    {"q": "Can two promo codes be used on the same order?", "expect": "js/discounts.js"},
+    {"q": "How much does an order need to cost for free delivery?", "expect": "js/shipping.js"},
+    {"q": "What happens if the browser blocks localStorage?", "expect": "js/storage.js"}
+  ],
+  "unanswerable": [
+    "How does the app take payments through PayPal?",
+    "Where are product reviews and star ratings stored?",
+    "How is the admin dashboard for managing stock levels set up?",
+    "Which SQL database stores the orders?",
+    "How does the customer support chatbot decide what to say?",
+    "How are returns and refunds handled?"
+  ]
+}

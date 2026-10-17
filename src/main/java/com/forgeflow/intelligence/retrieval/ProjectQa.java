@@ -103,12 +103,14 @@ public class ProjectQa {
     private final LlmClient llm;
     private final AgenticRetriever agentic;
     private final boolean agenticAsk;
+    private final com.forgeflow.intelligence.Models models;
     private final Entitlements entitlements;
     private final UsageMeter usage;
     private final LlmPricing pricing;
     private final Tracer tracer;
 
     public ProjectQa(CodeIndex index, ProjectFileService files, LlmClient llm, AgenticRetriever agentic,
+                     com.forgeflow.intelligence.Models models,
                      @org.springframework.beans.factory.annotation.Value("${forgeflow.retrieval.agentic.ask:true}") boolean agenticAsk,
                      Entitlements entitlements, UsageMeter usage, LlmPricing pricing, Tracer tracer) {
         this.index = index;
@@ -116,6 +118,7 @@ public class ProjectQa {
         this.llm = llm;
         this.agentic = agentic;
         this.agenticAsk = agenticAsk;
+        this.models = models;
         this.entitlements = entitlements;
         this.usage = usage;
         this.pricing = pricing;
@@ -127,6 +130,15 @@ public class ProjectQa {
      * @throws com.forgeflow.shared.QuotaExceededException (402) when the asker is out of AI tokens today
      */
     public Answer ask(Long userId, Long projectId, String question) {
+        return ask(userId, projectId, question, false);
+    }
+
+    /**
+     * @param verify also check the answer's faithfulness: does each cited
+     *               source really say what the sentence citing it claims?
+     *               One more model call.
+     */
+    public Answer ask(Long userId, Long projectId, String question, boolean verify) {
         entitlements.requireRoomFor(userId, Quota.AI_TOKENS_PER_DAY);
         try (Tracer.Span span = tracer.start("rag.ask")) {
             Retrieved got = retrieve(projectId, question);
@@ -142,11 +154,88 @@ public class ProjectQa {
             usage.record(userId, projectId, UsageKind.AI_TOKENS, r.totalTokens() + got.tokens(), "ask");
             BigDecimal cost = pricing.cost(llm.modelName(), r.promptTokens(), r.cachedTokens(), r.totalTokens());
             span.tag("llm.total_tokens", r.totalTokens());
-            return check(r.text(), excerpts, r.totalTokens(), cost).with(got.tokens(), got.cost(), got.searches(), null);
+            Answer answer = check(r.text(), excerpts, r.totalTokens(), cost).with(got.tokens(), got.cost(), got.searches(), null);
+            if (verify && answer.found() && !answer.citations().isEmpty()) {
+                Verified v = verify(answer.answer(), excerpts);
+                usage.record(userId, projectId, UsageKind.AI_TOKENS, v.tokens(), "ask-verify");
+                answer = answer.with(v.tokens(), v.cost(), answer.searches(), v.check());
+            }
+            return answer;
         }
     }
 
     private record Retrieved(List<Excerpt> excerpts, List<String> searches, int tokens, BigDecimal cost) {
+    }
+
+    static final String VERIFY = """
+            You check whether claims are supported by their sources. Each claim
+            is a sentence from an answer about a codebase, followed by the
+            source excerpts it cites. A claim is supported only if those
+            excerpts state or directly show it - not if it is merely plausible,
+            and not if it relies on something the excerpts don't contain.
+            Reply with ONLY JSON: {"supported": [claim numbers], "unsupported": [claim numbers]}""";
+
+    private static final int MAX_CLAIMS = 8;
+
+    private record Verified(Faithfulness check, int tokens, BigDecimal cost) {
+    }
+
+    /** Sentences that cite sources, each with only the sources it cites - then one model call to judge them all. */
+    private Verified verify(String answer, List<Excerpt> excerpts) {
+        List<String> claims = new ArrayList<>();
+        List<List<Integer>> cited = new ArrayList<>();
+        for (String sentence : answer.split("(?<=[.!?])\\s+|\\n+")) {
+            Matcher m = CITATION.matcher(sentence);
+            List<Integer> ns = new ArrayList<>();
+            while (m.find()) {
+                for (String num : m.group(1).split(",")) {
+                    ns.add(Integer.parseInt(num.strip()));
+                }
+            }
+            if (!ns.isEmpty() && claims.size() < MAX_CLAIMS) {
+                claims.add(sentence.strip());
+                cited.add(ns);
+            }
+        }
+        if (claims.isEmpty()) {
+            return new Verified(null, 0, BigDecimal.ZERO);
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < claims.size(); i++) {
+            sb.append("CLAIM ").append(i + 1).append(": ").append(claims.get(i)).append('\n');
+            for (int n : cited.get(i)) {
+                if (n >= 1 && n <= excerpts.size()) {
+                    Excerpt e = excerpts.get(n - 1);
+                    String text = e.text().length() > 3_000 ? e.text().substring(0, 3_000) + "..." : e.text();
+                    sb.append("  [").append(n).append("] ").append(e.path()).append(" (lines ").append(e.startLine())
+                      .append('-').append(e.endLine()).append(")\n").append(text.indent(4));
+                }
+            }
+            sb.append('\n');
+        }
+        try {
+            var served = models.chat(com.forgeflow.intelligence.Models.Tier.STRONG, VERIFY,
+                    List.of(LlmMessage.user(sb.toString())), List.of(), null);
+            String text = served.response().text();
+            int a = text == null ? -1 : text.indexOf('{');
+            int b = text == null ? -1 : text.lastIndexOf('}');
+            if (a < 0 || b <= a) {
+                return new Verified(null, served.response().totalTokens(), served.costUsd());
+            }
+            var root = new tools.jackson.databind.ObjectMapper().readTree(text.substring(a, b + 1));
+            Set<Integer> ok = new java.util.TreeSet<>();
+            root.path("supported").forEach(n -> ok.add(n.asInt()));
+            List<String> unsupported = new ArrayList<>();
+            for (int i = 1; i <= claims.size(); i++) {
+                if (!ok.contains(i)) {
+                    unsupported.add(claims.get(i - 1));
+                }
+            }
+            return new Verified(new Faithfulness(claims.size(), claims.size() - unsupported.size(), unsupported),
+                    served.response().totalTokens(), served.costUsd());
+        } catch (RuntimeException e) {
+            return new Verified(null, 0, BigDecimal.ZERO);
+        }
     }
 
     private Retrieved retrieve(Long projectId, String question) {

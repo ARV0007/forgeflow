@@ -1,0 +1,29 @@
+{
+  "_comment": "Held out: written on 17 Oct 2026 AFTER the fusion weights were tuned on queries.json + queries-v2.json, and never used for tuning. Same 40-file fixture (fixture + fixture-v2). Run with --set heldout. If a setting is ever tuned on these, write a new held-out set.",
+  "queries": [
+    {"kind": "identifier", "q": "MAX_QUANTITY", "expect": "js/cart.js"},
+    {"kind": "identifier", "q": "orderTotals", "expect": "js/checkout.js"},
+    {"kind": "identifier", "q": "formatUnitPrice", "expect": "js/currency.js"},
+    {"kind": "identifier", "q": "distanceKm", "expect": "js/delivery-tracking.js"},
+    {"kind": "identifier", "q": "priceChangePercent", "expect": "js/price-history.js"},
+    {"kind": "identifier", "q": "rewardsAvailable", "expect": "js/loyalty.js"},
+    {"kind": "identifier", "q": "normaliseCardCode", "expect": "js/gift-cards.js"},
+    {"kind": "identifier", "q": "renderPreferencesForm", "expect": "js/notifications.js"},
+    {"kind": "described", "q": "only one promo code can be active at a time", "expect": "js/discounts.js"},
+    {"kind": "described", "q": "price per kilogram label", "expect": "js/currency.js"},
+    {"kind": "described", "q": "trade 500 points for money off", "expect": "js/loyalty.js"},
+    {"kind": "described", "q": "arrow keys move through the suggestion list", "expect": "js/search-suggestions.js"},
+    {"kind": "described", "q": "order updates are always sent even without marketing consent", "expect": "js/notifications.js"},
+    {"kind": "described", "q": "draw the cart table with quantity inputs and remove buttons", "expect": "js/cart-page.js", "accept": ["cart.html"]},
+    {"kind": "described", "q": "warning shown before the automatic sign out", "expect": "js/session-timeout.js"},
+    {"kind": "described", "q": "switch the interface language and remember the choice", "expect": "js/i18n.js"},
+    {"kind": "paraphrase", "q": "how many of one product can I put in my basket", "expect": "js/cart.js"},
+    {"kind": "paraphrase", "q": "how long until my shopping turns up at the door", "expect": "js/delivery-tracking.js"},
+    {"kind": "paraphrase", "q": "tiny chart showing how the price moved", "expect": "js/price-history.js"},
+    {"kind": "paraphrase", "q": "does a discount code stop working after a certain date", "expect": "js/discounts.js"},
+    {"kind": "paraphrase", "q": "work out what I pay in the end including delivery and money off", "expect": "js/checkout.js", "accept": ["js/cart-page.js"]},
+    {"kind": "paraphrase", "q": "a card whose remaining value goes down every time it is used", "expect": "js/gift-cards.js"},
+    {"kind": "paraphrase", "q": "one handler for every add to basket button, even ones drawn later", "expect": "js/app.js"},
+    {"kind": "paraphrase", "q": "where is the list of everything the shop sells", "expect": "js/products.js"}
+  ]
+}

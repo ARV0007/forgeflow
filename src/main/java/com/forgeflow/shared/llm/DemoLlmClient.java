@@ -55,6 +55,21 @@ public class DemoLlmClient implements LlmClient {
                     List.of(), "[]", estimate(history) + 150, 50, estimate(history) + 200);
         }
 
+        // The judge and the faithfulness check. The demo can't grade, so it
+        // gives a middling, honestly-labelled score and calls every claim
+        // supported - the eval plumbing runs offline, the numbers mean nothing.
+        if (systemPrompt != null && systemPrompt.startsWith("You grade a small web app")) {
+            return new LlmResponse("{\"fulfils_request\": 3, \"works\": 4, \"accessibility\": 3, \"design\": 3, "
+                    + "\"code_quality\": 4, \"notes\": \"Demo judge: the same score for every app.\"}",
+                    List.of(), "[]", estimate(history), 40, estimate(history) + 40);
+        }
+        if (systemPrompt != null && systemPrompt.startsWith("You check whether claims are supported")) {
+            int n = last.text() == null ? 0 : (int) java.util.regex.Pattern.compile("(?m)^CLAIM \\d+:").matcher(last.text()).results().count();
+            String all = String.join(", ", java.util.stream.IntStream.rangeClosed(1, n).mapToObj(String::valueOf).toList());
+            return new LlmResponse("{\"supported\": [" + all + "], \"unsupported\": []}", List.of(), "[]",
+                    estimate(history), 15, estimate(history) + 15);
+        }
+
         // The audit agent (read-only tools + report_issue). The demo can't
         // judge code: it lists the files, files one honestly-labelled finding
         // and finishes - enough to walk audit -> findings -> fix offline.

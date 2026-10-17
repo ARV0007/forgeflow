@@ -14,10 +14,19 @@ The point is not the absolute number. The point is running this before and
 after a change and comparing - "diff-based editing took the pass rate from
 X to Y" is a claim; "it feels better" is not.
 
+Beyond pass/fail, every run is also read for HOW the agent worked (its
+trajectory, from the run's agent report): did it plan, did it read a file
+before editing it, what did the reviewer say, did a guardrail fire, which
+model did routing pick. With --judge, a judge model also scores each app
+1-5 on a fixed rubric (fulfils the request, works, accessibility, design,
+code quality) - quality, not just "it built".
+
 Usage:
     python3 evals/run_evals.py                      # local, all 20
     python3 evals/run_evals.py --limit 3            # quick smoke run
     python3 evals/run_evals.py --base https://...   # against the deployed app
+    python3 evals/run_evals.py --judge              # + LLM-as-judge rubric scores
+    python3 evals/run_evals.py --review off         # A/B the reviewer agent
 """
 
 import argparse
@@ -140,8 +149,13 @@ def main():
                     help="retrieved code per run: auto (product default), always, off")
     ap.add_argument("--notes", type=int, choices=range(0, 6), metavar="0-5",
                     help="reference notes per run (product default 3; 0 = none)")
+    ap.add_argument("--review", choices=["on", "off"],
+                    help="the reviewer agent per run (product default on)")
+    ap.add_argument("--judge", action="store_true",
+                    help="score each built app 1-5 on a rubric with a judge model (one more call per case)")
     args = ap.parse_args()
-    args.rag = {k: v for k, v in (("codeContext", args.code_context), ("notes", args.notes)) if v is not None}
+    args.rag = {k: v for k, v in (("codeContext", args.code_context), ("notes", args.notes),
+                                  ("review", None if args.review is None else args.review == "on")) if v is not None}
 
     golden = json.load(open(os.path.join(HERE, "golden.json")))
     cases = golden["cases"][: args.limit] if args.limit else golden["cases"]
@@ -185,6 +199,34 @@ def main():
     sys.exit(0 if results and all(r.get("passed") for r in results) and len(results) == len(cases) else 1)
 
 
+def trajectory(run):
+    """
+    How the agent worked, from the run's agent report. Older servers don't
+    send one: then this is None and the report skips the section.
+      planned          it called update_plan
+      read_before_edit every edit_file was preceded by a read_file or write_file of that file
+      review           the reviewer's verdict and how many looks it took
+    """
+    agent = run.get("agent")
+    if not agent:
+        return None
+    steps = agent.get("trajectory") or []
+    seen, edits, edits_ok = set(), 0, 0
+    for step in steps:
+        name, _, path = step.partition(" ")
+        if name == "edit_file":
+            edits += 1
+            edits_ok += path in seen
+        if name in ("read_file", "write_file", "edit_file"):
+            seen.add(path)
+    review = agent.get("review") or {}
+    return {"planned": any(s.startswith("update_plan") for s in steps), "edits": edits, "editsAfterRead": edits_ok,
+            "review": review.get("verdict"), "reviewRounds": review.get("rounds", 0),
+            "guards": len(agent.get("guards") or []), "tier": agent.get("tier"), "model": agent.get("model"),
+            "fellBack": bool(agent.get("fellBack")), "asked": agent.get("question") is not None,
+            "steps": len(steps)}
+
+
 def edit_style(tool_usage):
     """
     How a follow-up changed the app. "edit" is the goal for a small change:
@@ -215,7 +257,7 @@ def run_followup(args, case, pid, token):
     return {"prompt": case["followup"], "buildPassed": run.get("buildPassed") is True,
             "style": edit_style(usage), "toolUsage": usage,
             "totalTokens": run.get("totalTokens"), "costUsd": run.get("costUsd"), "durationMs": run.get("durationMs"),
-            "rag": run.get("rag")}
+            "rag": run.get("rag"), "trajectory": trajectory(run)}
 
 
 def run_cases(args, cases, results, save):
@@ -237,10 +279,14 @@ def run_cases(args, cases, results, save):
             pid = project["id"]
 
             follow = None
+            judged = None
             try:
                 run = call(args.base, f"/api/v1/projects/{pid}/generate", "POST",
                            {"prompt": case["prompt"], **args.rag}, token)
                 files = call(args.base, f"/api/v1/projects/{pid}/files", token=token)
+                if args.judge and run.get("buildPassed"):
+                    # Judged on what the case asked for, before any follow-up changes it.
+                    judged = call(args.base, f"/api/v1/projects/{pid}/judge", "POST", {"request": case["prompt"]}, token)
                 if case.get("followup") and run.get("buildPassed"):
                     follow = run_followup(args, case, pid, token)
             finally:
@@ -259,9 +305,13 @@ def run_cases(args, cases, results, save):
                 "durationMs": run.get("durationMs"),
                 "toolUsage": run.get("toolUsage"),
                 "rag": run.get("rag"),
+                "trajectory": trajectory(run),
             })
             if follow:
                 results[-1]["followup"] = follow
+            if judged:
+                results[-1]["judge"] = {"scores": judged.get("scores"), "overall": judged.get("overall"),
+                                        "notes": judged.get("notes"), "model": judged.get("model")}
 
             mark = "PASS" if passed else "FAIL"
             failed = [k for k, v in checks.items() if not v]
@@ -270,7 +320,8 @@ def run_cases(args, cases, results, save):
                   f"{(run.get('durationMs') or 0)/1000:.0f}s"
                   + (f"   <- {', '.join(failed)}" if failed else "")
                   + (f"   | follow-up: {follow['style']}"
-                     + ("" if follow["buildPassed"] else " (build FAILED)") if follow else ""))
+                     + ("" if follow["buildPassed"] else " (build FAILED)") if follow else "")
+                  + (f"   | judge {judged.get('overall')}" if judged else ""))
 
         except Exception as e:
             # Out of daily AI tokens: every remaining case would fail the same
@@ -312,6 +363,32 @@ def report(results, started):
     for name in ["build_passed", "has_index", "no_empty_files", "js_when_needed"]:
         n = sum(1 for r in done if r.get("checks", {}).get(name))
         print(f"  {name:<17}{n}/{len(done)}")
+
+    trajs = [r["trajectory"] for r in done if r.get("trajectory")]
+    if trajs:
+        n = len(trajs)
+        edits = sum(t["edits"] for t in trajs)
+        reviewed = [t for t in trajs if t["review"]]
+        tiers = {}
+        for t in trajs:
+            tiers[t["tier"]] = tiers.get(t["tier"], 0) + 1
+        print(f"  -- how the agent worked ({n} runs) --")
+        print(f"  planned first    {sum(t['planned'] for t in trajs)}/{n}")
+        if reviewed:
+            print(f"  reviewer         {sum(t['review'] == 'approve' for t in reviewed)}/{len(reviewed)} approved, "
+                  f"{sum(t['reviewRounds'] > 1 for t in reviewed)} sent back for a fix")
+        if edits:
+            print(f"  read before edit {sum(t['editsAfterRead'] for t in trajs)}/{edits} edits")
+        print(f"  guard notices    {sum(t['guards'] for t in trajs)}   asked a question: {sum(t['asked'] for t in trajs)}")
+        print(f"  routing          " + ", ".join(f"{k} {v}" for k, v in sorted(tiers.items(), key=lambda kv: str(kv[0])))
+              + (f"   fallbacks: {sum(t['fellBack'] for t in trajs)}" if any(t['fellBack'] for t in trajs) else ""))
+    judged = [r["judge"] for r in done if r.get("judge")]
+    if judged:
+        print(f"  -- judge ({len(judged)} apps, 1-5) --")
+        for c in ["fulfils_request", "works", "accessibility", "design", "code_quality"]:
+            vals = [j["scores"][c] for j in judged if j.get("scores")]
+            print(f"  {c:<17}{sum(vals)/len(vals):.2f}")
+        print(f"  {'overall':<17}{sum(j['overall'] for j in judged)/len(judged):.2f}")
 
     follows = [r["followup"] for r in done if r.get("followup")]
     if follows:

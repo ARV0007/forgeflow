@@ -74,4 +74,42 @@ class RetrievalEvalTest extends ApiTestSupport {
         // Word matching should get every one of these. Measured: 28/28.
         assertThat(misses).as("questions whose file was not in the top 5").isEmpty();
     }
+
+    /**
+     * The held-out set's labels, checked the only way offline search can:
+     * every exact identifier must find its file. (A label typo would otherwise
+     * show up as a "retrieval miss" in the live run.)
+     */
+    @Test
+    void theHeldOutSetsIdentifiersFindTheirFiles() throws IOException {
+        Account a = signup("retrieval-heldout");
+        long id = createProject(a, "freshcart-heldout");
+        for (String dir : List.of("fixture", "fixture-v2")) {
+            Path fixture = EVAL.resolve(dir);
+            try (Stream<Path> walk = Files.walk(fixture)) {
+                for (Path p : walk.filter(Files::isRegularFile).toList()) {
+                    files.write(id, fixture.relativize(p).toString().replace('\\', '/'), Files.readString(p), a.id());
+                }
+            }
+        }
+        JsonNode queries = new ObjectMapper().readTree(EVAL.resolve("heldout-queries.json").toFile()).path("queries");
+        assertThat(queries).hasSize(24);
+        List<String> misses = new ArrayList<>();
+        for (JsonNode q : queries) {
+            assertThat(files.read(id, q.path("expect").asText())).as("labelled file exists: " + q.path("expect").asText()).isPresent();
+            if (!q.path("kind").asText().equals("identifier")) {
+                continue;
+            }
+            List<String> ranked = new ArrayList<>();
+            for (CodeIndex.SearchHit h : index.search(id, q.path("q").asText(), 20, CodeIndex.Mode.HYBRID)) {
+                if (!ranked.contains(h.path())) {
+                    ranked.add(h.path());
+                }
+            }
+            if (!ranked.subList(0, Math.min(3, ranked.size())).contains(q.path("expect").asText())) {
+                misses.add(q.path("q").asText() + " -> " + ranked.subList(0, Math.min(3, ranked.size())));
+            }
+        }
+        assertThat(misses).as("held-out identifiers not in the top 3").isEmpty();
+    }
 }

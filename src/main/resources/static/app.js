@@ -1414,7 +1414,7 @@ async function askProject() {
   if (!q) return;
   out.innerHTML = '<li class="search-none">Reading the code…</li>';
   try {
-    const r = await api(`/api/v1/projects/${state.projectId}/ask`, { method: 'POST', body: { question: q } });
+    const r = await api(`/api/v1/projects/${state.projectId}/ask`, { method: 'POST', body: { question: q, verify: true } });
     out.innerHTML = '';
     const li = document.createElement('li');
     li.className = 'answer' + (r.found ? '' : ' answer-none');
@@ -1457,6 +1457,22 @@ async function askProject() {
       warn.className = 'answer-meta';
       warn.textContent = 'No sources cited - treat this answer with care.';
       li.append(warn);
+    }
+    if (r.check) {
+      // The faithfulness check: a second model read each cited sentence against only its sources.
+      const v = document.createElement('p');
+      const all = r.check.supported === r.check.claims;
+      v.className = 'answer-check' + (all ? ' is-ok' : ' is-warn');
+      v.textContent = all ? `Checked: all ${r.check.claims} cited claim${r.check.claims === 1 ? ' is' : 's are'} backed by their sources`
+        : `Checked: ${r.check.claims - r.check.supported} of ${r.check.claims} cited claims aren't backed by their sources - `
+          + r.check.unsupported.map((u) => `"${u}"`).join('; ');
+      li.append(v);
+    }
+    if (r.searches?.length) {
+      const t = document.createElement('p');
+      t.className = 'answer-meta';
+      t.textContent = 'Searched: ' + r.searches.join(' → ');
+      li.append(t);
     }
     const meta = document.createElement('p');
     meta.className = 'answer-meta';

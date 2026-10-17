@@ -23,6 +23,8 @@ the agent, actually has.
 Usage:
     python3 evals/run_retrieval_eval.py                      # local server
     python3 evals/run_retrieval_eval.py --base https://...   # the deployed app
+    python3 evals/run_retrieval_eval.py --set heldout        # 24 questions never used for tuning
+    python3 evals/run_retrieval_eval.py --agentic            # also: rewrite + grade + retry (spends tokens)
 
 Needs real embeddings to mean anything: run it against a server with
 FORGEFLOW_EMBEDDER=gemini (the default). If the embedding API fails, the
@@ -50,6 +52,10 @@ SETS = {
     # v2: v1 plus 11 decoy files that borrow v1's vocabulary, and 28 questions
     # aimed at the decoys and at the files they imitate.
     "v2": {"fixtures": ["fixture", "fixture-v2"], "queries": ["queries.json", "queries-v2.json"]},
+    # heldout: 24 new questions over the same 40 files, written after the
+    # fusion weights were tuned on v2 and never used to tune anything. The
+    # honest check that the tuning generalises.
+    "heldout": {"fixtures": ["fixture", "fixture-v2"], "queries": ["heldout-queries.json"]},
 }
 KINDS = ["identifier", "described", "paraphrase"]
 
@@ -66,6 +72,10 @@ CONFIGS = [
     ("hybrid kw0.5", {"mode": "hybrid", "vectorWeight": 1.0, "keywordWeight": 0.5}),
 ]
 RERANK_CONFIG = ("hybrid+rerank", {"mode": "hybrid", "rerank": "true"})
+# Agentic retrieval: rewrite the question, search with every rewrite, grade
+# the results, retry once (AgenticRetriever). Three or four model calls a question.
+AGENTIC_CONFIG = ("agentic", {"mode": "agentic"})
+COSTLY = {RERANK_CONFIG[0], AGENTIC_CONFIG[0]}
 DEPTH = 20            # chunks asked for per query; the server's maximum
 PROJECT_NAME = "eval-retrieval"
 
@@ -173,11 +183,13 @@ def main():
     ap.add_argument("--set", choices=sorted(SETS), default="v2", help="question set (default v2, the harder one)")
     ap.add_argument("--rerank", action="store_true",
                     help="also score hybrid + LLM rerank (one model call per question; slow on the free tier)")
+    ap.add_argument("--agentic", action="store_true",
+                    help="also score agentic retrieval (3-4 model calls per question; spends AI tokens)")
     args = ap.parse_args()
 
     chosen = SETS[args.set]
     queries = [q for name in chosen["queries"] for q in json.load(open(os.path.join(RETRIEVAL, name)))["queries"]]
-    configs = CONFIGS + ([RERANK_CONFIG] if args.rerank else [])
+    configs = CONFIGS + ([RERANK_CONFIG] if args.rerank else []) + ([AGENTIC_CONFIG] if args.agentic else [])
     names = [c[0] for c in configs]
     token = sign_in(args.base, args.email, args.password)
 
@@ -207,13 +219,13 @@ def main():
                 try:
                     files = ranked_files(search(args.base, pid, q["q"], params, token, args.pause))
                 except OutOfTokens as e:
-                    if name != RERANK_CONFIG[0]:
+                    if name not in COSTLY:
                         raise RuntimeError(f"{name} search refused for quota - unexpected: {e}")
-                    # The rerank is the only configuration that spends AI tokens.
+                    # Rerank and agentic are the configurations that spend AI tokens.
                     # Drop it (from every row, so all rows stay comparable) and
                     # carry on: the other five are still worth a full run.
                     print(f"\n  out of today's AI tokens - dropping '{name}' and continuing "
-                          f"(run --rerank again after midnight UTC)", flush=True)
+                          f"(run it again after midnight UTC)", flush=True)
                     configs.remove((name, params))
                     names.remove(name)
                     dropped.append(name)

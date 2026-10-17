@@ -657,13 +657,36 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, required: [question], properties: { question: { type: string, maxLength: 1000, example: "Where is the dark mode toggle handled?" } } }
+            schema: { type: object, required: [question], properties: { question: { type: string, maxLength: 1000, example: "Where is the dark mode toggle handled?" }, verify: { type: boolean, description: "also check each cited claim against its sources (one more model call); result in check" } } }
       responses:
         "200": { description: The answer, content: { application/json: { schema: { $ref: "#/components/schemas/AskAnswer" } } } }
         "400": { $ref: "#/components/responses/Problem" }
         "402": { $ref: "#/components/responses/QuotaExceeded" }
         "404": { $ref: "#/components/responses/Problem" }
 
+  /api/v1/projects/{projectId}/judge:
+    parameters: [{ $ref: "#/components/parameters/projectId" }]
+    post:
+      tags: [Chat]
+      summary: LLM-as-judge - score the current files against a request on a 1-5 rubric (READ, metered, AI rate limit)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [request], properties: { request: { type: string, maxLength: 4000 } } } } }
+      responses:
+        "200":
+          description: Scores
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scores: { type: object, description: "fulfils_request, works, accessibility, design, code_quality: 1-5", additionalProperties: { type: integer } }
+                  overall: { type: number }
+                  notes: { type: string }
+                  tokens: { type: integer }
+                  costUsd: { type: number }
+                  model: { type: string }
+        "402": { $ref: "#/components/responses/QuotaExceeded" }
   /api/v1/projects/{projectId}/audits:
     parameters: [{ $ref: "#/components/parameters/projectId" }]
     post:
