@@ -510,10 +510,10 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--e
 #import-file { flex: 1; color: var(--ash); font-size: 12px; }
 
 /* Plan, then build: the agent's checklist */
-.plan { margin: 0 0 .5rem; font-size: .85rem; }
-.plan summary { cursor: pointer; color: var(--ash); }
-.plan ol { list-style: none; margin: .35rem 0 0; padding: 0; }
-.plan li { padding: 1px 0; color: var(--bone); }
+.agent-plan { margin: 0 0 .5rem; font-size: .85rem; }
+.agent-plan summary { cursor: pointer; color: var(--ash); }
+.agent-plan ol { list-style: none; margin: .35rem 0 0; padding: 0; }
+.agent-plan li { padding: 1px 0; color: var(--bone); }
 .plan-mark { display: inline-block; width: 1.2em; color: var(--ember); }
 .plan-done { color: var(--ash); }
 .plan-done .plan-mark { color: var(--verdigris); }

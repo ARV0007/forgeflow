@@ -41,9 +41,13 @@ with sync_playwright() as p:
     # which the browser logs as a failed resource. Anything else is a real error.
     expected_404 = []
     page.on("response", lambda r: expected_404.append(r.url) if r.status == 404 and r.url.endswith("/preview") else None)
+    # Step 6e saves a credential to project memory on purpose; its 400 is the refusal.
+    expected_400 = []
+    page.on("response", lambda r: expected_400.append(r.url) if r.status == 400 and r.url.endswith("/memories") else None)
     # Step 10c breaks a React component on purpose; its compile error is expected.
     page.on("console", lambda m: errors.append(f"console.{m.type}: {m.text}")
             if m.type == "error" and "status of 404" not in m.text
+            and not ("status of 400" in m.text and expected_400 and expected_400.pop())
             and not m.text.startswith("Build error: src/components/Counter.jsx") else None)
     # Step 5b throws inside the generated app on purpose; anything else is real.
     page.on("pageerror", lambda e: errors.append(f"pageerror: {e}") if "total is undefined" not in str(e) else None)
@@ -70,6 +74,10 @@ with sync_playwright() as p:
     expect(page.locator(".file-chip")).to_have_count(3)
     expect(page.locator(".session")).to_have_count(1)
     expect(page.locator(".session.is-on")).to_contain_text("A tip calculator for a cafe")
+    # The agentic parts of the run stay on the reply: its plan, and the reviewer agent's verdict.
+    reply = page.locator(".msg-bot:not(.is-working)").last
+    expect(reply.locator(".agent-plan summary")).to_have_text("Plan · 3 of 3 done")
+    expect(reply.locator(".code-review summary")).to_contain_text("Reviewer approved")
     shot(page, "02-after-first-reply")
 
     # 3. memory survives a reload
@@ -160,6 +168,7 @@ with sync_playwright() as p:
     expect(page.locator(".answer .answer-sources li").first).to_be_visible()
     expect(page.locator(".answer .answer-meta").last).to_contain_text("source")
     cited = page.locator(".answer .answer-sources code").first.inner_text()
+    expect(page.locator(".answer .answer-check")).to_contain_text("Checked:")   # the faithfulness check
     page.locator(".answer-body .cite").first.click()
     expect(page.locator("#code-name")).to_have_text(cited)
     # (NOT_FOUND is covered by AskProjectTest: one model call here, so the walk
@@ -239,6 +248,32 @@ with sync_playwright() as p:
     page.reload()                                                             # (the steps below expect one project)
     expect(page.locator("#project-select option")).to_have_count(1, timeout=10000)
     expect(page.locator(".msg-bot").first).to_be_visible(timeout=10000)
+
+    # 6e. project memory: a fact added here reaches the next run
+    page.click("#btn-memory")
+    expect(page.locator("#memory-list")).to_contain_text("Nothing yet", timeout=10000)
+    page.fill("#memory-new", "Prices are shown in rupees")
+    page.click("#btn-memory-add")
+    expect(page.locator("#memory-list .mem-text")).to_have_text("Prices are shown in rupees", timeout=10000)
+    page.fill("#memory-new", "Stripe key is sk_" + "live_51H8abcdefghijklmnopqrstu")
+    page.click("#btn-memory-add")
+    expect(page.locator("#memory-msg")).to_contain_text("credentials are never kept")
+    page.fill("#memory-new", "")
+    shot(page, "06e-memory")
+    page.locator("#memory-list .mem-del").first.click()
+    expect(page.locator("#memory-list")).to_contain_text("Nothing yet", timeout=10000)
+    page.click("#dlg-memory [data-close]")
+
+    # 6f. the audit agent: runs in the background, files a finding, one click fixes it
+    page.click("#btn-audit")
+    expect(page.locator("#audit-status")).to_contain_text("No audit yet", timeout=10000)
+    page.click("#btn-audit-run")
+    expect(page.locator("#audit-findings .finding")).to_have_count(1, timeout=20000)
+    expect(page.locator("#audit-findings .finding")).to_contain_text("focus style")
+    shot(page, "06f-audit")
+    page.locator("#audit-findings .f-fix").click()
+    expect(page.locator("#audit-findings .finding-done")).to_have_text("fixed", timeout=20000)
+    page.click("#dlg-audit [data-close]")
 
     # 7. download the zip
     with page.expect_download() as dl:

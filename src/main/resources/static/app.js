@@ -401,7 +401,7 @@ function planBlock(steps, live) {
   const done = steps.filter((p) => p.status === 'done' || p.status === 'skipped').length;
   const items = steps.map((p) =>
     `<li class="plan-${esc(p.status)}"><span class="plan-mark">${PLAN_MARK[p.status] || ''}</span>${esc(p.title)}</li>`).join('');
-  return `<details class="plan"${live ? ' open' : ''}><summary>Plan &middot; ${done} of ${steps.length} done</summary><ol>${items}</ol></details>`;
+  return `<details class="agent-plan"${live ? ' open' : ''}><summary>Plan &middot; ${done} of ${steps.length} done</summary><ol>${items}</ol></details>`;
 }
 
 /** The reviewer agent's verdict on a saved reply. */
@@ -505,7 +505,7 @@ function pendingReply() {
         case 'repair': step('st st-repair', `${esc(ev.message.toLowerCase())} &mdash; fixing before it can finish`); break;
         case 'plan': {
           // Plan, then build: one live checklist, replaced each time the agent revises it.
-          let box = el.querySelector('.plan');
+          let box = el.querySelector('.agent-plan');
           if (!box) {
             box = document.createElement('div');
             el.querySelector('.work-head').after(box);
