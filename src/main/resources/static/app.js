@@ -432,6 +432,8 @@ function pendingReply() {
             ev.message === 'Build passed' ? 'build passed' : `build failed &mdash; <span class="why">${esc(String(ev.data || '').split('\n')[0])}</span>`);
           break;
         case 'repair': step('st st-repair', `${esc(ev.message.toLowerCase())} &mdash; fixing before it can finish`); break;
+        case 'model': if (ev.data) step('st st-model', esc(ev.message.toLowerCase())); break;
+        case 'guard': step('st st-guard', esc(ev.message)); break;
         case 'error': step('st st-bad', esc(ev.message)); break;
       }
     },

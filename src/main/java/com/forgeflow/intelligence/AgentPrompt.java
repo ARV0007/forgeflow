@@ -14,7 +14,7 @@ final class AgentPrompt {
 
     /** The instructions for a project of this stack. */
     static String forStack(Stack stack) {
-        return stack == Stack.REACT ? REACT : SYSTEM;
+        return (stack == Stack.REACT ? REACT : SYSTEM) + Guardrails.UNTRUSTED_CONTENT_RULE;
     }
 
     static final String SYSTEM = """

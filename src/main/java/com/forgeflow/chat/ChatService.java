@@ -358,6 +358,7 @@ public class ChatService {
             case "TIMEOUT" -> "I ran out of time before finishing." + files;
             case "MAX_TOOL_CALLS" -> "I hit the step limit before finishing." + files;
             case "TOKEN_BUDGET" -> "I ran out of context budget before finishing." + files;
+            case "COST_BUDGET" -> "I reached this run's cost limit before finishing." + files;
             default -> "Something went wrong and the run stopped"
                     + (run.errorMessage() == null ? "." : ": " + run.errorMessage()) + files;
         };

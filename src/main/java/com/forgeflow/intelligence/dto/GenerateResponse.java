@@ -14,6 +14,7 @@ import java.util.Map;
  *                    Lets an eval tell a targeted edit from a whole-file rewrite.
  * @param costUsd     what the run's model calls cost at list price (0 for a model with no known price)
  * @param rag         what retrieval added to the request: codeExcerpts, notes, recalled (messages)
+ * @param agent       the agentic side of the run: model routing, plan, review, guardrails, questions, memory
  */
 public record GenerateResponse(
         Long runId,
@@ -29,5 +30,6 @@ public record GenerateResponse(
         String errorMessage,
         Map<String, Integer> toolUsage,
         java.math.BigDecimal costUsd,
-        Map<String, Integer> rag) {
+        Map<String, Integer> rag,
+        AgentReport agent) {
 }

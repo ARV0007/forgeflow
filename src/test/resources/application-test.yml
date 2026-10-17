@@ -2,6 +2,11 @@
 # instead of it - a file with the same name here would silently replace the
 # real config on the test classpath.
 forgeflow:
+  llm:
+    models:
+      # A failing scripted call should fail, not quietly consume the next
+      # scripted answer as a "fallback". ModelRoutingTest switches it on.
+      fallback: ""
   mcp:
     # McpServerTest drives the anonymous service-account path; tokens are tested in ApiTokenTest.
     allow-anonymous: true

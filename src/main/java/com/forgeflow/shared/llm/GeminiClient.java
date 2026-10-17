@@ -75,7 +75,20 @@ public class GeminiClient implements LlmClient {
     }
 
     @Override
+    public boolean namesModels() {
+        return true;
+    }
+
+    @Override
     public LlmResponse chat(String systemPrompt, List<LlmMessage> history, List<ToolSpec> tools) {
+        return chat(model, systemPrompt, history, tools);
+    }
+
+    @Override
+    public LlmResponse chat(String model, String systemPrompt, List<LlmMessage> history, List<ToolSpec> tools) {
+        if (model == null || model.isBlank() || !model.matches("[A-Za-z0-9._-]{1,80}")) {
+            throw new LlmException("Not a model name: " + model);
+        }
         try {
             String body = mapper.writeValueAsString(buildRequest(systemPrompt, history, tools));
 

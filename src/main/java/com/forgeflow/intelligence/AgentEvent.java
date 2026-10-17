@@ -63,6 +63,16 @@ public record AgentEvent(String type, String message, String path, Object data) 
         return new AgentEvent("done", "Finished", null, result);
     }
 
+    /** A guardrail fired: injection-like text seen, a secret refused, a budget reached, a model fell back. */
+    public static AgentEvent guard(String message) {
+        return new AgentEvent("guard", message, null, null);
+    }
+
+    /** Which model routing picked for this run, and why. */
+    public static AgentEvent model(String model, String tier) {
+        return new AgentEvent("model", "Using " + model + (tier == null ? "" : " (" + tier.toLowerCase() + ")"), null, tier);
+    }
+
     public static AgentEvent error(String message) {
         return new AgentEvent("error", message, null, null);
     }

@@ -223,6 +223,7 @@ public class AgentTools {
                     + ". Include more of the surrounding lines so it matches exactly once.");
         }
 
+        refuseSecrets(path, newText);
         String updated = current.substring(0, first) + newText + current.substring(first + oldText.length());
         int bytes = updated.getBytes(StandardCharsets.UTF_8).length;
         if (bytes > MAX_FILE_BYTES) {
@@ -242,6 +243,7 @@ public class AgentTools {
             throw new ToolException("file too large: " + bytes + " bytes, limit is " + MAX_FILE_BYTES);
         }
 
+        refuseSecrets(path, content);
         String before = files.read(projectId, path).orElse(null);
         files.write(projectId, path, content, userId);
 
@@ -255,6 +257,23 @@ public class AgentTools {
                     + "file, use edit_file - it sends only the part that changes.";
         }
         return ToolResult.ok("write_file", result);
+    }
+
+    /**
+     * Guardrail: generated apps are served to browsers, so a credential in
+     * them is a published credential. The reason names the kind, never the value.
+     */
+    private void refuseSecrets(String path, String text) {
+        Guardrails.secretIn(text).ifPresent(kind -> {
+            throw new SecretRefused("Refused: " + path + " would contain what looks like a real " + kind
+                    + ". Generated apps run in the browser, where anyone can read the source. Write a placeholder "
+                    + "such as 'YOUR_API_KEY' instead, and tell the user in your summary where the real value goes.");
+        });
+    }
+
+    /** How many files the project has - an empty project means a new build, not an edit. */
+    public int fileCount(Long projectId) {
+        return files.list(projectId).size();
     }
 
     /** Small files are cheap to rewrite whatever; below this, no note. */
@@ -318,6 +337,13 @@ public class AgentTools {
 
     static class ToolException extends RuntimeException {
         ToolException(String message) {
+            super(message);
+        }
+    }
+
+    /** A write refused by the secret guardrail - a ToolException the run also reports as a guard notice. */
+    static class SecretRefused extends ToolException {
+        SecretRefused(String message) {
             super(message);
         }
     }

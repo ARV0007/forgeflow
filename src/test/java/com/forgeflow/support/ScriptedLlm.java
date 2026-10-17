@@ -27,7 +27,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  */
 public class ScriptedLlm implements LlmClient {
 
-    private record Step(LlmResponse response, long backoffMillis) {
+    private record Step(LlmResponse response, long backoffMillis, String failure) {
     }
 
     private final ConcurrentLinkedDeque<Step> script = new ConcurrentLinkedDeque<>();
@@ -35,13 +35,19 @@ public class ScriptedLlm implements LlmClient {
     private final List<String> systemPrompts = new CopyOnWriteArrayList<>();
 
     public ScriptedLlm then(LlmResponse response) {
-        script.add(new Step(response, 0));
+        script.add(new Step(response, 0, null));
         return this;
     }
 
     /** This answer comes only after waiting out a (simulated) rate limit, as GeminiClient would. */
     public ScriptedLlm thenAfterRateLimit(long waitMillis, LlmResponse response) {
-        script.add(new Step(response, waitMillis));
+        script.add(new Step(response, waitMillis, null));
+        return this;
+    }
+
+    /** This call fails the way a provider does once its own retries are spent (a 503, a retired model). */
+    public ScriptedLlm thenFail(String message) {
+        script.add(new Step(null, 0, message));
         return this;
     }
 
@@ -49,6 +55,25 @@ public class ScriptedLlm implements LlmClient {
         script.clear();
         seen.clear();
         systemPrompts.clear();
+        models.clear();
+    }
+
+    private final List<String> models = new CopyOnWriteArrayList<>();
+
+    /** The model named on each call, in call order ("scripted" when none was named). */
+    public List<String> models() {
+        return models;
+    }
+
+    /** Like Gemini, it takes model names - so routing and fallback can be asserted on. */
+    @Override
+    public boolean namesModels() {
+        return true;
+    }
+
+    @Override
+    public LlmResponse chat(String model, String systemPrompt, List<LlmMessage> history, List<ToolSpec> tools) {
+        return answer(model, systemPrompt, history);
     }
 
     /** The system prompt passed on each call, in call order. */
@@ -63,11 +88,19 @@ public class ScriptedLlm implements LlmClient {
 
     @Override
     public LlmResponse chat(String systemPrompt, List<LlmMessage> history, List<ToolSpec> tools) {
+        return answer("scripted", systemPrompt, history);
+    }
+
+    private LlmResponse answer(String model, String systemPrompt, List<LlmMessage> history) {
         seen.add(List.copyOf(history));
         systemPrompts.add(systemPrompt);
+        models.add(model);
         Step next = script.poll();
         if (next == null) {
             throw new LlmException("ScriptedLlm: nothing left in the script");
+        }
+        if (next.failure() != null) {
+            throw new LlmException(next.failure());
         }
         if (next.backoffMillis() > 0) {
             com.forgeflow.shared.llm.Backoffs.simulate(next.backoffMillis());

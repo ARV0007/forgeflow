@@ -56,6 +56,14 @@ forgeflow:
       output: ${FORGEFLOW_PRICE_OUTPUT:}
     connect-timeout-seconds: 10
     request-timeout-seconds: 60
+    # Routing (Models): new builds, pictures and long briefs go to the strong
+    # model; edits to the fast one above. Blank = everything on the one model.
+    models:
+      strong: ${FORGEFLOW_MODEL_STRONG:}
+      # Tried once when a call still fails after the client's own retries
+      # (an outage, a retired model). Blank = no fallback.
+      fallback: ${FORGEFLOW_MODEL_FALLBACK:gemini-2.5-flash}
+      big-request-chars: 600
   jwt:
     secret: ${JWT_SECRET:change-me-in-env-this-is-local-only}
     # A token lasts this long; active users get a fresh one past the halfway
@@ -101,6 +109,10 @@ forgeflow:
     max-repair-rounds: 3
     max-input-tokens: 120000
     timeout-seconds: 240
+    # Guardrail: a run stops (CAPPED, COST_BUDGET) once its model calls cost this much. 0 = no limit.
+    max-cost-usd: 0.10
+    # At this share of any budget (tokens, steps, time, cost) the agent is told once to wrap up.
+    wrap-up-at: 0.8
   # Domain events (code.generated). in-process: all-in-one (Render, tests).
   # kafka: the full topology - see docker-compose.full.yml and deploy/k8s.
   events:

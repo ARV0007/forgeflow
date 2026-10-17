@@ -33,9 +33,13 @@ public class LlmPricing {
         }
     }
 
-    /** Google's paid-tier list prices, ai.google.dev/gemini-api/docs/pricing (checked Oct 2026). */
+    /**
+     * Google's paid-tier list prices, ai.google.dev/gemini-api/docs/pricing (checked Oct 2026);
+     * gemini-2.5-flash (the default fallback) from morphllm.com/gemini-api-pricing, 17 Oct 2026.
+     */
     static final Map<String, Price> LIST = Map.of(
-            "gemini-3.1-flash-lite", Price.of("0.25", "0.025", "1.50"));
+            "gemini-3.1-flash-lite", Price.of("0.25", "0.025", "1.50"),
+            "gemini-2.5-flash", Price.of("0.30", "0.03", "2.50"));
 
     private static final BigDecimal MILLION = BigDecimal.valueOf(1_000_000);
 

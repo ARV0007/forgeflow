@@ -187,6 +187,9 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--e
 .st-rag { color: var(--bone); }
 .st-rag::before { content: "\2192  "; color: var(--ember); }
 .st .why { color: var(--ash); }
+.st-model { color: var(--ash); font-style: italic; }
+.st-guard { color: var(--ember); }
+.st-guard::before { content: "\26A0  "; }
 
 .spinner {
   width: 8px; height: 8px; border-radius: 50%; background: var(--ember);

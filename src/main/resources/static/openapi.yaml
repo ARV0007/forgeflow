@@ -908,6 +908,43 @@ components:
           type: object
           description: "What retrieval added to the request: codeExcerpts, notes, recalled (earlier chat messages)"
           additionalProperties: { type: integer }
+        agent: { $ref: '#/components/schemas/AgentReport' }
+    AgentReport:
+      type: object
+      description: The agentic side of a run - routing, plan, review, guardrails, questions, memory, trajectory.
+      properties:
+        model: { type: string, description: the model that answered (after any fallback) }
+        tier: { type: string, enum: [FAST, STRONG], description: what routing chose for this run }
+        fellBack: { type: boolean, description: the chosen model failed and the fallback answered }
+        plan:
+          type: array
+          items:
+            type: object
+            properties:
+              title: { type: string }
+              status: { type: string, enum: [pending, in_progress, done, skipped] }
+        review:
+          type: object
+          nullable: true
+          properties:
+            verdict: { type: string, enum: [approve, changes] }
+            rounds: { type: integer }
+            summary: { type: string }
+            issues:
+              type: array
+              items:
+                type: object
+                properties:
+                  severity: { type: string, enum: [major, minor] }
+                  file: { type: string }
+                  problem: { type: string }
+        guards: { type: array, items: { type: string }, description: "guardrail notices: injected instructions seen, a credential refused, a budget reached, a model fallback" }
+        question: { type: string, nullable: true, description: a clarifying question the agent stopped to ask }
+        options: { type: array, items: { type: string } }
+        approvals: { type: array, items: { type: integer, format: int64 }, description: actions waiting for the user's approval }
+        remembered: { type: array, items: { type: string }, description: facts saved to project memory in this run }
+        searches: { type: array, items: { type: string }, description: what agentic retrieval tried and kept }
+        trajectory: { type: array, items: { type: string }, description: "every tool call in order, e.g. read_file app.js" }
     ApiToken:
       type: object
       properties:

@@ -14,6 +14,7 @@ import com.forgeflow.shared.events.CodeGenerated;
 import com.forgeflow.shared.events.EventBus;
 import com.forgeflow.shared.events.Topics;
 import com.forgeflow.shared.tracing.Tracer;
+import com.forgeflow.intelligence.dto.AgentReport;
 import com.forgeflow.intelligence.dto.GenerateResponse;
 import com.forgeflow.shared.llm.BackoffClock;
 import com.forgeflow.shared.llm.ImagePart;
@@ -28,6 +29,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -68,11 +70,14 @@ public class AgentService {
     private final Tracer tracer;
     private final ProjectService projects;
     private final LlmPricing pricing;
+    private final Models models;
 
     private final int maxToolCalls;
     private final long timeoutSeconds;
     private final int maxInputTokens;
     private final int maxRepairRounds;
+    private final BigDecimal maxCostUsd;
+    private final double wrapUpAt;
 
     public AgentService(LlmClient llm,
                         AgentTools tools,
@@ -87,10 +92,13 @@ public class AgentService {
                         Tracer tracer,
                         ProjectService projects,
                         LlmPricing pricing,
+                        Models models,
                         @Value("${forgeflow.agent.max-tool-calls}") int maxToolCalls,
                         @Value("${forgeflow.agent.timeout-seconds}") long timeoutSeconds,
                         @Value("${forgeflow.agent.max-input-tokens}") int maxInputTokens,
-                        @Value("${forgeflow.agent.max-repair-rounds:3}") int maxRepairRounds) {
+                        @Value("${forgeflow.agent.max-repair-rounds:3}") int maxRepairRounds,
+                        @Value("${forgeflow.agent.max-cost-usd:0.10}") BigDecimal maxCostUsd,
+                        @Value("${forgeflow.agent.wrap-up-at:0.8}") double wrapUpAt) {
         this.llm = llm;
         this.tools = tools;
         this.runs = runs;
@@ -104,10 +112,13 @@ public class AgentService {
         this.tracer = tracer;
         this.projects = projects;
         this.pricing = pricing;
+        this.models = models;
         this.maxToolCalls = maxToolCalls;
         this.timeoutSeconds = timeoutSeconds;
         this.maxInputTokens = maxInputTokens;
         this.maxRepairRounds = maxRepairRounds;
+        this.maxCostUsd = maxCostUsd;
+        this.wrapUpAt = wrapUpAt;
     }
 
     /** Non-streaming entry point. */
@@ -201,17 +212,27 @@ public class AgentService {
         long startedAt = System.currentTimeMillis();
         long deadline = startedAt + timeoutSeconds * 1000L;
 
+        // Routing: one decision per run - a new build, a request with pictures
+        // or a long brief goes to the strong model; an edit to an existing app
+        // to the fast one.
+        boolean newBuild = tools.fileCount(projectId) == 0;
+        Models.Tier tier = models.route(newBuild, images != null && !images.isEmpty(), prompt);
+        String model = models.modelFor(tier);
+
         GenerationRun run = new GenerationRun();
         run.setProjectId(projectId);
         run.setSessionId(sessionId);
         run.setUserId(userId);
         run.setStatus("RUNNING");
-        run.setModel(llm.modelName());
+        run.setModel(model);
         run.setTraceId(Tracer.currentTraceId());
         run = runs.save(run);
 
         // The project's stack picks the instructions: same loop, different target.
         String systemPrompt = AgentPrompt.forStack(projects.stackOf(projectId));
+        emit(listener, AgentEvent.model(model, models.routes() ? tier.name() : null));
+        // Guardrail notices for the run report (and the UI, as they happen).
+        List<String> guards = new ArrayList<>();
         List<LlmMessage> history = new ArrayList<>(priorTurns == null ? List.of() : priorTurns);
         // RAG: on a project too big to send whole, the request travels with
         // the excerpts most relevant to it. Retrieval failing is never fatal -
@@ -222,6 +243,7 @@ public class AgentService {
             Optional<CodeIndex.RetrievedContext> context = rag.code() == RagOptions.Code.OFF ? Optional.empty()
                     : index.contextFor(projectId, prompt, rag.code() == RagOptions.Code.ALWAYS);
             if (context.isPresent()) {
+                scan("the retrieved code", context.get().text(), guards, listener);
                 request = prompt + "\n\n" + context.get().text();
                 ragUsed.put("codeExcerpts", context.get().excerpts());
                 emit(listener, AgentEvent.retrieved(context.get().excerpts(), context.get().files()));
@@ -232,6 +254,7 @@ public class AgentService {
         // Long chat memory: older messages of this conversation that the
         // recent window no longer shows but this request seems to refer to.
         if (recalled != null && recalled.messages() > 0) {
+            scan("earlier chat messages", recalled.text(), guards, listener);
             request = request + "\n\n" + recalled.text();
             ragUsed.put("recalled", recalled.messages());
             emit(listener, AgentEvent.recalled(recalled.messages()));
@@ -243,6 +266,7 @@ public class AgentService {
                     ? knowledge.notesFor(prompt, projects.stackOf(projectId))
                     : knowledge.notesFor(prompt, projects.stackOf(projectId), rag.notes());
             if (notes.isPresent()) {
+                scan("the reference notes", notes.get().text(), guards, listener);
                 request = request + "\n\n" + notes.get().text();
                 ragUsed.put("notes", notes.get().hits().size());
                 emit(listener, AgentEvent.notes(notes.get().hits().stream().map(KnowledgeBase.Hit::source).toList()));
@@ -256,6 +280,7 @@ public class AgentService {
         if (!runtime.isEmpty()) {
             emit(listener, AgentEvent.status("Reviewing " + runtime.size() + " error"
                     + (runtime.size() == 1 ? "" : "s") + " from the preview"));
+            scan("the preview's error messages", String.join("\n", runtime), guards, listener);
             request = request + "\n\n" + runtimeSection(runtime);
         }
         if (images != null && !images.isEmpty()) {
@@ -277,6 +302,11 @@ public class AgentService {
         Boolean buildPassed = null;
         String summary = null;
         String stopReason = null;
+        BigDecimal costUsd = BigDecimal.ZERO;
+        boolean fellBack = false;
+        boolean wrapUpSent = false;
+        // Every tool call in order, with its path - the run's trajectory.
+        List<String> trajectory = new ArrayList<>();
 
         emit(listener, AgentEvent.status("Planning"));
 
@@ -295,19 +325,35 @@ public class AgentService {
                     stopReason = "TOKEN_BUDGET";
                     break;
                 }
+                if (maxCostUsd.signum() > 0 && costUsd.compareTo(maxCostUsd) >= 0) {
+                    stopReason = "COST_BUDGET";
+                    note(guards, listener, "Stopped at this run's cost limit ($" + maxCostUsd.toPlainString() + ")");
+                    break;
+                }
 
                 round++;
                 emit(listener, AgentEvent.thinking(round, promptTokens));
 
                 LlmResponse response;
                 try (Tracer.Span call = tracer.start("llm.chat")) {
-                    call.tag("llm.model", llm.modelName()).tag("agent.round", round);
+                    call.tag("llm.model", model).tag("agent.round", round);
+                    Models.Served served;
                     try {
                         BackoffClock.drain();
-                        response = llm.chat(systemPrompt, history, tools.specs());
+                        served = models.chat(model, systemPrompt, history, tools.specs(),
+                                why -> note(guards, listener, "Model fallback: " + why));
                     } catch (RuntimeException e) {
                         call.error(e);
                         throw e;
+                    }
+                    response = served.response();
+                    costUsd = costUsd.add(served.costUsd());
+                    if (served.fellBack()) {
+                        // The rest of the run stays on the model that answered.
+                        fellBack = true;
+                        model = served.model();
+                        run.setModel(model);
+                        call.tag("llm.fallback", model);
                     }
                     call.tag("llm.total_tokens", response.totalTokens()).tag("llm.cached_tokens", response.cachedTokens());
                     // Time spent obeying the provider's rate limit doesn't count against the run.
@@ -359,6 +405,7 @@ public class AgentService {
                     toolUsage.merge(call.name(), 1, Integer::sum);
                     Object rawPath = call.args().get("path");
                     String path = rawPath == null ? null : rawPath.toString();
+                    trajectory.add(path == null ? call.name() : call.name() + " " + path);
 
                     emit(listener, AgentEvent.tool(call.name(), path));
                     log.debug("run {} -> tool {} {}", run.getId(), call.name(), call.args().keySet());
@@ -391,8 +438,14 @@ public class AgentService {
 
                     ToolResult result = tools.execute(projectId, userId, call);
                     results.add(result);
+                    if (READS.contains(call.name()) && result.ok()) {
+                        scan(path != null ? path : "the " + call.name() + " results", result.output(), guards, listener);
+                    }
 
                     if (!result.ok()) {
+                        if (result.output().startsWith("ERROR: Refused: ")) {
+                            note(guards, listener, "Refused to write a credential into " + path);
+                        }
                         emit(listener, AgentEvent.toolFailed(call.name(), result.output()));
                     } else if ("write_file".equals(call.name()) && path != null) {
                         written.add(path);
@@ -405,6 +458,16 @@ public class AgentService {
                     }
                 }
 
+                // Graceful wrap-up: one warning at 80% of any budget, riding on
+                // this round's last tool result (the model reads those), so it
+                // can finish what matters instead of being cut off mid-change.
+                if (!done && !wrapUpSent && !results.isEmpty()
+                        && nearlySpent(promptTokens, toolCallCount, costUsd, startedAt, deadline)) {
+                    wrapUpSent = true;
+                    ToolResult last = results.remove(results.size() - 1);
+                    results.add(new ToolResult(last.toolName(), last.ok(), last.output() + WRAP_UP));
+                    note(guards, listener, "Most of this run's budget is used - asked the agent to wrap up");
+                }
                 history.add(LlmMessage.toolResults(results));
 
                 if (done) {
@@ -428,7 +491,7 @@ public class AgentService {
         run.setPromptTokens(promptTokens);
         run.setCachedTokens(cachedTokens);
         run.setCompletionTokens(completionTokens);
-        run.setCostUsd(pricing.cost(llm.modelName(), promptTokens, cachedTokens, totalTokens));
+        run.setCostUsd(costUsd);
         run.setToolCallCount(toolCallCount);
         run.setFilesWritten(written.size());
         run.setRepairRounds(repairRounds);
@@ -469,7 +532,9 @@ public class AgentService {
         GenerateResponse result = new GenerateResponse(run.getId(), status, stopReason, summary,
                 List.copyOf(written), toolCallCount, repairRounds, buildPassed, totalTokens, durationMs,
                 run.getErrorMessage(), java.util.Collections.unmodifiableMap(toolUsage), run.getCostUsd(),
-                java.util.Collections.unmodifiableMap(ragUsed));
+                java.util.Collections.unmodifiableMap(ragUsed),
+                new AgentReport(model, tier.name(), fellBack, List.of(), null, List.copyOf(guards), null, List.of(),
+                        List.of(), List.of(), List.of(), List.copyOf(trajectory)));
 
         emit(listener, AgentEvent.done(result));
         return result;
@@ -500,7 +565,7 @@ public class AgentService {
             return "SUCCEEDED";
         }
         if ("TIMEOUT".equals(stopReason) || "MAX_TOOL_CALLS".equals(stopReason)
-                || "TOKEN_BUDGET".equals(stopReason)) {
+                || "TOKEN_BUDGET".equals(stopReason) || "COST_BUDGET".equals(stopReason)) {
             return "CAPPED";
         }
         return "FAILED";
@@ -512,6 +577,38 @@ public class AgentService {
         BuildResult check = execution.build(projectId);
         emit(listener, AgentEvent.build(check.passed(), check.output()));
         return check;
+    }
+
+    /** Tools whose output is text the agent didn't write - scanned for injected instructions. */
+    private static final Set<String> READS = Set.of("read_file", "search_code", "search_docs", "fetch_docs");
+
+    static final String WRAP_UP = "\n\nNOTE: most of this run's budget (tokens, steps, time or cost) is used. "
+            + "Finish the essential part of the request now and call finish; mention anything left undone in the summary.";
+
+    private boolean nearlySpent(int promptTokens, int toolCalls, BigDecimal cost, long startedAt, long deadline) {
+        if (promptTokens >= wrapUpAt * maxInputTokens || toolCalls >= wrapUpAt * maxToolCalls) {
+            return true;
+        }
+        if (maxCostUsd.signum() > 0 && cost.doubleValue() >= wrapUpAt * maxCostUsd.doubleValue()) {
+            return true;
+        }
+        return System.currentTimeMillis() - startedAt >= wrapUpAt * (deadline - startedAt);
+    }
+
+    /** Guardrail: report instructions found in text the agent is about to read. Once per source. */
+    private void scan(String source, String text, List<String> guards, Consumer<AgentEvent> listener) {
+        List<String> signals = Guardrails.injectionSignals(text);
+        if (!signals.isEmpty()) {
+            note(guards, listener, "Instructions found in " + source + " (\"" + signals.get(0)
+                    + "\") - treated as data, not followed");
+        }
+    }
+
+    private void note(List<String> guards, Consumer<AgentEvent> listener, String message) {
+        if (!guards.contains(message)) {
+            guards.add(message);
+            emit(listener, AgentEvent.guard(message));
+        }
     }
 
     static final int MAX_RUNTIME_ERRORS = 10;
