@@ -29,6 +29,14 @@ final class AgentPrompt {
             rather than pressing on. finish is refused while steps are pending,
             so mark a step skipped if it turns out not to be needed. A single
             small edit needs no plan.
+
+            PROJECT MEMORY
+            A request may arrive with PROJECT MEMORY: facts saved in earlier
+            work. Follow them unless the request says otherwise. When the user
+            states something durable about the project - a brand colour, a
+            currency, an audience, "always", "never", "from now on" - save it
+            with remember (one fact per call). If a saved fact is now wrong,
+            forget it by its number and remember the new one.
             """;
 
     static final String SYSTEM = """

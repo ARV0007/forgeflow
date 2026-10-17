@@ -114,6 +114,7 @@
         <span class="spacer"></span>
         <button id="btn-build" class="btn btn-quiet btn-sm">Run build</button>
         <button id="btn-import" class="btn btn-quiet btn-sm" title="Bring in a GitHub repo or a zip">Import</button>
+        <button id="btn-memory" class="btn btn-quiet btn-sm" title="Facts the agent keeps about this project">Memory</button>
         <button id="btn-download" class="btn btn-quiet btn-sm" title="Download every file as a zip">Download</button>
       </div>
 
@@ -217,6 +218,19 @@
      and files over 200 KB. Up to 1,500 files.</p>
   <p id="import-msg" class="msg"></p>
   <div class="dlg-actions"><button class="btn btn-quiet btn-sm" data-close>Close</button></div>
+</dialog>
+
+<dialog id="dlg-memory" class="dlg">
+  <h2>Project memory</h2>
+  <p class="dlg-sub">Facts the agent reads at the start of every run and chat in this project. It saves them
+     when you state something lasting ("prices are in rupees"); you can add or delete them here.</p>
+  <ul id="memory-list" class="memory-list"></ul>
+  <div class="invite-row">
+    <input id="memory-new" type="text" maxlength="300" placeholder="e.g. The brand colour is #2f6f4f">
+    <button id="btn-memory-add" class="btn btn-primary btn-sm">Remember</button>
+  </div>
+  <p id="memory-msg" class="msg"></p>
+  <div class="dlg-actions"><button class="btn btn-quiet btn-sm" data-close>Done</button></div>
 </dialog>
 
 <dialog id="dlg-publish" class="dlg">

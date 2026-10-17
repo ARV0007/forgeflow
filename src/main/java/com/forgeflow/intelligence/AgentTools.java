@@ -106,6 +106,19 @@ public class AgentTools {
                                                 "required", List.of("title", "status")))),
                                List.of("steps"))),
 
+                new ToolSpec("remember",
+                        "Save one durable fact about this project to its memory, so every future run and chat "
+                                + "starts with it - e.g. 'Brand colour is #2f6f4f', 'Prices are shown in rupees', "
+                                + "'The owner wants a single page'. Use it when the user states a preference or "
+                                + "decision that should outlast this request. Not for what you just did (the files "
+                                + "show that), and never for passwords or keys.",
+                        schema(Map.of("fact", prop("string", "One fact, under 300 characters")), List.of("fact"))),
+
+                new ToolSpec("forget",
+                        "Remove a fact from project memory that is wrong or out of date - by its number, as shown "
+                                + "in PROJECT MEMORY ([#12] -> 12). Remember the corrected fact separately.",
+                        schema(Map.of("id", prop("integer", "The memory's number")), List.of("id"))),
+
                 new ToolSpec("finish",
                         "Call this when the task is complete. Summarise what you built in one or two sentences.",
                         schema(Map.of("summary", prop("string", "What you built")),

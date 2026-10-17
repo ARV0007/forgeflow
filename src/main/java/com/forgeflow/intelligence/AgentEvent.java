@@ -78,6 +78,11 @@ public record AgentEvent(String type, String message, String path, Object data) 
         return new AgentEvent("searched", "Thorough search kept " + kept + " result" + (kept == 1 ? "" : "s"), null, trace);
     }
 
+    /** The agent saved a fact to project memory. */
+    public static AgentEvent remembered(String fact) {
+        return new AgentEvent("remembered", fact, null, null);
+    }
+
     /** A guardrail fired: injection-like text seen, a secret refused, a budget reached, a model fell back. */
     public static AgentEvent guard(String message) {
         return new AgentEvent("guard", message, null, null);

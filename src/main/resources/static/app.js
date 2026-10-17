@@ -485,6 +485,7 @@ function pendingReply() {
           step('st st-rag', `thorough search: ${rounds.map((r) => esc(r)).join(' &rarr; ')}`);
           break;
         }
+        case 'remembered': step('st st-rag', `remembered: <span class="why">${esc(ev.message)}</span>`); break;
         case 'model': if (ev.data) step('st st-model', esc(ev.message.toLowerCase())); break;
         case 'guard': step('st st-guard', esc(ev.message)); break;
         case 'error': step('st st-bad', esc(ev.message)); break;
@@ -1244,6 +1245,48 @@ async function runImport(go) {
     ['btn-import-github', 'btn-import-zip'].forEach((id) => { $(id).disabled = false; });
   }
 }
+
+// ── project memory: facts every run starts with ─────────
+
+$('btn-memory').addEventListener('click', async () => {
+  $('memory-msg').textContent = '';
+  $('dlg-memory').showModal();
+  $('memory-new').disabled = $('btn-memory-add').disabled = !canWrite();
+  await loadMemory();
+});
+
+async function loadMemory() {
+  const list = $('memory-list');
+  try {
+    const facts = await api(`/api/v1/projects/${state.projectId}/memories`);
+    list.innerHTML = facts.length ? facts.map((f) => `<li data-id="${f.id}"><span class="mem-id">#${f.id}</span>
+        <span class="mem-text">${esc(f.content)}</span><span class="mem-src">${f.source === 'agent' ? 'saved by the agent' : 'added by you'}</span>
+        ${canWrite() ? `<button class="btn btn-quiet btn-xs mem-del" title="Forget this">Forget</button>` : ''}</li>`).join('')
+      : '<li class="mem-empty">Nothing yet. Tell the agent something lasting, or add a fact below.</li>';
+    list.querySelectorAll('.mem-del').forEach((b) => b.addEventListener('click', async () => {
+      const id = b.closest('li').dataset.id;
+      try {
+        await api(`/api/v1/projects/${state.projectId}/memories/${id}`, { method: 'DELETE' });
+        await loadMemory();
+      } catch (err) { $('memory-msg').textContent = err.message; }
+    }));
+  } catch (err) {
+    list.innerHTML = '';
+    $('memory-msg').textContent = err.message;
+  }
+}
+
+$('btn-memory-add').addEventListener('click', async () => {
+  const content = $('memory-new').value.trim();
+  if (!content) return;
+  try {
+    await api(`/api/v1/projects/${state.projectId}/memories`, { method: 'POST', body: { content } });
+    $('memory-new').value = '';
+    $('memory-msg').textContent = '';
+    await loadMemory();
+  } catch (err) { $('memory-msg').textContent = err.message; }
+});
+$('memory-new').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btn-memory-add').click(); });
 
 // ── ask: an answer from the code, with its sources ──────
 

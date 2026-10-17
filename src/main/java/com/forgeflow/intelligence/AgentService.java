@@ -73,6 +73,7 @@ public class AgentService {
     private final Models models;
     private final CodeReviewer reviewer;
     private final com.forgeflow.intelligence.retrieval.AgenticRetriever agentic;
+    private final com.forgeflow.intelligence.memory.ProjectMemory memory;
     private final boolean reviewByDefault;
     private final tools.jackson.databind.ObjectMapper json = new tools.jackson.databind.ObjectMapper();
 
@@ -99,6 +100,7 @@ public class AgentService {
                         Models models,
                         CodeReviewer reviewer,
                         com.forgeflow.intelligence.retrieval.AgenticRetriever agentic,
+                        com.forgeflow.intelligence.memory.ProjectMemory memory,
                         @Value("${forgeflow.agent.review.enabled:true}") boolean reviewByDefault,
                         @Value("${forgeflow.agent.max-tool-calls}") int maxToolCalls,
                         @Value("${forgeflow.agent.timeout-seconds}") long timeoutSeconds,
@@ -122,6 +124,7 @@ public class AgentService {
         this.models = models;
         this.reviewer = reviewer;
         this.agentic = agentic;
+        this.memory = memory;
         this.reviewByDefault = reviewByDefault;
         this.maxToolCalls = maxToolCalls;
         this.timeoutSeconds = timeoutSeconds;
@@ -284,6 +287,18 @@ public class AgentService {
         } catch (RuntimeException e) {
             log.warn("knowledge notes for project {} failed, continuing without them: {}", projectId, e.toString());
         }
+        // Project memory: facts saved in earlier work ("brand colour is
+        // #2f6f4f") - true of the project, not of one chat. Never fatal.
+        try {
+            Optional<String> remembered = memory.sectionFor(projectId, prompt, MEMORY_CHARS);
+            if (remembered.isPresent()) {
+                scan("project memory", remembered.get(), guards, listener);
+                request = request + "\n\n" + remembered.get();
+                emit(listener, AgentEvent.status("Read project memory"));
+            }
+        } catch (RuntimeException e) {
+            log.warn("project memory for project {} failed, continuing without it: {}", projectId, e.toString());
+        }
         // The runtime half of self-healing: what the app actually did in a
         // browser since the last build, which the build gate can't see.
         List<String> runtime = execution.runtimeErrors(projectId, MAX_RUNTIME_ERRORS);
@@ -327,6 +342,8 @@ public class AgentService {
         CodeReviewer.Verdict lastReview = null;
         // Agentic retrieval: one line per thorough search (queries tried, results kept).
         List<String> searches = new ArrayList<>();
+        // Facts this run saved to project memory.
+        List<String> rememberedNow = new ArrayList<>();
         // Every tool call in order, with its path - the run's trajectory.
         List<String> trajectory = new ArrayList<>();
 
@@ -450,6 +467,17 @@ public class AgentService {
                         ToolResult r = AgentTools.formatHits(found.hits());
                         scan("the search results", r.output(), guards, listener);
                         results.add(r);
+                        continue;
+                    }
+
+                    if ("remember".equals(call.name()) || "forget".equals(call.name())) {
+                        ToolResult r = memoryTool(call, projectId, userId, run.getId(), rememberedNow);
+                        results.add(r);
+                        if (r.ok() && "remember".equals(call.name()) && r.output().startsWith("Saved")) {
+                            emit(listener, AgentEvent.remembered(rememberedNow.get(rememberedNow.size() - 1)));
+                        } else if (!r.ok()) {
+                            emit(listener, AgentEvent.toolFailed(call.name(), r.output()));
+                        }
                         continue;
                     }
 
@@ -628,7 +656,7 @@ public class AgentService {
         AgentReport.Review review = lastReview == null ? null : new AgentReport.Review(
                 lastReview.ok() ? lastReview.verdict() : "skipped", reviews, lastReview.summary(), lastReview.issues());
         AgentReport report = new AgentReport(model, tier.name(), fellBack, List.copyOf(plan), review, List.copyOf(guards),
-                null, List.of(), List.of(), List.of(), List.copyOf(searches), List.copyOf(trajectory));
+                null, List.of(), List.of(), List.copyOf(rememberedNow), List.copyOf(searches), List.copyOf(trajectory));
         try {
             run.setAgentReport(json.writeValueAsString(report));
             run = runs.save(run);
@@ -703,6 +731,39 @@ public class AgentService {
     }
 
     static final int MAX_PLAN_CHECKS = 2;
+    static final int MEMORY_CHARS = 2_500;
+    /** A run that saves more than this is noting what it did, not what's durable. */
+    static final int MAX_REMEMBERED_PER_RUN = 5;
+
+    private ToolResult memoryTool(ToolCall call, Long projectId, Long userId, Long runId, List<String> rememberedNow) {
+        try {
+            if ("forget".equals(call.name())) {
+                Object raw = call.args().get("id");
+                long id;
+                try {
+                    id = raw instanceof Number n ? n.longValue() : Long.parseLong(String.valueOf(raw).replace("#", "").strip());
+                } catch (NumberFormatException e) {
+                    return ToolResult.failed("forget", "id must be the memory's number, e.g. 12");
+                }
+                return memory.forget(projectId, id)
+                        ? ToolResult.ok("forget", "Forgot memory #" + id + ".")
+                        : ToolResult.failed("forget", "There is no memory #" + id + " in this project.");
+            }
+            if (rememberedNow.size() >= MAX_REMEMBERED_PER_RUN) {
+                return ToolResult.failed("remember", "That's " + MAX_REMEMBERED_PER_RUN + " facts this run - save only "
+                        + "what the user will want remembered next time.");
+            }
+            Object fact = call.args().get("fact");
+            var saved = memory.remember(projectId, fact == null ? null : fact.toString(), "agent", userId, runId);
+            if (saved.alreadyKnown()) {
+                return ToolResult.ok("remember", "Already in project memory as #" + saved.fact().id() + ".");
+            }
+            rememberedNow.add(saved.fact().content());
+            return ToolResult.ok("remember", "Saved to project memory as #" + saved.fact().id() + ".");
+        } catch (com.forgeflow.shared.BadRequestException e) {
+            return ToolResult.failed(call.name(), e.getMessage());
+        }
+    }
     /** First look, and the look after one round of fixes. */
     static final int MAX_REVIEWS = 2;
     static final int MAX_PLAN_STEPS = 10;
