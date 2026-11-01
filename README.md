@@ -23,7 +23,19 @@ agent plans → writes files → calls finish → build check → preview → vi
 live preview · file tree · version history · every step streamed to the browser
 ```
 
-**Live:** https://forgeflow-7m08.onrender.com · **API reference:** `/docs.html`
+## See it working
+
+**[Open the live app →](https://forgeflow-7m08.onrender.com)** It runs on a free plan, so the first load
+can take about a minute while it wakes up.
+
+1. **Sign up** with any email and password; it's your own workspace.
+2. **Describe an app**, for example *"build me a recipe site with search"*, or paste a screenshot.
+3. **Watch the agent work** in the chat: it plans, writes files, and isn't allowed to finish until the
+   build check passes. The preview on the right is the running app.
+4. **Ask for a change**, like *"make the search button green"*, and see it land as a small edit, with
+   the previous version still in the history.
+
+**Live:** https://forgeflow-7m08.onrender.com · **API reference:** [`/docs.html`](https://forgeflow-7m08.onrender.com/docs.html) · **Portfolio:** [arv0007.github.io](https://arv0007.github.io)
 
 ## Measured
 
